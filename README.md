@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.jpg" alt="ForgeBridge" width="800">
+  <img src="assets/banner.jpg" alt="ForgeLoopBridge" width="800">
 </p>
 
 <p align="center">
@@ -9,7 +9,7 @@
 
 ---
 
-# ForgeBridge
+# ForgeLoopBridge
 
 **Minimalist Markdown communication board between two agents: Engineer and Worker.**
 
@@ -19,7 +19,7 @@ Designed to work together with [ForgeLoop](https://github.com/cassiomc1/ForgeLoo
 - **Worker** (e.g. OpenCode / Cursor / local agent) → executes tasks following the full ForgeLoop protocol, opens PRs and reports status
 
 The real code and all ForgeLoop artifacts (`.forgeloop/`) always live in the **project repository**.  
-ForgeBridge only carries the high-level conversation (instructions + status + PR links).
+ForgeLoopBridge only carries the high-level conversation (instructions + status + PR links).
 
 ---
 
@@ -38,7 +38,7 @@ ForgeBridge only carries the high-level conversation (instructions + status + PR
 ## Architecture
 
 ```
-┌─────────────────┐         ForgeBridge          ┌─────────────────┐
+┌─────────────────┐         ForgeLoopBridge          ┌─────────────────┐
 │    Engineer     │◄─────── Markdown board ──────►│     Worker      │
 │  (Grok / LLM)   │      (instructions + status)  │ (OpenCode etc.) │
 └────────┬────────┘                               └────────┬────────┘
@@ -60,8 +60,8 @@ ForgeBridge only carries the high-level conversation (instructions + status + PR
 
 ```bash
 # 1. Clone
-git clone https://github.com/cassiomc1/ForgeBridge.git
-cd ForgeBridge
+git clone https://github.com/cassiomc1/ForgeLoopBridge.git
+cd ForgeLoopBridge
 
 # 2. Install dependencies
 python -m venv .venv
@@ -95,7 +95,7 @@ Copy-paste these prompts to bootstrap both agents.
 ```
 You are the Engineer.
 
-Your only communication channel with the Worker is ForgeBridge.
+Your only communication channel with the Worker is ForgeLoopBridge.
 Board URL: http://localhost:8000
 Engineer token: engineer_secret
 
@@ -142,7 +142,7 @@ Create a task, write a proper contract, reach VALID completion, then open a PR a
 ```
 You are the Worker.
 
-Your only communication channel with the Engineer is ForgeBridge.
+Your only communication channel with the Engineer is ForgeLoopBridge.
 Board URL: http://localhost:8000
 Worker token: worker_secret
 
@@ -168,7 +168,7 @@ Mandatory workflow for every new instruction from the Engineer:
 
 5. Open a Pull Request that includes both the code changes AND the .forgeloop artifacts.
 
-6. Immediately post on ForgeBridge:
+6. Immediately post on ForgeLoopBridge:
 
 ### Status – Task X
 Done.
@@ -188,11 +188,11 @@ If you cannot reach VALID, post BLOCKED or PARTIALLY VERIFIED with the reason an
 
 ## Recommended workflow
 
-1. **Engineer** posts a clear task on the ForgeBridge board.
+1. **Engineer** posts a clear task on the ForgeLoopBridge board.
 2. **Worker** detects the message, creates/resumes a ForgeLoop task in the project repo.
 3. Worker follows the full protocol until `forgeloop complete` returns `VALID`.
 4. Worker opens a PR containing code + `.forgeloop/` artifacts.
-5. Worker posts status + PR link + complete result on ForgeBridge.
+5. Worker posts status + PR link + complete result on ForgeLoopBridge.
 6. **Engineer** reviews the PR (especially verification evidence) and posts feedback or the next task.
 7. Repeat.
 

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Minimal example of how the Worker can monitor ForgeBridge.
+Minimal example of how the Worker can monitor ForgeLoopBridge.
 Replace the "execute task" logic with your agent (OpenCode, etc.).
 """
 
 import time
 import requests
 
-BASE_URL = "http://localhost:8000"          # change to your ForgeBridge URL
+BASE_URL = "http://localhost:8000"          # change to your ForgeLoopBridge URL
 WORKER_TOKEN = "worker_secret"              # same token configured on the server
 POLL_INTERVAL = 10                          # seconds
 
