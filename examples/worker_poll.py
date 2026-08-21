@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-Exemplo mínimo de como o Operário pode monitorar o ForgeBridge.
-Substitua a lógica de "executar tarefa" pelo seu agent (OpenCode, etc.).
+Minimal example of how the Worker can monitor ForgeBridge.
+Replace the "execute task" logic with your agent (OpenCode, etc.).
 """
 
 import time
 import requests
 
-BASE_URL = "http://localhost:8000"          # altere para a URL do seu ForgeBridge
-WORKER_TOKEN = "operario_secret"            # mesmo token configurado no servidor
-POLL_INTERVAL = 10                          # segundos
+BASE_URL = "http://localhost:8000"          # change to your ForgeBridge URL
+WORKER_TOKEN = "worker_secret"              # same token configured on the server
+POLL_INTERVAL = 10                          # seconds
 
 
 def post_status(content: str):
@@ -19,12 +19,12 @@ def post_status(content: str):
         timeout=15,
     )
     r.raise_for_status()
-    print("Status postado com sucesso.")
+    print("Status posted successfully.")
 
 
 def main():
     last_seen = 0.0
-    print(f"Monitorando {BASE_URL} a cada {POLL_INTERVAL}s ...")
+    print(f"Monitoring {BASE_URL} every {POLL_INTERVAL}s ...")
 
     while True:
         try:
@@ -43,27 +43,27 @@ def main():
                     continue
 
                 print("\n" + "=" * 60)
-                print("NOVA INSTRUÇÃO DO ENGENHEIRO")
+                print("NEW INSTRUCTION FROM ENGINEER")
                 print("=" * 60)
                 print(msg["content"])
                 print("=" * 60 + "\n")
 
                 # ────────────────────────────────────────────────
-                # AQUI você chama o seu agent / OpenCode / script
-                # Exemplo:
+                # HERE you call your agent / OpenCode / script
+                # Example:
                 #   result = run_opencode(msg["content"])
                 #   pr_url = open_pull_request(...)
                 # ────────────────────────────────────────────────
 
-                # Depois de terminar, poste o status:
+                # After finishing, post the status:
                 post_status(
                     "### Status\n"
-                    "Recebi a instrução e estou processando...\n\n"
-                    "*(substitua esta mensagem pelo resultado real + link do PR)*"
+                    "Received the instruction and processing...\n\n"
+                    "*(replace this message with the real result + PR link)*"
                 )
 
         except Exception as e:
-            print(f"[erro] {e}")
+            print(f"[error] {e}")
 
         time.sleep(POLL_INTERVAL)
 

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -245,27 +245,27 @@
     <div class="logo">Forge<span>Bridge</span></div>
     <div class="status-bar">
       <span>Msgs: <strong id="total">0</strong></span>
-      <span>Última: <strong id="last-role">—</strong></span>
+      <span>Last: <strong id="last-role">—</strong></span>
       <span id="last-time"></span>
     </div>
   </header>
 
   <main id="board">
-    <div class="empty" id="empty-state">Nenhuma mensagem ainda.<br>O Engenheiro ou o Operário pode postar a primeira.</div>
+    <div class="empty" id="empty-state">No messages yet.<br>The Engineer or Worker can post the first one.</div>
   </main>
 
   <div class="composer">
     <div class="composer-inner">
       <div class="composer-row">
         <select id="role-select">
-          <option value="engineer">Engenheiro</option>
-          <option value="worker">Operário</option>
+          <option value="engineer">Engineer</option>
+          <option value="worker">Worker</option>
         </select>
         <input type="password" id="token-input" placeholder="Token" style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:0.9rem;" />
-        <button id="post-btn" onclick="postMessage()">Postar</button>
+        <button id="post-btn" onclick="postMessage()">Post</button>
       </div>
-      <textarea id="content" placeholder="Escreva em Markdown…&#10;&#10;## Tarefa X&#10;- instrução clara&#10;- critérios de aceite"></textarea>
-      <div class="token-hint">Tokens padrão: engenheiro_secret / operario_secret (altere via env vars)</div>
+      <textarea id="content" placeholder="Write in Markdown…&#10;&#10;## Task X&#10;- clear instruction&#10;- acceptance criteria"></textarea>
+      <div class="token-hint">Default tokens: engineer_secret / worker_secret (change via env vars)</div>
     </div>
   </div>
 
@@ -277,7 +277,7 @@
 
     function formatTime(ts) {
       const d = new Date(ts * 1000);
-      return d.toLocaleString('pt-BR', {
+      return d.toLocaleString('en-US', {
         day: '2-digit', month: '2-digit',
         hour: '2-digit', minute: '2-digit', second: '2-digit'
       });
@@ -291,7 +291,7 @@
       div.className = 'message';
       div.dataset.id = msg.id;
 
-      const roleLabel = msg.role === 'engineer' ? 'Engenheiro' : 'Operário';
+      const roleLabel = msg.role === 'engineer' ? 'Engineer' : 'Worker';
       const roleClass = msg.role;
 
       div.innerHTML = `
@@ -326,8 +326,8 @@
           const s = await statusRes.json();
           document.getElementById('total').textContent = s.total_messages;
           document.getElementById('last-role').textContent =
-            s.last_message_role === 'engineer' ? 'Engenheiro' :
-            s.last_message_role === 'worker' ? 'Operário' : '—';
+            s.last_message_role === 'engineer' ? 'Engineer' :
+            s.last_message_role === 'worker' ? 'Worker' : '—';
           document.getElementById('last-time').textContent =
             s.last_message_at ? formatTime(s.last_message_at) : '';
         }
@@ -342,7 +342,7 @@
       const content = document.getElementById('content').value.trim();
 
       if (!token || !content) {
-        alert('Token e conteúdo são obrigatórios');
+        alert('Token and content are required');
         return;
       }
 
@@ -358,14 +358,14 @@
 
         if (!res.ok) {
           const err = await res.json();
-          alert(err.detail || 'Erro ao postar');
+          alert(err.detail || 'Failed to post');
           return;
         }
 
         document.getElementById('content').value = '';
         await fetchMessages();
       } catch (e) {
-        alert('Falha de rede');
+        alert('Network error');
       } finally {
         btn.disabled = false;
       }

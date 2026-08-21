@@ -16,8 +16,8 @@ from pydantic import BaseModel, Field
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 DB_PATH = os.getenv("FORGEBRIDGE_DB", "data/forgebridge.db")
-ENGINEER_TOKEN = os.getenv("ENGINEER_TOKEN", "engenheiro_secret")
-WORKER_TOKEN = os.getenv("WORKER_TOKEN", "operario_secret")
+ENGINEER_TOKEN = os.getenv("ENGINEER_TOKEN", "engineer_secret")
+WORKER_TOKEN = os.getenv("WORKER_TOKEN", "worker_secret")
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
 

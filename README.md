@@ -1,103 +1,103 @@
 # ForgeBridge
 
-**Ponto de comunicação minimalista em Markdown entre dois agents: Engenheiro e Operário.**
+**Minimalist Markdown communication board between two agents: Engineer and Worker.**
 
-Ideal para o fluxo:
+Designed for this workflow:
 
-- **Engenheiro** (ex: Grok) → projeta, analisa, dá instruções e revisa PRs
-- **Operário** (ex: OpenCode / Cursor / script no Mac) → executa, abre PRs no GitHub e reporta status
+- **Engineer** (e.g. Grok) → designs, analyzes, gives instructions and reviews PRs
+- **Worker** (e.g. OpenCode / Cursor / local script) → executes tasks, opens PRs on GitHub and reports status
 
-O código real sempre fica no repositório do projeto. O ForgeBridge só carrega a conversa de alto nível (instruções + status + links de PR).
-
----
-
-## Características
-
-- Extremamente simples (um único backend + uma página)
-- Comunicação 100% em Markdown
-- API REST mínima para agents
-- Auto-refresh a cada 8 segundos
-- Tokens separados para Engenheiro e Operário
-- SQLite (zero configuração extra)
+The real code always lives in the project repository. ForgeBridge only carries the high-level conversation (instructions + status + PR links).
 
 ---
 
-## Rodar localmente
+## Features
+
+- Extremely simple (single backend + single page)
+- 100% Markdown communication
+- Minimal REST API for agents
+- Auto-refresh every 8 seconds
+- Separate tokens for Engineer and Worker
+- SQLite (zero extra configuration)
+
+---
+
+## Run locally
 
 ```bash
 # 1. Clone
 git clone https://github.com/cassiomc1/ForgeBridge.git
 cd ForgeBridge
 
-# 2. Instalar dependências
+# 2. Install dependencies
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-# 3. Rodar
+# 3. Run
 python main.py
 ```
 
-Abra: [http://localhost:8000](http://localhost:8000)
+Open: [http://localhost:8000](http://localhost:8000)
 
-### Variáveis de ambiente (opcional)
+### Environment variables (optional)
 
-| Variável          | Default              | Descrição                    |
-|-------------------|----------------------|------------------------------|
-| `ENGINEER_TOKEN`  | `engenheiro_secret`  | Token do Engenheiro          |
-| `WORKER_TOKEN`    | `operario_secret`    | Token do Operário            |
-| `FORGEBRIDGE_DB`  | `data/forgebridge.db`| Caminho do SQLite            |
-| `HOST`            | `0.0.0.0`            | Host                         |
-| `PORT`            | `8000`               | Porta                        |
+| Variable          | Default               | Description                  |
+|-------------------|-----------------------|------------------------------|
+| `ENGINEER_TOKEN`  | `engineer_secret`     | Engineer token               |
+| `WORKER_TOKEN`    | `worker_secret`       | Worker token                 |
+| `FORGEBRIDGE_DB`  | `data/forgebridge.db` | SQLite path                  |
+| `HOST`            | `0.0.0.0`             | Host                         |
+| `PORT`            | `8000`                | Port                         |
 
 ---
 
 ## API
 
 ### `GET /api/messages?since=<unix_timestamp>`
-Retorna todas as mensagens (ou só as novas a partir de `since`).
+Returns all messages (or only new ones after `since`).
 
 ### `POST /api/messages`
 ```json
 {
-  "token": "engenheiro_secret",
-  "content": "## Tarefa 1\n- Fazer X\n- Abrir PR quando terminar"
+  "token": "engineer_secret",
+  "content": "## Task 1\n- Do X\n- Open a PR when finished"
 }
 ```
 
 ### `GET /api/status`
-Health check + última atividade.
+Health check + last activity.
 
 ---
 
-## Fluxo recomendado
+## Recommended workflow
 
-1. **Engenheiro** posta a instrução em Markdown no board.
-2. **Operário** monitora (`GET /api/messages?since=...`), executa a tarefa e abre o PR no repositório do projeto.
-3. **Operário** posta o status + link do PR:
+1. **Engineer** posts the instruction in Markdown on the board.
+2. **Worker** monitors (`GET /api/messages?since=...`), executes the task and opens the PR on the project repository.
+3. **Worker** posts status + PR link:
    ```markdown
-   ### Status – Tarefa 1
-   Concluído.
+   ### Status – Task 1
+   Done.
 
-   **PR:** https://github.com/seu-user/seu-repo/pull/42
+   **PR:** https://github.com/your-user/your-repo/pull/42
 
-   **O que mudou:**
+   **What changed:**
    - `src/auth.ts`
-   - testes adicionados
+   - tests added
    ```
-4. **Engenheiro** revisa o PR no GitHub e posta feedback ou próxima tarefa.
-5. Repete.
+4. **Engineer** reviews the PR on GitHub and posts feedback or the next task.
+5. Repeat.
 
 ---
 
-## Como o Operário monitora (exemplo em Python)
+## How the Worker monitors (Python example)
 
 ```python
 import time
 import requests
 
 BASE = "http://localhost:8000"
-TOKEN = "operario_secret"
+TOKEN = "worker_secret"
 last = 0
 
 while True:
@@ -105,29 +105,31 @@ while True:
     msgs = r.json()
     for m in msgs:
         if m["role"] == "engineer":
-            print("Nova instrução:", m["content"])
-            # → executar tarefa, abrir PR, etc.
-            # depois postar status:
+            print("New instruction:", m["content"])
+            # → execute task, open PR, etc.
+            # then post status:
             requests.post(f"{BASE}/api/messages", json={
                 "token": TOKEN,
-                "content": "### Status\nPR aberto: ..."
+                "content": "### Status\nPR opened: ..."
             })
         last = max(last, m["created_at"])
     time.sleep(10)
 ```
 
+A ready-to-use script is available at `examples/worker_poll.py`.
+
 ---
 
-## Deploy rápido
+## Quick deploy
 
-Qualquer lugar que rode Python:
+Anywhere that runs Python:
 
 - Railway
 - Render
 - Fly.io
-- VPS simples
+- Simple VPS
 
-Exemplo com Docker (opcional):
+Docker example (optional):
 
 ```dockerfile
 FROM python:3.12-slim
@@ -140,6 +142,6 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 ---
 
-## Licença
+## License
 
 MIT © 2026 Cassio Marques Campos
