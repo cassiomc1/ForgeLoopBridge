@@ -11,7 +11,9 @@ ENV/
 env.bak/
 venv.bak/
 data/*.db
-data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+.worker_last_seen
 .DS_Store
 *.log
 .idea/
