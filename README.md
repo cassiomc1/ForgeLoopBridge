@@ -1,3 +1,14 @@
+<p align="center">
+  <img src="assets/banner.jpg" alt="ForgeBridge" width="800">
+</p>
+
+<p align="center">
+  <strong>Minimalist Markdown communication board between Engineer and Worker agents</strong><br>
+  Built to work with <a href="https://github.com/cassiomc1/ForgeLoop">ForgeLoop</a>
+</p>
+
+---
+
 # ForgeBridge
 
 **Minimalist Markdown communication board between two agents: Engineer and Worker.**
