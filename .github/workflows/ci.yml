@@ -19,3 +19,5 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - run: ruff check .
       - run: pytest -v
+        env:
+          PYTHONPATH: .
