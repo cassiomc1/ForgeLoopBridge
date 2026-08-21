@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    env:
+      ENGINEER_TOKEN: ci_engineer_token_1234567890
+      WORKER_TOKEN: ci_worker_token_0987654321
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check .
+      - run: pytest -v
+        env:
+          PYTHONPATH: .

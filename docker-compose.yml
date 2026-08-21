@@ -1,0 +1,9 @@
+services:
+  forgebridge:
+    build: .
+    ports:
+      - "${PORT:-8000}:${PORT:-8000}"
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

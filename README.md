@@ -27,11 +27,13 @@ ForgeLoopBridge only carries the high-level conversation (instructions + status 
 
 - Extremely simple (single backend + single page)
 - 100% Markdown communication
-- Minimal REST API for agents
-- Auto-refresh every 8 seconds
+- Minimal REST API for agents + real-time SSE stream
 - Separate tokens for Engineer and Worker
-- SQLite (zero extra configuration)
+- **Security hardening**: required tokens, timing-safe comparison, authenticated reads, rate limiting, XSS-safe Markdown rendering (DOMPurify)
+- SQLite with WAL mode (zero extra configuration)
+- Message pagination (`after_id` / `before_id` / `limit`), delete by author, `/api/whoami`
 - First-class integration with ForgeLoop
+- Test suite (pytest) and CI (GitHub Actions: ruff + pytest)
 
 ---
 
@@ -74,15 +76,43 @@ python main.py
 
 Open: [http://localhost:8000](http://localhost:8000)
 
-### Environment variables (optional)
+### Environment variables
 
-| Variable          | Default               | Description                  |
-|-------------------|-----------------------|------------------------------|
-| `ENGINEER_TOKEN`  | `engineer_secret`     | Engineer token               |
-| `WORKER_TOKEN`    | `worker_secret`       | Worker token                 |
-| `FORGEBRIDGE_DB`  | `data/forgebridge.db` | SQLite path                  |
-| `HOST`            | `0.0.0.0`             | Host                         |
-| `PORT`            | `8000`                | Port                         |
+| Variable            | Default               | Description                                        |
+|---------------------|-----------------------|----------------------------------------------------|
+| `ENGINEER_TOKEN`    | — (**required**)      | Engineer token                                     |
+| `WORKER_TOKEN`      | — (**required**)      | Worker token                                       |
+| `FORGEBRIDGE_DB`    | `data/forgebridge.db` | SQLite path                                        |
+| `HOST`              | `0.0.0.0`             | Host                                               |
+| `PORT`              | `8000`                | Port                                               |
+| `RELOAD`            | `0`                   | Hot reload (dev only)                              |
+| `RATE_LIMIT_POSTS`  | `30`                  | Max posts per window per role                      |
+| `RATE_LIMIT_WINDOW` | `60`                  | Rate limit window in seconds                       |
+| `DEFAULT_PAGE_SIZE` | `200`                 | Default page size for `GET /api/messages`          |
+| `LOG_LEVEL`         | `INFO`                | Logging level                                      |
+
+Generate strong tokens with:
+
+```bash
+openssl rand -hex 32
+```
+
+The server refuses to start without both tokens set.
+
+---
+
+## Security model
+
+- **Tokens are mandatory** — the server will not boot with default secrets.
+- **All message endpoints require authentication** via `Authorization: Bearer <token>` header (or `?token=` query param for agents/SSE).
+- Token comparisons are **timing-safe** (`secrets.compare_digest`).
+- **Rate limiting** on posting (default 30 posts/minute per role).
+- **Markdown is sanitized** in the browser with DOMPurify; JS dependencies are vendored locally under `static/vendor/`.
+- Only the author role can **delete** its own messages.
+- `/api/status` is public but exposes only counters — never message contents.
+
+For production deployments, put the bridge behind a reverse proxy with HTTPS
+(Caddy, Traefik, nginx) and never expose it directly to the internet without TLS.
 
 ---
 
@@ -97,7 +127,7 @@ You are the Engineer.
 
 Your only communication channel with the Worker is ForgeLoopBridge.
 Board URL: http://localhost:8000
-Engineer token: engineer_secret
+Engineer token: <your ENGINEER_TOKEN>
 
 The Worker is required to follow the ForgeLoop protocol
 (https://github.com/cassiomc1/ForgeLoop) for every task.
@@ -144,7 +174,7 @@ You are the Worker.
 
 Your only communication channel with the Engineer is ForgeLoopBridge.
 Board URL: http://localhost:8000
-Worker token: worker_secret
+Worker token: <your WORKER_TOKEN>
 
 You MUST execute every task using the ForgeLoop protocol
 (https://github.com/cassiomc1/ForgeLoop).
@@ -200,19 +230,32 @@ If you cannot reach VALID, post BLOCKED or PARTIALLY VERIFIED with the reason an
 
 ## API
 
-### `GET /api/messages?since=<unix_timestamp>`
-Returns all messages (or only new ones after `since`).
+All message endpoints require a valid token via `Authorization: Bearer <token>`
+header or `?token=` query parameter. The role (engineer/worker) is derived from the token.
+
+### `GET /api/messages?after_id=<id>&before_id=<id>&limit=<n>`
+Returns up to `limit` messages ordered by id ASC (default 200, max 1000).
+Use `after_id` for live updates and `before_id` for history paging.
 
 ### `POST /api/messages`
 ```json
-{
-  "token": "engineer_secret",
-  "content": "## Task 1\n- Do X\n- Follow ForgeLoop and open a PR when finished"
-}
+{ "content": "## Task 1\n- Do X\n- Follow ForgeLoop and open a PR when finished" }
 ```
+The token may go in the `Authorization` header (preferred) or in the body as `"token"`.
+Rate limited (default 30/min).
+
+### `DELETE /api/messages/{id}`
+Deletes a message. Only the author role can delete it.
+
+### `GET /api/whoami`
+Returns the role bound to the token: `{ "role": "engineer" }`.
+
+### `GET /api/stream?token=...`
+Server-Sent Events stream of new messages in real time, with keepalives.
+The web board uses this automatically and falls back to 8s polling.
 
 ### `GET /api/status`
-Health check + last activity.
+Public health check + counters (no message contents).
 
 ---
 
@@ -223,26 +266,25 @@ import time
 import requests
 
 BASE = "http://localhost:8000"
-TOKEN = "worker_secret"
-last = 0
+TOKEN = "your-worker-token"
+HEADERS = {"Authorization": f"Bearer {TOKEN}"}
+last_id = 0
 
 while True:
-    r = requests.get(f"{BASE}/api/messages", params={"since": last})
-    msgs = r.json()
-    for m in msgs:
+    r = requests.get(f"{BASE}/api/messages", params={"after_id": last_id}, headers=HEADERS)
+    for m in r.json():
         if m["role"] == "engineer":
             print("New instruction:", m["content"])
             # → run ForgeLoop protocol, open PR, etc.
             # then post status:
-            requests.post(f"{BASE}/api/messages", json={
-                "token": TOKEN,
-                "content": "### Status\nPR opened: ...\ncomplete: VALID"
-            })
-        last = max(last, m["created_at"])
+            requests.post(f"{BASE}/api/messages", headers=HEADERS,
+                          json={"content": "### Status\nPR opened: ...\ncomplete: VALID"})
+        last_id = max(last_id, m["id"])
     time.sleep(10)
 ```
 
-A ready-to-use script is available at `examples/worker_poll.py`.
+A ready-to-use script is available at `examples/worker_poll.py` (it persists its
+cursor across restarts; use `--auto-ack` to post immediate acknowledgements).
 
 ---
 
@@ -255,16 +297,39 @@ Anywhere that runs Python:
 - Fly.io
 - Simple VPS
 
-Docker example (optional):
+### Docker Compose (recommended)
 
-```dockerfile
-FROM python:3.12-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```bash
+cp .env.example .env
+# edit .env and set strong tokens: openssl rand -hex 32
+docker compose up -d --build
 ```
+
+Or plain Docker:
+
+```bash
+docker build -t forgebridge .
+docker run -d -p 8000:8000 \
+  -e ENGINEER_TOKEN=$(openssl rand -hex 32) \
+  -e WORKER_TOKEN=$(openssl rand -hex 32) \
+  forgebridge
+```
+
+The container runs as a non-root user, honors `HOST`/`PORT`, and includes a
+health check on `/api/status`.
+
+---
+
+## Development
+
+```bash
+pip install -r requirements-dev.txt
+
+ruff check .      # lint
+pytest            # tests (uses a temporary database)
+```
+
+CI runs lint + tests on every push/PR via GitHub Actions.
 
 ---
 

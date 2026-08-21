@@ -4,7 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ForgeLoopBridge</title>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="/static/vendor/marked.min.js"></script>
+  <script src="/static/vendor/purify.min.js"></script>
   <style>
     :root {
       --bg: #0d1117;
@@ -54,16 +55,29 @@
       display: flex;
       gap: 16px;
       flex-wrap: wrap;
+      align-items: center;
     }
 
     .status-bar strong { color: var(--text); }
+
+    .badge {
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-size: 0.7rem;
+      border: 1px solid var(--border);
+    }
+    .badge.engineer { color: var(--engineer); border-color: var(--engineer); }
+    .badge.worker { color: var(--worker); border-color: var(--worker); }
 
     main {
       flex: 1;
       max-width: 860px;
       width: 100%;
       margin: 0 auto;
-      padding: 20px 16px 120px;
+      padding: 20px 16px 140px;
       display: flex;
       flex-direction: column;
       gap: 16px;
@@ -86,6 +100,12 @@
       font-size: 0.8rem;
     }
 
+    .message-header .left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
     .role {
       font-weight: 600;
       text-transform: uppercase;
@@ -96,6 +116,21 @@
     .role.worker { color: var(--worker); }
 
     .time { color: var(--text-muted); }
+
+    .delete-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.85rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .delete-btn:hover {
+      color: #f85149;
+      filter: none;
+      background: rgba(248,81,73,0.1);
+    }
 
     .message-body {
       padding: 14px 16px;
@@ -149,6 +184,46 @@
       margin: 0.6em 0;
     }
 
+    /* Unlock overlay */
+    .unlock-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(13,17,23,0.95);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+    .unlock-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 32px;
+      width: min(420px, 90vw);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .unlock-box h2 { font-size: 1.1rem; }
+    .unlock-box input {
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-size: 0.95rem;
+      font-family: ui-monospace, monospace;
+    }
+    .unlock-box input:focus {
+      outline: none;
+      border-color: var(--engineer);
+    }
+    .unlock-error {
+      color: #f85149;
+      font-size: 0.85rem;
+      min-height: 1.2em;
+    }
+
     /* Composer */
     .composer {
       position: fixed;
@@ -158,7 +233,9 @@
       background: var(--surface);
       border-top: 1px solid var(--border);
       padding: 12px 16px 16px;
+      display: none;
     }
+    .composer.visible { display: block; }
 
     .composer-inner {
       max-width: 860px;
@@ -174,17 +251,9 @@
       align-items: center;
     }
 
-    select, textarea, button {
+    textarea, button, input {
       font-family: inherit;
       font-size: 0.9rem;
-    }
-
-    select {
-      background: var(--bg);
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 6px 10px;
     }
 
     textarea {
@@ -200,12 +269,12 @@
       line-height: 1.4;
     }
 
-    textarea:focus, select:focus {
+    textarea:focus {
       outline: none;
       border-color: var(--engineer);
     }
 
-    button {
+    button.primary {
       background: var(--accent);
       color: #0d1117;
       border: none;
@@ -216,7 +285,7 @@
       white-space: nowrap;
     }
 
-    button:hover { filter: brightness(1.1); }
+    button.primary:hover { filter: brightness(1.1); }
     button:disabled {
       opacity: 0.5;
       cursor: not-allowed;
@@ -229,24 +298,38 @@
       font-size: 0.95rem;
     }
 
-    .token-hint {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-    }
+    .conn-status { font-size: 0.75rem; }
+    .conn-status.live { color: var(--worker); }
+    .conn-status.polling { color: #d29922; }
 
     @media (max-width: 600px) {
       header { padding: 10px 12px; }
-      main { padding: 12px 10px 140px; }
+      main { padding: 12px 10px 160px; }
     }
   </style>
 </head>
 <body>
+  <div class="unlock-overlay" id="unlock">
+    <div class="unlock-box">
+      <h2>🔑 Connect to ForgeLoopBridge</h2>
+      <p style="color:var(--text-muted);font-size:0.85rem;">
+        Enter your Engineer or Worker token to load the board.
+        The token is kept in this browser session only.
+      </p>
+      <input type="password" id="unlock-token" placeholder="Token" autofocus autocomplete="off" />
+      <div class="unlock-error" id="unlock-error"></div>
+      <button class="primary" id="unlock-btn">Connect</button>
+    </div>
+  </div>
+
   <header>
     <div class="logo">Forge<span>Bridge</span></div>
     <div class="status-bar">
+      <span class="badge hidden" id="my-role"></span>
       <span>Msgs: <strong id="total">0</strong></span>
       <span>Last: <strong id="last-role">—</strong></span>
-      <span id="last-time"></span>
+      <span class="conn-status polling" id="conn-status">connecting…</span>
+      <button class="delete-btn" id="lock-btn" title="Disconnect (forget token)">⏏</button>
     </div>
   </header>
 
@@ -254,26 +337,26 @@
     <div class="empty" id="empty-state">No messages yet.<br>The Engineer or Worker can post the first one.</div>
   </main>
 
-  <div class="composer">
+  <div class="composer" id="composer">
     <div class="composer-inner">
-      <div class="composer-row">
-        <select id="role-select">
-          <option value="engineer">Engineer</option>
-          <option value="worker">Worker</option>
-        </select>
-        <input type="password" id="token-input" placeholder="Token" style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:0.9rem;" />
-        <button id="post-btn" onclick="postMessage()">Post</button>
-      </div>
       <textarea id="content" placeholder="Write in Markdown…&#10;&#10;## Task X&#10;- clear instruction&#10;- acceptance criteria"></textarea>
-      <div class="token-hint">Default tokens: engineer_secret / worker_secret (change via env vars)</div>
+      <div class="composer-row">
+        <span style="font-size:0.75rem;color:var(--text-muted);flex:1;">Ctrl+Enter to post · posting as <strong id="composer-role">—</strong></span>
+        <button class="primary" id="post-btn">Post</button>
+      </div>
     </div>
   </div>
 
   <script>
     const board = document.getElementById('board');
     const emptyState = document.getElementById('empty-state');
-    let lastSeen = 0;
+    let token = sessionStorage.getItem('flb_token') || '';
+    let myRole = sessionStorage.getItem('flb_role') || '';
+    let lastId = 0;
     let knownIds = new Set();
+    let eventSource = null;
+
+    const authHeaders = () => ({ 'Authorization': 'Bearer ' + token });
 
     function formatTime(ts) {
       const d = new Date(ts * 1000);
@@ -283,44 +366,57 @@
       });
     }
 
+    function renderMarkdown(content) {
+      return DOMPurify.sanitize(marked.parse(content), { USE_PROFILES: { html: true } });
+    }
+
+    function nearBottom() {
+      return window.innerHeight + window.scrollY >= document.body.scrollHeight - 120;
+    }
+
     function renderMessage(msg) {
       if (knownIds.has(msg.id)) return;
       knownIds.add(msg.id);
+
+      const roleLabel = msg.role === 'engineer' ? 'Engineer' : 'Worker';
+      const canDelete = msg.role === myRole;
 
       const div = document.createElement('div');
       div.className = 'message';
       div.dataset.id = msg.id;
 
-      const roleLabel = msg.role === 'engineer' ? 'Engineer' : 'Worker';
-      const roleClass = msg.role;
-
       div.innerHTML = `
         <div class="message-header">
-          <span class="role ${roleClass}">${roleLabel}</span>
-          <span class="time">${formatTime(msg.created_at)}</span>
+          <span class="left">
+            <span class="role ${msg.role}">${roleLabel}</span>
+            <span class="time">${formatTime(msg.created_at)}</span>
+          </span>
+          <span>${canDelete ? '<button class="delete-btn" title="Delete message">🗑</button>' : ''}</span>
         </div>
-        <div class="message-body">${marked.parse(msg.content)}</div>
+        <div class="message-body">${renderMarkdown(msg.content)}</div>
       `;
 
-      if (emptyState) emptyState.remove();
+      if (canDelete) {
+        div.querySelector('.delete-btn').addEventListener('click', () => deleteMessage(msg.id));
+      }
+
+      const shouldScroll = nearBottom();
+      if (emptyState.isConnected) emptyState.remove();
       board.appendChild(div);
-      board.scrollTop = board.scrollHeight;
-      window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+      if (shouldScroll) window.scrollTo({ top: document.body.scrollHeight });
     }
 
     async function fetchMessages(initial = false) {
       try {
-        const url = initial ? '/api/messages' : `/api/messages?since=${lastSeen}`;
-        const res = await fetch(url);
+        const params = new URLSearchParams();
+        if (!initial && lastId > 0) params.set('after_id', lastId);
+        const res = await fetch('/api/messages?' + params.toString(), { headers: authHeaders() });
+        if (res.status === 401 || res.status === 403) { lock(); return; }
         if (!res.ok) return;
         const messages = await res.json();
+        messages.forEach(renderMessage);
+        if (messages.length > 0) lastId = Math.max(lastId, ...messages.map(m => m.id));
 
-        messages.forEach(m => {
-          renderMessage(m);
-          if (m.created_at > lastSeen) lastSeen = m.created_at;
-        });
-
-        // update status
         const statusRes = await fetch('/api/status');
         if (statusRes.ok) {
           const s = await statusRes.json();
@@ -328,23 +424,57 @@
           document.getElementById('last-role').textContent =
             s.last_message_role === 'engineer' ? 'Engineer' :
             s.last_message_role === 'worker' ? 'Worker' : '—';
-          document.getElementById('last-time').textContent =
-            s.last_message_at ? formatTime(s.last_message_at) : '';
         }
       } catch (e) {
         console.warn('Poll error', e);
       }
     }
 
-    async function postMessage() {
-      const role = document.getElementById('role-select').value;
-      const token = document.getElementById('token-input').value.trim();
-      const content = document.getElementById('content').value.trim();
-
-      if (!token || !content) {
-        alert('Token and content are required');
-        return;
+    function setConnStatus(mode) {
+      const el = document.getElementById('conn-status');
+      if (mode === 'live') {
+        el.textContent = '● live'; el.className = 'conn-status live';
+      } else if (mode === 'polling') {
+        el.textContent = '● polling'; el.className = 'conn-status polling';
+      } else {
+        el.textContent = 'connecting…'; el.className = 'conn-status polling';
       }
+    }
+
+    function startStream() {
+      if (eventSource) eventSource.close();
+      try {
+        eventSource = new EventSource('/api/stream?token=' + encodeURIComponent(token));
+        eventSource.onopen = () => setConnStatus('live');
+        eventSource.onmessage = (ev) => {
+          const msg = JSON.parse(ev.data);
+          renderMessage(msg);
+          refreshStatus();
+        };
+        eventSource.onerror = () => {
+          setConnStatus('polling');
+        };
+      } catch (e) {
+        setConnStatus('polling');
+      }
+    }
+
+    async function refreshStatus() {
+      try {
+        const res = await fetch('/api/status');
+        if (res.ok) {
+          const s = await res.json();
+          document.getElementById('total').textContent = s.total_messages;
+          document.getElementById('last-role').textContent =
+            s.last_message_role === 'engineer' ? 'Engineer' :
+            s.last_message_role === 'worker' ? 'Worker' : '—';
+        }
+      } catch (e) { /* ignore */ }
+    }
+
+    async function postMessage() {
+      const content = document.getElementById('content').value.trim();
+      if (!content) return;
 
       const btn = document.getElementById('post-btn');
       btn.disabled = true;
@@ -352,18 +482,21 @@
       try {
         const res = await fetch('/api/messages', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
           body: JSON.stringify({ token, content })
         });
 
         if (!res.ok) {
-          const err = await res.json();
+          const err = await res.json().catch(() => ({}));
           alert(err.detail || 'Failed to post');
           return;
         }
 
+        const msg = await res.json();
+        renderMessage(msg);
+        lastId = Math.max(lastId, msg.id);
         document.getElementById('content').value = '';
-        await fetchMessages();
+        refreshStatus();
       } catch (e) {
         alert('Network error');
       } finally {
@@ -371,14 +504,90 @@
       }
     }
 
-    // Ctrl+Enter to post
+    async function deleteMessage(id) {
+      if (!confirm('Delete message #' + id + '?')) return;
+      try {
+        const res = await fetch('/api/messages/' + id, {
+          method: 'DELETE',
+          headers: authHeaders()
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          alert(err.detail || 'Failed to delete');
+          return;
+        }
+        const el = board.querySelector(`[data-id="${id}"]`);
+        if (el) el.remove();
+        knownIds.delete(id);
+        refreshStatus();
+      } catch (e) {
+        alert('Network error');
+      }
+    }
+
+    function showBoard() {
+      document.getElementById('unlock').style.display = 'none';
+      document.getElementById('composer').classList.add('visible');
+      const badge = document.getElementById('my-role');
+      badge.textContent = myRole;
+      badge.classList.remove('hidden');
+      badge.classList.add(myRole);
+      document.getElementById('composer-role').textContent =
+        myRole === 'engineer' ? 'Engineer' : 'Worker';
+    }
+
+    function lock() {
+      sessionStorage.removeItem('flb_token');
+      sessionStorage.removeItem('flb_role');
+      token = ''; myRole = '';
+      if (eventSource) { eventSource.close(); eventSource = null; }
+      location.reload();
+    }
+
+    async function connect(tkn) {
+      const errEl = document.getElementById('unlock-error');
+      try {
+        const res = await fetch('/api/whoami', { headers: { 'Authorization': 'Bearer ' + tkn } });
+        if (!res.ok) {
+          errEl.textContent = 'Invalid token.';
+          return false;
+        }
+        const data = await res.json();
+        token = tkn;
+        myRole = data.role;
+        sessionStorage.setItem('flb_token', token);
+        sessionStorage.setItem('flb_role', myRole);
+        return true;
+      } catch (e) {
+        errEl.textContent = 'Network error.';
+        return false;
+      }
+    }
+
+    // Wire events
+    document.getElementById('unlock-btn').addEventListener('click', async () => {
+      const tkn = document.getElementById('unlock-token').value.trim();
+      if (!tkn) return;
+      if (await connect(tkn)) showBoard();
+    });
+    document.getElementById('unlock-token').addEventListener('keydown', async (e) => {
+      if (e.key === 'Enter') document.getElementById('unlock-btn').click();
+    });
+    document.getElementById('lock-btn').addEventListener('click', lock);
+    document.getElementById('post-btn').addEventListener('click', postMessage);
     document.getElementById('content').addEventListener('keydown', (e) => {
       if (e.ctrlKey && e.key === 'Enter') postMessage();
     });
 
-    // initial load + poll
-    fetchMessages(true);
-    setInterval(() => fetchMessages(false), 8000);
+    // Boot: resume session or wait for unlock
+    if (token && myRole) {
+      showBoard();
+    }
+    fetchMessages(true).then(() => startStream());
+    setInterval(() => {
+      if (eventSource && eventSource.readyState <= 1) return;
+      fetchMessages(false);
+    }, 8000);
   </script>
 </body>
 </html>
