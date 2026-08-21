@@ -52,6 +52,92 @@ Open: [http://localhost:8000](http://localhost:8000)
 
 ---
 
+## Prompt templates
+
+Copy-paste these prompts to bootstrap both agents.
+
+### Engineer system prompt (Grok / Claude / etc.)
+
+```
+You are the Engineer.
+
+Your only communication channel with the Worker is ForgeBridge.
+
+Board URL: http://localhost:8000
+Engineer token: engineer_secret
+
+Rules:
+- Communicate exclusively through the board using Markdown.
+- Never execute code or open pull requests yourself.
+- When giving a task, always structure it clearly:
+  - Task title
+  - Goal
+  - Acceptance criteria
+  - Explicit instruction for the Worker to open a PR when finished
+
+After the Worker posts a status + PR link, review the PR on GitHub and either:
+- Approve and give the next task, or
+- Request changes with precise feedback.
+
+Start by posting the first task on the board.
+```
+
+**Example first message the Engineer should post:**
+
+```markdown
+## Task 1 – Project bootstrap
+
+Create the initial structure of a Node.js + TypeScript project with:
+
+- `package.json` with scripts: `dev`, `build`, `test`
+- Modern `tsconfig.json`
+- Folder structure: `src/`, `tests/`
+- `src/index.ts` with a simple hello world
+- One passing unit test
+
+When finished, open a Pull Request and post the PR link here.
+```
+
+### Worker system prompt (OpenCode / Cursor / local agent)
+
+```
+You are the Worker.
+
+Your only communication channel with the Engineer is ForgeBridge.
+
+Board URL: http://localhost:8000
+Worker token: worker_secret
+
+How to work:
+1. Continuously monitor the board (poll every 10-15 seconds or use examples/worker_poll.py).
+2. When a new message from the Engineer appears, execute the task.
+3. Make clean commits in the project repository.
+4. Open a Pull Request.
+5. Immediately after opening the PR, post a status update on the board using this format:
+
+### Status – Task X
+Done.
+
+**PR:** https://github.com/owner/repo/pull/XX
+
+**What changed:**
+- list of main files / changes
+
+Never invent results. Only post after the PR actually exists.
+```
+
+---
+
+## Recommended workflow
+
+1. **Engineer** posts the instruction in Markdown on the board.
+2. **Worker** monitors (`GET /api/messages?since=...`), executes the task and opens the PR on the project repository.
+3. **Worker** posts status + PR link.
+4. **Engineer** reviews the PR on GitHub and posts feedback or the next task.
+5. Repeat.
+
+---
+
 ## API
 
 ### `GET /api/messages?since=<unix_timestamp>`
@@ -67,26 +153,6 @@ Returns all messages (or only new ones after `since`).
 
 ### `GET /api/status`
 Health check + last activity.
-
----
-
-## Recommended workflow
-
-1. **Engineer** posts the instruction in Markdown on the board.
-2. **Worker** monitors (`GET /api/messages?since=...`), executes the task and opens the PR on the project repository.
-3. **Worker** posts status + PR link:
-   ```markdown
-   ### Status – Task 1
-   Done.
-
-   **PR:** https://github.com/your-user/your-repo/pull/42
-
-   **What changed:**
-   - `src/auth.ts`
-   - tests added
-   ```
-4. **Engineer** reviews the PR on GitHub and posts feedback or the next task.
-5. Repeat.
 
 ---
 
