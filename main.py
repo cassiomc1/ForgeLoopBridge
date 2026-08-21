@@ -1,5 +1,5 @@
 """
-ForgeBridge — Minimalist Markdown communication board
+ForgeLoopBridge — Minimalist Markdown communication board
 between Engineer and Worker agents.
 """
 
@@ -60,7 +60,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="ForgeBridge",
+    title="ForgeLoopBridge",
     description="Minimalist Markdown communication hub between Engineer and Worker agents",
     version="1.0.0",
     lifespan=lifespan,
