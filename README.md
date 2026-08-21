@@ -2,12 +2,13 @@
 
 **Minimalist Markdown communication board between two agents: Engineer and Worker.**
 
-Designed for this workflow:
+Designed to work together with [ForgeLoop](https://github.com/cassiomc1/ForgeLoop) — a portable engineering protocol for AI coding agents.
 
-- **Engineer** (e.g. Grok) → designs, analyzes, gives instructions and reviews PRs
-- **Worker** (e.g. OpenCode / Cursor / local script) → executes tasks, opens PRs on GitHub and reports status
+- **Engineer** (e.g. Grok) → defines intent, acceptance criteria and reviews PRs
+- **Worker** (e.g. OpenCode / Cursor / local agent) → executes tasks following the full ForgeLoop protocol, opens PRs and reports status
 
-The real code always lives in the project repository. ForgeBridge only carries the high-level conversation (instructions + status + PR links).
+The real code and all ForgeLoop artifacts (`.forgeloop/`) always live in the **project repository**.  
+ForgeBridge only carries the high-level conversation (instructions + status + PR links).
 
 ---
 
@@ -19,6 +20,28 @@ The real code always lives in the project repository. ForgeBridge only carries t
 - Auto-refresh every 8 seconds
 - Separate tokens for Engineer and Worker
 - SQLite (zero extra configuration)
+- First-class integration with ForgeLoop
+
+---
+
+## Architecture
+
+```
+┌─────────────────┐         ForgeBridge          ┌─────────────────┐
+│    Engineer     │◄─────── Markdown board ──────►│     Worker      │
+│  (Grok / LLM)   │      (instructions + status)  │ (OpenCode etc.) │
+└────────┬────────┘                               └────────┬────────┘
+         │                                                 │
+         │ reviews PR                                      │ executes
+         │                                                 │
+         ▼                                                 ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                     Project Repository                           │
+│  • Source code                                                   │
+│  • .forgeloop/  (contracts, evidence, state, verification)       │
+│  • Pull Requests                                                 │
+└──────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -52,89 +75,115 @@ Open: [http://localhost:8000](http://localhost:8000)
 
 ---
 
-## Prompt templates
+## Prompt templates (with ForgeLoop)
 
 Copy-paste these prompts to bootstrap both agents.
 
-### Engineer system prompt (Grok / Claude / etc.)
+### Engineer system prompt
 
 ```
 You are the Engineer.
 
 Your only communication channel with the Worker is ForgeBridge.
-
 Board URL: http://localhost:8000
 Engineer token: engineer_secret
 
-Rules:
-- Communicate exclusively through the board using Markdown.
-- Never execute code or open pull requests yourself.
-- When giving a task, always structure it clearly:
-  - Task title
-  - Goal
-  - Acceptance criteria
-  - Explicit instruction for the Worker to open a PR when finished
+The Worker is required to follow the ForgeLoop protocol
+(https://github.com/cassiomc1/ForgeLoop) for every task.
 
-After the Worker posts a status + PR link, review the PR on GitHub and either:
-- Approve and give the next task, or
-- Request changes with precise feedback.
+When you post a task, always include:
+- Clear goal
+- Acceptance criteria
+- Preferred ForgeLoop work type (if known)
+- Explicit instruction: "Follow ForgeLoop. Create a task, write a proper contract, reach VALID completion, then open a PR."
 
-Start by posting the first task on the board.
+You never execute code or run ForgeLoop yourself.
+You only review the resulting PR (especially the .forgeloop artifacts and the complete result).
+
+After the Worker posts a PR, inspect:
+1. Does forgeloop complete return VALID?
+2. Is the evidence sufficient?
+3. Does the code match the contract?
+
+Then either approve + next task, or request precise changes.
 ```
 
-**Example first message the Engineer should post:**
+**Example first message the Engineer should post on the board:**
 
 ```markdown
-## Task 1 – Project bootstrap
+## Task 1 – Bootstrap TypeScript service
 
-Create the initial structure of a Node.js + TypeScript project with:
+Goal: Create a minimal, production-ready Node.js + TypeScript service skeleton.
 
-- `package.json` with scripts: `dev`, `build`, `test`
-- Modern `tsconfig.json`
-- Folder structure: `src/`, `tests/`
-- `src/index.ts` with a simple hello world
-- One passing unit test
+Acceptance criteria:
+- package.json with scripts: dev, build, test, lint
+- Modern tsconfig
+- src/index.ts with a health endpoint
+- At least one passing test
+- forgeloop complete must return VALID
 
-When finished, open a Pull Request and post the PR link here.
+Follow the full ForgeLoop protocol.
+Create a task, write a proper contract, reach VALID completion, then open a PR and post the link + complete result here.
 ```
 
-### Worker system prompt (OpenCode / Cursor / local agent)
+### Worker system prompt
 
 ```
 You are the Worker.
 
 Your only communication channel with the Engineer is ForgeBridge.
-
 Board URL: http://localhost:8000
 Worker token: worker_secret
 
-How to work:
-1. Continuously monitor the board (poll every 10-15 seconds or use examples/worker_poll.py).
-2. When a new message from the Engineer appears, execute the task.
-3. Make clean commits in the project repository.
-4. Open a Pull Request.
-5. Immediately after opening the PR, post a status update on the board using this format:
+You MUST execute every task using the ForgeLoop protocol
+(https://github.com/cassiomc1/ForgeLoop).
+
+Mandatory workflow for every new instruction from the Engineer:
+
+1. Discover existing tasks first:
+   forgeloop task-list --json
+
+2. Create or resume a ForgeLoop task:
+   forgeloop task-create --task <short-key> --claim <paths> --json
+
+3. Write a proper contract.json that reflects the Engineer's request.
+
+4. Route, preflight, implement, verify with evidence:
+   forgeloop route ...
+   forgeloop preflight ...   # must be READY
+   ... implement ...
+   forgeloop run-check ...
+   forgeloop complete ...    # must return VALID
+
+5. Open a Pull Request that includes both the code changes AND the .forgeloop artifacts.
+
+6. Immediately post on ForgeBridge:
 
 ### Status – Task X
 Done.
 
-**PR:** https://github.com/owner/repo/pull/XX
+**PR:** https://github.com/.../pull/XX
 
-**What changed:**
-- list of main files / changes
+**ForgeLoop:**
+- task: <taskKey>
+- complete: VALID
+- evidence: <short summary>
 
-Never invent results. Only post after the PR actually exists.
+Never invent results. Only post after `forgeloop complete` returns VALID and the PR exists.
+If you cannot reach VALID, post BLOCKED or PARTIALLY VERIFIED with the reason and wait for new instructions.
 ```
 
 ---
 
 ## Recommended workflow
 
-1. **Engineer** posts the instruction in Markdown on the board.
-2. **Worker** monitors (`GET /api/messages?since=...`), executes the task and opens the PR on the project repository.
-3. **Worker** posts status + PR link.
-4. **Engineer** reviews the PR on GitHub and posts feedback or the next task.
-5. Repeat.
+1. **Engineer** posts a clear task on the ForgeBridge board.
+2. **Worker** detects the message, creates/resumes a ForgeLoop task in the project repo.
+3. Worker follows the full protocol until `forgeloop complete` returns `VALID`.
+4. Worker opens a PR containing code + `.forgeloop/` artifacts.
+5. Worker posts status + PR link + complete result on ForgeBridge.
+6. **Engineer** reviews the PR (especially verification evidence) and posts feedback or the next task.
+7. Repeat.
 
 ---
 
@@ -147,7 +196,7 @@ Returns all messages (or only new ones after `since`).
 ```json
 {
   "token": "engineer_secret",
-  "content": "## Task 1\n- Do X\n- Open a PR when finished"
+  "content": "## Task 1\n- Do X\n- Follow ForgeLoop and open a PR when finished"
 }
 ```
 
@@ -172,11 +221,11 @@ while True:
     for m in msgs:
         if m["role"] == "engineer":
             print("New instruction:", m["content"])
-            # → execute task, open PR, etc.
+            # → run ForgeLoop protocol, open PR, etc.
             # then post status:
             requests.post(f"{BASE}/api/messages", json={
                 "token": TOKEN,
-                "content": "### Status\nPR opened: ..."
+                "content": "### Status\nPR opened: ...\ncomplete: VALID"
             })
         last = max(last, m["created_at"])
     time.sleep(10)
