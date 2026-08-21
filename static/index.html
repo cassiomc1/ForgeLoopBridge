@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ForgeBridge</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --engineer: #58a6ff;
+      --worker: #3fb950;
+      --accent: #f78166;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .logo {
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .logo span { color: var(--accent); }
+
+    .status-bar {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .status-bar strong { color: var(--text); }
+
+    main {
+      flex: 1;
+      max-width: 860px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 20px 16px 120px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .message {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .message-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 14px;
+      background: rgba(255,255,255,0.03);
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8rem;
+    }
+
+    .role {
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .role.engineer { color: var(--engineer); }
+    .role.worker { color: var(--worker); }
+
+    .time { color: var(--text-muted); }
+
+    .message-body {
+      padding: 14px 16px;
+      font-size: 0.95rem;
+    }
+
+    .message-body h1, .message-body h2, .message-body h3 {
+      margin: 0.6em 0 0.3em;
+      line-height: 1.3;
+    }
+    .message-body h1 { font-size: 1.4rem; }
+    .message-body h2 { font-size: 1.2rem; }
+    .message-body h3 { font-size: 1.05rem; }
+
+    .message-body p { margin: 0.5em 0; }
+    .message-body ul, .message-body ol { margin: 0.5em 0; padding-left: 1.4em; }
+    .message-body li { margin: 0.2em 0; }
+
+    .message-body code {
+      background: rgba(110,118,129,0.2);
+      padding: 0.15em 0.4em;
+      border-radius: 4px;
+      font-size: 0.88em;
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    }
+
+    .message-body pre {
+      background: #0d1117;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      overflow-x: auto;
+      margin: 0.8em 0;
+    }
+
+    .message-body pre code {
+      background: none;
+      padding: 0;
+    }
+
+    .message-body a {
+      color: var(--engineer);
+      text-decoration: none;
+    }
+    .message-body a:hover { text-decoration: underline; }
+
+    .message-body blockquote {
+      border-left: 3px solid var(--border);
+      padding-left: 12px;
+      color: var(--text-muted);
+      margin: 0.6em 0;
+    }
+
+    /* Composer */
+    .composer {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 12px 16px 16px;
+    }
+
+    .composer-inner {
+      max-width: 860px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .composer-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    select, textarea, button {
+      font-family: inherit;
+      font-size: 0.9rem;
+    }
+
+    select {
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 10px;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 72px;
+      max-height: 200px;
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      resize: vertical;
+      line-height: 1.4;
+    }
+
+    textarea:focus, select:focus {
+      outline: none;
+      border-color: var(--engineer);
+    }
+
+    button {
+      background: var(--accent);
+      color: #0d1117;
+      border: none;
+      border-radius: 6px;
+      padding: 8px 18px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    button:hover { filter: brightness(1.1); }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .empty {
+      text-align: center;
+      color: var(--text-muted);
+      padding: 60px 20px;
+      font-size: 0.95rem;
+    }
+
+    .token-hint {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    @media (max-width: 600px) {
+      header { padding: 10px 12px; }
+      main { padding: 12px 10px 140px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo">Forge<span>Bridge</span></div>
+    <div class="status-bar">
+      <span>Msgs: <strong id="total">0</strong></span>
+      <span>Última: <strong id="last-role">—</strong></span>
+      <span id="last-time"></span>
+    </div>
+  </header>
+
+  <main id="board">
+    <div class="empty" id="empty-state">Nenhuma mensagem ainda.<br>O Engenheiro ou o Operário pode postar a primeira.</div>
+  </main>
+
+  <div class="composer">
+    <div class="composer-inner">
+      <div class="composer-row">
+        <select id="role-select">
+          <option value="engineer">Engenheiro</option>
+          <option value="worker">Operário</option>
+        </select>
+        <input type="password" id="token-input" placeholder="Token" style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:0.9rem;" />
+        <button id="post-btn" onclick="postMessage()">Postar</button>
+      </div>
+      <textarea id="content" placeholder="Escreva em Markdown…&#10;&#10;## Tarefa X&#10;- instrução clara&#10;- critérios de aceite"></textarea>
+      <div class="token-hint">Tokens padrão: engenheiro_secret / operario_secret (altere via env vars)</div>
+    </div>
+  </div>
+
+  <script>
+    const board = document.getElementById('board');
+    const emptyState = document.getElementById('empty-state');
+    let lastSeen = 0;
+    let knownIds = new Set();
+
+    function formatTime(ts) {
+      const d = new Date(ts * 1000);
+      return d.toLocaleString('pt-BR', {
+        day: '2-digit', month: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      });
+    }
+
+    function renderMessage(msg) {
+      if (knownIds.has(msg.id)) return;
+      knownIds.add(msg.id);
+
+      const div = document.createElement('div');
+      div.className = 'message';
+      div.dataset.id = msg.id;
+
+      const roleLabel = msg.role === 'engineer' ? 'Engenheiro' : 'Operário';
+      const roleClass = msg.role;
+
+      div.innerHTML = `
+        <div class="message-header">
+          <span class="role ${roleClass}">${roleLabel}</span>
+          <span class="time">${formatTime(msg.created_at)}</span>
+        </div>
+        <div class="message-body">${marked.parse(msg.content)}</div>
+      `;
+
+      if (emptyState) emptyState.remove();
+      board.appendChild(div);
+      board.scrollTop = board.scrollHeight;
+      window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    }
+
+    async function fetchMessages(initial = false) {
+      try {
+        const url = initial ? '/api/messages' : `/api/messages?since=${lastSeen}`;
+        const res = await fetch(url);
+        if (!res.ok) return;
+        const messages = await res.json();
+
+        messages.forEach(m => {
+          renderMessage(m);
+          if (m.created_at > lastSeen) lastSeen = m.created_at;
+        });
+
+        // update status
+        const statusRes = await fetch('/api/status');
+        if (statusRes.ok) {
+          const s = await statusRes.json();
+          document.getElementById('total').textContent = s.total_messages;
+          document.getElementById('last-role').textContent =
+            s.last_message_role === 'engineer' ? 'Engenheiro' :
+            s.last_message_role === 'worker' ? 'Operário' : '—';
+          document.getElementById('last-time').textContent =
+            s.last_message_at ? formatTime(s.last_message_at) : '';
+        }
+      } catch (e) {
+        console.warn('Poll error', e);
+      }
+    }
+
+    async function postMessage() {
+      const role = document.getElementById('role-select').value;
+      const token = document.getElementById('token-input').value.trim();
+      const content = document.getElementById('content').value.trim();
+
+      if (!token || !content) {
+        alert('Token e conteúdo são obrigatórios');
+        return;
+      }
+
+      const btn = document.getElementById('post-btn');
+      btn.disabled = true;
+
+      try {
+        const res = await fetch('/api/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, content })
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          alert(err.detail || 'Erro ao postar');
+          return;
+        }
+
+        document.getElementById('content').value = '';
+        await fetchMessages();
+      } catch (e) {
+        alert('Falha de rede');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    // Ctrl+Enter to post
+    document.getElementById('content').addEventListener('keydown', (e) => {
+      if (e.ctrlKey && e.key === 'Enter') postMessage();
+    });
+
+    // initial load + poll
+    fetchMessages(true);
+    setInterval(() => fetchMessages(false), 8000);
+  </script>
+</body>
+</html>
