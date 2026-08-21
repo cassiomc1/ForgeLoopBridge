@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.jpg" alt="ForgeLoopBridge" width="800">
+  <img src="assets/banner.webp" alt="ForgeLoopBridge" width="800">
 </p>
 
 <p align="center">
