@@ -210,11 +210,14 @@ Read-only verification sequence (when your host exposes read capabilities):
 
 Your APPROVED message is a project decision, not ForgeLoop host authority. Never represent an Engineer/Worker board agreement as HOST_ATTESTED authority, trusted installation authority, force-recovery authority, or any other ForgeLoop authority class that requires an external trusted boundary.
 
-After the Worker posts a PR and status, verify:
+After the Worker posts a PR and status, verify through canonical read-only surfaces:
 1. Does the task ID match the requested work?
-2. Does canonical `forgeloop complete` return VALID?
-3. Does canonical `forgeloop next` report `terminal: true` / `nextAction: NONE` (or an understood non-terminal state)?
-4. Is verification evidence sufficient and code compliant with the contract?
+2. Does canonical task state/evidence show that the Worker already obtained completion validation `VALID`?
+3. Does canonical `forgeloop next --task <task-id> --json` report `terminal: true` / `nextAction: NONE`, or an explicitly understood non-terminal action?
+4. Is ownership/recovery consistent when relevant?
+5. Does the PR match the task contract and publication policy?
+
+Do not run ForgeLoop mutation commands merely to verify the Worker. In particular, do not re-run `complete`, `advance`, `task-resume`, `run-check`, `route`, or `preflight` as an Engineer verification action.
 
 Then either approve + post next task, or request precise changes.
 
@@ -303,7 +306,9 @@ Mandatory workflow for every instruction from the Engineer:
    forgeloop complete --task <task-id> --json
    forgeloop next --task <task-id> --json
 
-6. Open a Pull Request including code changes and `.forgeloop/` artifacts.
+6. Open a Pull Request containing the implementation changes and only the ForgeLoop artifacts that are versionable under the target repository's installed Git policy.
+
+   Respect `.gitignore` and ForgeLoop's installed git policy. Never force-add ignored local resumable/execution state such as `work-state.json` or `executions/` merely to satisfy the Bridge workflow.
 
 7. Post structured status on ForgeLoopBridge:
 
@@ -376,13 +381,13 @@ Worker checks canonical next (forgeloop next --task <id> --json)
 Implementation + exact argv checks (run-check -- ...)
        │
        ▼
-Audit + Complete (forgeloop complete --json = VALID)
+Audit + Complete (forgeloop complete --task <id> --json = VALID)
        │
        ▼
 Query next until terminal: true / nextAction: NONE
        │
        ▼
-Open Pull Request (code + .forgeloop artifacts)
+Open Pull Request (code + versionable .forgeloop artifacts)
        │
        ▼
 Worker posts structured status (task_id, message_type: STATUS)
@@ -404,11 +409,20 @@ All message endpoints require a valid token via `Authorization: Bearer <token>` 
 
 Query parameters:
 - `task_id` (*optional*): filter messages by exact task identity
-- `after_id` (*optional*): only messages with id > `after_id` (live polling)
-- `before_id` (*optional*): only messages with id < `before_id` (history pagination)
+- `after_id` (*optional*): return messages with `id > after_id` (for live polling updates)
+- `before_id` (*optional*): return historical page with `id < before_id` (for history paging)
+- `latest` (*optional*, `true`/`false`): return newest page of messages (cannot combine with `after_id` or `before_id`)
 - `limit` (*optional*): max messages returned (default 200, max 1000)
 
-Returns messages ordered by `id` ASC.
+| Parameter | Semantics |
+|---|---|
+| `task_id` | Filters by exact task identity |
+| `after_id` | Returns messages with `id > after_id` |
+| `before_id` | Returns historical page before cursor |
+| `latest=true` | Returns newest page while preserving ascending order |
+| `limit` | Page size, default 200, max 1000 |
+
+*Rules*: `latest=true` combined with `after_id` or `before_id` returns HTTP 400. `task_id` can be freely combined with `latest`, `after_id`, or `before_id`. Responses are always ordered by `id ASC`.
 
 ### `POST /api/messages`
 
