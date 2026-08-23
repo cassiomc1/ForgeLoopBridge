@@ -1,7 +1,17 @@
 #!/usr/bin/env python3
 """
 Minimal example of how the Worker can monitor ForgeLoopBridge.
-Replace the "execute task" logic with your agent (OpenCode, etc.).
+This script is a transport adapter. When an instruction is received, invoke
+your Worker agent/harness (e.g. OpenCode, Cursor, or local agent).
+
+The Worker agent MUST follow the canonical ForgeLoop 1.5 workflow:
+1. Prefer official ForgeLoop structured integration when exposed by the host;
+   otherwise use the project-local ForgeLoop CLI.
+2. Inspect compatibility with `forgeloop protocol-info --json`.
+3. Discover existing tasks (`forgeloop task-list --json`) before creating a new one.
+4. Follow canonical `forgeloop next` as the control authority.
+5. Reach VALID completion (`forgeloop complete --json`) and verify terminal `nextAction: NONE`.
+6. Open PR and report structured Markdown status on ForgeLoopBridge.
 
 Usage:
     python worker_poll.py [--auto-ack]
@@ -22,36 +32,47 @@ POLL_INTERVAL = 10                          # seconds
 STATE_FILE = Path(__file__).parent / ".worker_last_seen"  # survives restarts
 
 
-def post_status(content: str):
+def post_status(content: str, task_id: str | None = None, message_type: str = "STATUS"):
+    payload: dict = {
+        "token": WORKER_TOKEN,
+        "content": content,
+        "message_type": message_type,
+    }
+    if task_id:
+        payload["task_id"] = task_id
+
     r = requests.post(
         f"{BASE_URL}/api/messages",
         headers={"Authorization": f"Bearer {WORKER_TOKEN}"},
-        json={"token": WORKER_TOKEN, "content": content},
+        json=payload,
         timeout=15,
     )
     r.raise_for_status()
     print("Status posted successfully.")
 
 
-def load_last_seen() -> float:
+def load_last_seen() -> int:
     try:
-        return float(STATE_FILE.read_text().strip())
+        return int(STATE_FILE.read_text().strip())
     except (FileNotFoundError, ValueError):
-        return 0.0
+        return 0
 
 
-def save_last_seen(ts: float):
-    STATE_FILE.write_text(str(ts))
+def save_last_seen(message_id: int):
+    STATE_FILE.write_text(str(message_id))
 
 
 def main():
     parser = argparse.ArgumentParser(description="ForgeLoopBridge worker poller")
-    parser.add_argument("--auto-ack", action="store_true",
-                        help="post an immediate 'processing...' status per instruction")
+    parser.add_argument(
+        "--auto-ack",
+        action="store_true",
+        help="post an immediate 'processing...' status per instruction",
+    )
     args = parser.parse_args()
 
     last_seen = load_last_seen()
-    if last_seen == 0.0:
+    if last_seen == 0:
         # First run: skip history, only process messages from now on.
         r = requests.get(
             f"{BASE_URL}/api/messages",
@@ -61,7 +82,7 @@ def main():
         )
         r.raise_for_status()
         msgs = r.json()
-        last_seen = msgs[-1]["id"] if msgs else 0
+        last_seen = int(msgs[-1]["id"]) if msgs else 0
         print(f"First run: starting from message id {last_seen}")
     else:
         print(f"Resuming from message id {last_seen}")
@@ -72,7 +93,7 @@ def main():
         try:
             r = requests.get(
                 f"{BASE_URL}/api/messages",
-                params={"after_id": int(last_seen)},
+                params={"after_id": last_seen},
                 headers={"Authorization": f"Bearer {WORKER_TOKEN}"},
                 timeout=15,
             )
@@ -80,30 +101,41 @@ def main():
             messages = r.json()
 
             for msg in messages:
-                last_seen = max(last_seen, msg["id"])
+                msg_id = int(msg["id"])
+                last_seen = max(last_seen, msg_id)
                 save_last_seen(last_seen)
 
                 if msg["role"] != "engineer":
                     continue
 
+                task_id = msg.get("task_id")
+                msg_type = msg.get("message_type")
+
                 print("\n" + "=" * 60)
                 print("NEW INSTRUCTION FROM ENGINEER")
+                if task_id:
+                    print(f"Task: {task_id}")
+                if msg_type:
+                    print(f"Type: {msg_type}")
                 print("=" * 60)
                 print(msg["content"])
                 print("=" * 60 + "\n")
 
                 # ────────────────────────────────────────────────
-                # HERE you call your agent / OpenCode / script
-                # Example:
-                #   result = run_opencode(msg["content"])
-                #   pr_url = open_pull_request(...)
+                # HERE you hand off the instruction to your Worker
+                # agent/harness (OpenCode, Cursor, script, etc.).
+                # The agent follows ForgeLoop 1.5 protocol operations.
                 # ────────────────────────────────────────────────
 
                 if args.auto_ack:
                     post_status(
-                        "### Status\n"
-                        "Received the instruction and processing...\n\n"
-                        "*(replace this message with the real result + PR link)*"
+                        content=(
+                            "### Status\n"
+                            "Received instruction and processing with ForgeLoop...\n\n"
+                            "*(replace this message with the real result + PR link)*"
+                        ),
+                        task_id=task_id,
+                        message_type="STATUS",
                     )
 
         except Exception as e:
@@ -114,3 +146,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

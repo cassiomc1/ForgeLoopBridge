@@ -71,6 +71,43 @@
     }
     .badge.engineer { color: var(--engineer); border-color: var(--engineer); }
     .badge.worker { color: var(--worker); border-color: var(--worker); }
+    .badge.task { color: var(--text-muted); border-color: var(--border); font-family: ui-monospace, monospace; text-transform: none; }
+    .badge.type { color: var(--accent); border-color: var(--accent); }
+
+    .task-filter {
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 3px 8px;
+      font-size: 0.75rem;
+      font-family: inherit;
+    }
+    .task-filter:focus {
+      outline: none;
+      border-color: var(--engineer);
+    }
+
+    .metadata-inputs {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .meta-input {
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 0.8rem;
+      font-family: inherit;
+    }
+    .meta-input:focus {
+      outline: none;
+      border-color: var(--engineer);
+    }
 
     main {
       flex: 1;
@@ -325,6 +362,9 @@
   <header>
     <div class="logo">Forge<span>Bridge</span></div>
     <div class="status-bar">
+      <select id="task-filter" class="task-filter" title="Filter by task">
+        <option value="">All tasks</option>
+      </select>
       <span class="badge hidden" id="my-role"></span>
       <span>Msgs: <strong id="total">0</strong></span>
       <span>Last: <strong id="last-role">—</strong></span>
@@ -339,6 +379,20 @@
 
   <div class="composer" id="composer">
     <div class="composer-inner">
+      <div class="metadata-inputs">
+        <input type="text" id="composer-task-id" class="meta-input" placeholder="Task ID (optional, e.g. auth-feature)" style="flex: 1; max-width: 250px;" />
+        <select id="composer-message-type" class="meta-input">
+          <option value="">Type (optional)</option>
+          <option value="TASK">TASK</option>
+          <option value="STATUS">STATUS</option>
+          <option value="DECISION_NEEDED">DECISION_NEEDED</option>
+          <option value="DECISION_RESOLVED">DECISION_RESOLVED</option>
+          <option value="DECISION_TAKEN">DECISION_TAKEN</option>
+          <option value="BLOCKED">BLOCKED</option>
+          <option value="REVIEW">REVIEW</option>
+          <option value="GENERAL">GENERAL</option>
+        </select>
+      </div>
       <textarea id="content" placeholder="Write in Markdown…&#10;&#10;## Task X&#10;- clear instruction&#10;- acceptance criteria"></textarea>
       <div class="composer-row">
         <span style="font-size:0.75rem;color:var(--text-muted);flex:1;">Ctrl+Enter to post · posting as <strong id="composer-role">—</strong></span>
@@ -355,8 +409,16 @@
     let lastId = 0;
     let knownIds = new Set();
     let eventSource = null;
+    let currentTaskFilter = '';
 
     const authHeaders = () => ({ 'Authorization': 'Bearer ' + token });
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      const p = document.createElement('p');
+      p.textContent = str;
+      return p.innerHTML;
+    }
 
     function formatTime(ts) {
       const d = new Date(ts * 1000);
@@ -374,21 +436,61 @@
       return window.innerHeight + window.scrollY >= document.body.scrollHeight - 120;
     }
 
+    function registerTaskId(taskId) {
+      if (!taskId) return;
+      const select = document.getElementById('task-filter');
+      if (![...select.options].some(o => o.value === taskId)) {
+        const opt = document.createElement('option');
+        opt.value = taskId;
+        opt.textContent = `task: ${taskId}`;
+        select.appendChild(opt);
+      }
+    }
+
+    function applyTaskFilter() {
+      const messages = board.querySelectorAll('.message');
+      messages.forEach(el => {
+        const msgTaskId = el.dataset.taskId || '';
+        if (!currentTaskFilter || msgTaskId === currentTaskFilter) {
+          el.style.display = '';
+        } else {
+          el.style.display = 'none';
+        }
+      });
+    }
+
     function renderMessage(msg) {
       if (knownIds.has(msg.id)) return;
       knownIds.add(msg.id);
 
+      if (msg.task_id) registerTaskId(msg.task_id);
+
       const roleLabel = msg.role === 'engineer' ? 'Engineer' : 'Worker';
       const canDelete = msg.role === myRole;
+
+      let metaHtml = '';
+      if (msg.task_id) {
+        metaHtml += `<span class="badge task">task: ${escapeHtml(msg.task_id)}</span>`;
+      }
+      if (msg.message_type) {
+        metaHtml += `<span class="badge type">${escapeHtml(msg.message_type)}</span>`;
+      }
 
       const div = document.createElement('div');
       div.className = 'message';
       div.dataset.id = msg.id;
+      div.dataset.taskId = msg.task_id || '';
+      div.dataset.messageType = msg.message_type || '';
+
+      if (currentTaskFilter && div.dataset.taskId !== currentTaskFilter) {
+        div.style.display = 'none';
+      }
 
       div.innerHTML = `
         <div class="message-header">
           <span class="left">
             <span class="role ${msg.role}">${roleLabel}</span>
+            ${metaHtml}
             <span class="time">${formatTime(msg.created_at)}</span>
           </span>
           <span>${canDelete ? '<button class="delete-btn" title="Delete message">🗑</button>' : ''}</span>
@@ -476,14 +578,21 @@
       const content = document.getElementById('content').value.trim();
       if (!content) return;
 
+      const taskIdInput = document.getElementById('composer-task-id').value.trim();
+      const typeInput = document.getElementById('composer-message-type').value;
+
       const btn = document.getElementById('post-btn');
       btn.disabled = true;
 
       try {
+        const payload = { token, content };
+        if (taskIdInput) payload.task_id = taskIdInput;
+        if (typeInput) payload.message_type = typeInput;
+
         const res = await fetch('/api/messages', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...authHeaders() },
-          body: JSON.stringify({ token, content })
+          body: JSON.stringify(payload)
         });
 
         if (!res.ok) {
@@ -577,6 +686,10 @@
     document.getElementById('post-btn').addEventListener('click', postMessage);
     document.getElementById('content').addEventListener('keydown', (e) => {
       if (e.ctrlKey && e.key === 'Enter') postMessage();
+    });
+    document.getElementById('task-filter').addEventListener('change', (e) => {
+      currentTaskFilter = e.target.value;
+      applyTaskFilter();
     });
 
     // Boot: resume session or wait for unlock

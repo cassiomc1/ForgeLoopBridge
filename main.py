@@ -82,9 +82,23 @@ def broadcast(message: "MessageOut") -> None:
 
 
 # ─── Models ───────────────────────────────────────────────────────────────────
+VALID_MESSAGE_TYPES = frozenset({
+    "TASK",
+    "STATUS",
+    "DECISION_NEEDED",
+    "DECISION_RESOLVED",
+    "DECISION_TAKEN",
+    "BLOCKED",
+    "REVIEW",
+    "GENERAL",
+})
+
+
 class MessageCreate(BaseModel):
     token: str = ""
     content: str = Field(..., min_length=1, max_length=50000)
+    task_id: str | None = Field(default=None, min_length=1, max_length=200)
+    message_type: str | None = Field(default=None, min_length=1, max_length=40)
 
 
 class MessageOut(BaseModel):
@@ -92,6 +106,8 @@ class MessageOut(BaseModel):
     role: str
     content: str
     created_at: float
+    task_id: str | None = None
+    message_type: str | None = None
 
 
 # ─── Auth helpers ─────────────────────────────────────────────────────────────
@@ -142,12 +158,26 @@ async def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
-                created_at REAL NOT NULL
+                created_at REAL NOT NULL,
+                task_id TEXT,
+                message_type TEXT
             )
         """)
+        # Safe schema migration for existing databases:
+        cursor = await db.execute("PRAGMA table_info(messages)")
+        columns = {row["name"] for row in await cursor.fetchall()}
+        if "task_id" not in columns:
+            await db.execute("ALTER TABLE messages ADD COLUMN task_id TEXT")
+        if "message_type" not in columns:
+            await db.execute("ALTER TABLE messages ADD COLUMN message_type TEXT")
+
         await db.execute("""
             CREATE INDEX IF NOT EXISTS idx_messages_created_at
             ON messages(created_at)
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_messages_task_id
+            ON messages(task_id)
         """)
         await db.commit()
     logger.info("Database ready at %s", DB_PATH)
@@ -173,12 +203,14 @@ app = FastAPI(
 async def get_messages(
     request: Request,
     token: str | None = None,
+    task_id: str | None = None,
     after_id: int | None = None,
     before_id: int | None = None,
     limit: int = DEFAULT_PAGE_SIZE,
 ):
     """Return messages ordered by id ASC. Requires a valid token.
 
+    - `task_id`: filter by task identity (exact match)
     - `after_id`: only messages with id > after_id (live updates)
     - `before_id`: only messages with id < before_id (history paging)
     - `limit`: max messages returned (default 200, max 1000)
@@ -186,9 +218,12 @@ async def get_messages(
     role = await require_reader(request, token)
     limit = max(1, min(limit, MAX_PAGE_SIZE))
 
-    query = "SELECT id, role, content, created_at FROM messages"
+    query = "SELECT id, role, content, created_at, task_id, message_type FROM messages"
     clauses, params = [], []
 
+    if task_id is not None:
+        clauses.append("task_id = ?")
+        params.append(task_id)
     if after_id is not None:
         clauses.append("id > ?")
         params.append(after_id)
@@ -212,7 +247,7 @@ async def get_messages(
     messages = [MessageOut(**dict(row)) for row in rows]
     if before_id is not None:
         messages.reverse()
-    logger.debug("GET /api/messages role=%s count=%d", role, len(messages))
+    logger.debug("GET /api/messages role=%s count=%d task_id=%s", role, len(messages), task_id)
     return messages
 
 
@@ -226,17 +261,35 @@ async def post_message(msg: MessageCreate, request: Request):
     if not content:
         raise HTTPException(status_code=400, detail="Content cannot be empty")
 
+    task_id = msg.task_id.strip() if msg.task_id else None
+    message_type = None
+    if msg.message_type:
+        normalized_type = msg.message_type.strip().upper()
+        if normalized_type not in VALID_MESSAGE_TYPES:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid message_type '{msg.message_type}'. Allowed types: {sorted(VALID_MESSAGE_TYPES)}",
+            )
+        message_type = normalized_type
+
     created_at = time.time()
 
     async with connect_db() as db:
         cursor = await db.execute(
-            "INSERT INTO messages (role, content, created_at) VALUES (?, ?, ?)",
-            (role, content, created_at),
+            "INSERT INTO messages (role, content, created_at, task_id, message_type) VALUES (?, ?, ?, ?, ?)",
+            (role, content, created_at, task_id, message_type),
         )
         await db.commit()
         msg_id = cursor.lastrowid
 
-    out = MessageOut(id=int(msg_id), role=role, content=content, created_at=created_at)
+    out = MessageOut(
+        id=int(msg_id),
+        role=role,
+        content=content,
+        created_at=created_at,
+        task_id=task_id,
+        message_type=message_type,
+    )
     broadcast(out)
     return out
 

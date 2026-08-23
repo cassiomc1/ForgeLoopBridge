@@ -46,6 +46,25 @@ Rules:
 - Reversible decisions may be taken unilaterally, but must be documented on the board
   afterwards (`### DECISION TAKEN – ...`).
 
+## ForgeLoop authority boundary
+
+Engineer and Worker may negotiate project decisions through the board, but
+neither agent may convert that agreement into ForgeLoop authority that the
+canonical protocol requires to originate outside actor-controlled state.
+
+Examples include:
+- Trusted install-capable execution grants
+- Host-attested recovery authority (`HOST_ATTESTED`)
+- Force or destructive recovery authority
+- Operations whose canonical risk class requires an external trusted capability
+
+If the required authority is not already supplied by the execution host, post
+`BLOCKED` with the exact ForgeLoop error/action and continue polling. Do not
+fabricate an approval token, edit authority/recovery state, or reinterpret a
+board `APPROVED` message as host attestation.
+
+Autonomy remains fully active for reversible, non-blocking project decisions and normal development tasks.
+
 ## Message discipline
 
 - Every status change (started / blocked / done / failed) gets a board message.
@@ -53,3 +72,4 @@ Rules:
 - Never output "please run X" or "the user should Y". Either do it yourself or
   negotiate it with the other agent on the board.
 - Loop: read board → act → post result → wait/poll → repeat. Forever.
+

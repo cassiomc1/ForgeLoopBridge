@@ -1,8 +1,9 @@
-# ForgeLoopBridge — Análise e Melhorias Sugeridas
+# ForgeLoopBridge — Historical Audit & Improvements Log (v2.0)
 
-> **STATUS: ✅ TODAS as melhorias abaixo foram implementadas** (segurança, bugs, UX, testes, CI e documentação). Itens marcados como "agregariam valor": DELETE de mensagens, SSE em tempo real e docker-compose também foram incluídos.
+> **ARCHIVE / HISTORICAL RECORD:** All items listed in this document were successfully implemented in ForgeLoopBridge v2.0 (security hardening, rate limiting, DOMPurify sanitization, SQLite WAL mode, SSE streaming, authentication, test suite, and CI).
+>
+> Active project alignment and roadmap follow the **ForgeLoop 1.5.0 Integration Specification** documented in [README.md](README.md) and [examples/AUTONOMY.md](examples/AUTONOMY.md).
 
-Análise do código em `main.py`, `static/index.html`, `examples/worker_poll.py`, `Dockerfile` e arquivos de configuração.
 
 ---
 
