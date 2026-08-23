@@ -337,6 +337,7 @@
 
     .conn-status { font-size: 0.75rem; }
     .conn-status.live { color: var(--worker); }
+    .conn-status.polling { color: #d29922; }
     .history-btn {
       align-self: center;
       background: var(--surface);
@@ -570,13 +571,13 @@
           before_id: String(oldestId),
           limit: '200',
         });
-        if (currentTaskFilter) params.set('task_id', currentTaskFilter);
 
         const res = await fetch('/api/messages?' + params.toString(), { headers: authHeaders() });
         if (!res.ok) return;
 
         const messages = await res.json();
         prependMessagesPreservingScroll(messages);
+        applyTaskFilter();
 
         if (messages.length < 200) {
           loadOlderBtn.hidden = true;
