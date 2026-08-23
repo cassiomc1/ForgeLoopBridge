@@ -38,3 +38,28 @@ def test_readme_documents_version_dimensions():
     assert "1.5.x" in README
     assert "protocol `1`" in README or "protocol 1" in README
     assert "Integration API `1`" in README or "Integration API 1" in README
+
+
+WORKER_POLL = (ROOT / "examples" / "worker_poll.py").read_text(encoding="utf-8")
+
+
+def test_engineer_verification_does_not_instruct_complete_mutation():
+    engineer_section = README.split("### Engineer system prompt", 1)[1].split(
+        "### Worker system prompt", 1
+    )[0]
+    assert "Does canonical `forgeloop complete` return VALID?" not in engineer_section
+    assert "do not re-run `complete`" in engineer_section.lower()
+
+
+def test_worker_prompt_respects_forgeloop_git_publication_policy():
+    assert "Open a Pull Request including code changes and `.forgeloop/` artifacts." not in README
+    assert "work-state.json" in README
+    assert "executions/" in README
+    assert "force-add" in README
+
+
+def test_worker_poller_docs_use_task_scoped_complete():
+    assert "forgeloop complete --json" not in WORKER_POLL
+    assert "forgeloop complete --task <task-id> --json" in WORKER_POLL
+
+

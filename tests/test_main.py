@@ -354,3 +354,87 @@ async def test_database_migration_from_legacy_schema(tmp_path, monkeypatch):
         assert r_post.json()["task_id"] == "task-x"
         assert r_post.json()["message_type"] == "TASK"
 
+
+# ─── Latest Page Pagination ───────────────────────────────────────────────────
+
+
+async def test_latest_returns_newest_messages_in_ascending_order(client):
+    for i in range(5):
+        r = await client.post(
+            "/api/messages",
+            headers=HEADERS_ENGINEER,
+            json={"content": f"message-{i}"},
+        )
+        assert r.status_code == 200
+
+    r = await client.get(
+        "/api/messages",
+        params={"latest": "true", "limit": 2},
+        headers=HEADERS_WORKER,
+    )
+
+    assert r.status_code == 200
+    assert [m["content"] for m in r.json()] == ["message-3", "message-4"]
+
+
+async def test_latest_rejects_cursor_combination(client):
+    r_after = await client.get(
+        "/api/messages",
+        params={"latest": "true", "after_id": 1},
+        headers=HEADERS_WORKER,
+    )
+    assert r_after.status_code == 400
+    assert "latest" in r_after.json()["detail"].lower()
+
+    r_before = await client.get(
+        "/api/messages",
+        params={"latest": "true", "before_id": 10},
+        headers=HEADERS_WORKER,
+    )
+    assert r_before.status_code == 400
+    assert "latest" in r_before.json()["detail"].lower()
+
+
+async def test_latest_combines_with_task_id(client):
+    for i in range(4):
+        await client.post(
+            "/api/messages",
+            headers=HEADERS_ENGINEER,
+            json={"content": f"auth-{i}", "task_id": "auth"},
+        )
+        await client.post(
+            "/api/messages",
+            headers=HEADERS_ENGINEER,
+            json={"content": f"billing-{i}", "task_id": "billing"},
+        )
+
+    r = await client.get(
+        "/api/messages",
+        params={"task_id": "auth", "latest": "true", "limit": 2},
+        headers=HEADERS_WORKER,
+    )
+    assert r.status_code == 200
+    assert [m["content"] for m in r.json()] == ["auth-2", "auth-3"]
+
+
+async def test_blank_task_id_normalizes_to_none(client):
+    r = await client.post(
+        "/api/messages",
+        headers=HEADERS_ENGINEER,
+        json={"content": "hello", "task_id": "   "},
+    )
+    assert r.status_code == 200
+    assert r.json()["task_id"] is None
+
+
+async def test_task_id_is_trimmed(client):
+    r = await client.post(
+        "/api/messages",
+        headers=HEADERS_ENGINEER,
+        json={"content": "hello", "task_id": "  auth-feature  "},
+    )
+    assert r.status_code == 200
+    assert r.json()["task_id"] == "auth-feature"
+
+
+

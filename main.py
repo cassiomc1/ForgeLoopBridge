@@ -16,7 +16,7 @@ import aiosqlite
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent
@@ -99,6 +99,14 @@ class MessageCreate(BaseModel):
     content: str = Field(..., min_length=1, max_length=50000)
     task_id: str | None = Field(default=None, min_length=1, max_length=200)
     message_type: str | None = Field(default=None, min_length=1, max_length=40)
+
+    @field_validator("task_id", mode="before")
+    @classmethod
+    def normalize_task_id(cls, value):
+        if value is None:
+            return None
+        stripped = str(value).strip()
+        return stripped or None
 
 
 class MessageOut(BaseModel):
@@ -206,6 +214,7 @@ async def get_messages(
     task_id: str | None = None,
     after_id: int | None = None,
     before_id: int | None = None,
+    latest: bool = False,
     limit: int = DEFAULT_PAGE_SIZE,
 ):
     """Return messages ordered by id ASC. Requires a valid token.
@@ -213,10 +222,17 @@ async def get_messages(
     - `task_id`: filter by task identity (exact match)
     - `after_id`: only messages with id > after_id (live updates)
     - `before_id`: only messages with id < before_id (history paging)
+    - `latest`: return newest page of messages (cannot combine with after_id / before_id)
     - `limit`: max messages returned (default 200, max 1000)
     """
     role = await require_reader(request, token)
     limit = max(1, min(limit, MAX_PAGE_SIZE))
+
+    if latest and (after_id is not None or before_id is not None):
+        raise HTTPException(
+            status_code=400,
+            detail="latest cannot be combined with after_id or before_id",
+        )
 
     query = "SELECT id, role, content, created_at, task_id, message_type FROM messages"
     clauses, params = [], []
@@ -234,8 +250,8 @@ async def get_messages(
     if clauses:
         query += " WHERE " + " AND ".join(clauses)
 
-    # For history paging take the last N; otherwise first N after cursor.
-    if before_id is not None:
+    # For latest or history paging take the last N; otherwise first N after cursor.
+    if latest or before_id is not None:
         query += " ORDER BY id DESC LIMIT ?"
     else:
         query += " ORDER BY id ASC LIMIT ?"
@@ -245,9 +261,9 @@ async def get_messages(
         rows = await db.execute_fetchall(query, tuple(params))
 
     messages = [MessageOut(**dict(row)) for row in rows]
-    if before_id is not None:
+    if latest or before_id is not None:
         messages.reverse()
-    logger.debug("GET /api/messages role=%s count=%d task_id=%s", role, len(messages), task_id)
+    logger.debug("GET /api/messages role=%s count=%d task_id=%s latest=%s", role, len(messages), task_id, latest)
     return messages
 
 
@@ -261,7 +277,7 @@ async def post_message(msg: MessageCreate, request: Request):
     if not content:
         raise HTTPException(status_code=400, detail="Content cannot be empty")
 
-    task_id = msg.task_id.strip() if msg.task_id else None
+    task_id = msg.task_id
     message_type = None
     if msg.message_type:
         normalized_type = msg.message_type.strip().upper()

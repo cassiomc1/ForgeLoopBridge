@@ -10,7 +10,7 @@ The Worker agent MUST follow the canonical ForgeLoop 1.5 workflow:
 2. Inspect compatibility with `forgeloop protocol-info --json`.
 3. Discover existing tasks (`forgeloop task-list --json`) before creating a new one.
 4. Follow canonical `forgeloop next` as the control authority.
-5. Reach VALID completion (`forgeloop complete --json`) and verify terminal `nextAction: NONE`.
+5. Reach VALID completion (`forgeloop complete --task <task-id> --json`) and verify terminal `nextAction: NONE`.
 6. Open PR and report structured Markdown status on ForgeLoopBridge.
 
 Usage:
@@ -51,6 +51,18 @@ def post_status(content: str, task_id: str | None = None, message_type: str = "S
     print("Status posted successfully.")
 
 
+def fetch_latest_message_id() -> int:
+    r = requests.get(
+        f"{BASE_URL}/api/messages",
+        params={"latest": "true", "limit": 1},
+        headers={"Authorization": f"Bearer {WORKER_TOKEN}"},
+        timeout=15,
+    )
+    r.raise_for_status()
+    messages = r.json()
+    return int(messages[-1]["id"]) if messages else 0
+
+
 def load_last_seen() -> int:
     try:
         return int(STATE_FILE.read_text().strip())
@@ -73,16 +85,9 @@ def main():
 
     last_seen = load_last_seen()
     if last_seen == 0:
-        # First run: skip history, only process messages from now on.
-        r = requests.get(
-            f"{BASE_URL}/api/messages",
-            params={"limit": 1},
-            headers={"Authorization": f"Bearer {WORKER_TOKEN}"},
-            timeout=15,
-        )
-        r.raise_for_status()
-        msgs = r.json()
-        last_seen = int(msgs[-1]["id"]) if msgs else 0
+        # First run: skip history, start from the latest message.
+        last_seen = fetch_latest_message_id()
+        save_last_seen(last_seen)
         print(f"First run: starting from message id {last_seen}")
     else:
         print(f"Resuming from message id {last_seen}")

@@ -337,7 +337,25 @@
 
     .conn-status { font-size: 0.75rem; }
     .conn-status.live { color: var(--worker); }
-    .conn-status.polling { color: #d29922; }
+    .history-btn {
+      align-self: center;
+      background: var(--surface);
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 16px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      margin-bottom: 8px;
+    }
+    .history-btn:hover {
+      color: var(--text);
+      border-color: var(--text-muted);
+    }
+    .history-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
 
     @media (max-width: 600px) {
       header { padding: 10px 12px; }
@@ -360,7 +378,7 @@
   </div>
 
   <header>
-    <div class="logo">Forge<span>Bridge</span></div>
+    <div class="logo">ForgeLoop<span>Bridge</span></div>
     <div class="status-bar">
       <select id="task-filter" class="task-filter" title="Filter by task">
         <option value="">All tasks</option>
@@ -374,6 +392,7 @@
   </header>
 
   <main id="board">
+    <button id="load-older" class="history-btn" hidden>Load older</button>
     <div class="empty" id="empty-state">No messages yet.<br>The Engineer or Worker can post the first one.</div>
   </main>
 
@@ -407,6 +426,7 @@
     let token = sessionStorage.getItem('flb_token') || '';
     let myRole = sessionStorage.getItem('flb_role') || '';
     let lastId = 0;
+    let oldestId = 0;
     let knownIds = new Set();
     let eventSource = null;
     let currentTaskFilter = '';
@@ -459,11 +479,13 @@
       });
     }
 
-    function renderMessage(msg) {
-      if (knownIds.has(msg.id)) return;
+    function buildMessageElement(msg) {
+      if (knownIds.has(msg.id)) return null;
       knownIds.add(msg.id);
 
       if (msg.task_id) registerTaskId(msg.task_id);
+
+      oldestId = oldestId === 0 ? msg.id : Math.min(oldestId, msg.id);
 
       const roleLabel = msg.role === 'engineer' ? 'Engineer' : 'Worker';
       const canDelete = msg.role === myRole;
@@ -502,31 +524,94 @@
         div.querySelector('.delete-btn').addEventListener('click', () => deleteMessage(msg.id));
       }
 
+      return div;
+    }
+
+    function appendMessage(msg) {
+      const el = buildMessageElement(msg);
+      if (!el) return;
+
       const shouldScroll = nearBottom();
       if (emptyState.isConnected) emptyState.remove();
-      board.appendChild(div);
+      board.appendChild(el);
       if (shouldScroll) window.scrollTo({ top: document.body.scrollHeight });
+    }
+
+    function prependMessagesPreservingScroll(messages) {
+      if (!messages || messages.length === 0) return;
+      if (emptyState.isConnected) emptyState.remove();
+
+      const oldHeight = document.body.scrollHeight;
+      const fragment = document.createDocumentFragment();
+
+      for (const msg of messages) {
+        const el = buildMessageElement(msg);
+        if (el) fragment.appendChild(el);
+      }
+
+      const loadOlderBtn = document.getElementById('load-older');
+      if (loadOlderBtn && loadOlderBtn.nextSibling) {
+        board.insertBefore(fragment, loadOlderBtn.nextSibling);
+      } else {
+        board.appendChild(fragment);
+      }
+
+      const newHeight = document.body.scrollHeight;
+      window.scrollBy(0, newHeight - oldHeight);
+    }
+
+    async function loadOlder() {
+      if (!oldestId) return;
+
+      const loadOlderBtn = document.getElementById('load-older');
+      loadOlderBtn.disabled = true;
+      try {
+        const params = new URLSearchParams({
+          before_id: String(oldestId),
+          limit: '200',
+        });
+        if (currentTaskFilter) params.set('task_id', currentTaskFilter);
+
+        const res = await fetch('/api/messages?' + params.toString(), { headers: authHeaders() });
+        if (!res.ok) return;
+
+        const messages = await res.json();
+        prependMessagesPreservingScroll(messages);
+
+        if (messages.length < 200) {
+          loadOlderBtn.hidden = true;
+        }
+      } catch (e) {
+        console.warn('Error loading older messages', e);
+      } finally {
+        loadOlderBtn.disabled = false;
+      }
     }
 
     async function fetchMessages(initial = false) {
       try {
         const params = new URLSearchParams();
-        if (!initial && lastId > 0) params.set('after_id', lastId);
+        if (initial) {
+          params.set('latest', 'true');
+        } else if (lastId > 0) {
+          params.set('after_id', lastId);
+        }
+
         const res = await fetch('/api/messages?' + params.toString(), { headers: authHeaders() });
         if (res.status === 401 || res.status === 403) { lock(); return; }
         if (!res.ok) return;
         const messages = await res.json();
-        messages.forEach(renderMessage);
-        if (messages.length > 0) lastId = Math.max(lastId, ...messages.map(m => m.id));
-
-        const statusRes = await fetch('/api/status');
-        if (statusRes.ok) {
-          const s = await statusRes.json();
-          document.getElementById('total').textContent = s.total_messages;
-          document.getElementById('last-role').textContent =
-            s.last_message_role === 'engineer' ? 'Engineer' :
-            s.last_message_role === 'worker' ? 'Worker' : '—';
+        messages.forEach(appendMessage);
+        if (messages.length > 0) {
+          lastId = Math.max(lastId, ...messages.map(m => m.id));
         }
+
+        const loadOlderBtn = document.getElementById('load-older');
+        if (initial && messages.length >= 200) {
+          loadOlderBtn.hidden = false;
+        }
+
+        await refreshStatus();
       } catch (e) {
         console.warn('Poll error', e);
       }
@@ -547,10 +632,14 @@
       if (eventSource) eventSource.close();
       try {
         eventSource = new EventSource('/api/stream?token=' + encodeURIComponent(token));
-        eventSource.onopen = () => setConnStatus('live');
+        eventSource.onopen = async () => {
+          setConnStatus('live');
+          await fetchMessages(false);
+        };
         eventSource.onmessage = (ev) => {
           const msg = JSON.parse(ev.data);
-          renderMessage(msg);
+          appendMessage(msg);
+          lastId = Math.max(lastId, msg.id);
           refreshStatus();
         };
         eventSource.onerror = () => {
@@ -602,7 +691,7 @@
         }
 
         const msg = await res.json();
-        renderMessage(msg);
+        appendMessage(msg);
         lastId = Math.max(lastId, msg.id);
         document.getElementById('content').value = '';
         refreshStatus();
@@ -684,6 +773,7 @@
     });
     document.getElementById('lock-btn').addEventListener('click', lock);
     document.getElementById('post-btn').addEventListener('click', postMessage);
+    document.getElementById('load-older').addEventListener('click', loadOlder);
     document.getElementById('content').addEventListener('keydown', (e) => {
       if (e.ctrlKey && e.key === 'Enter') postMessage();
     });
