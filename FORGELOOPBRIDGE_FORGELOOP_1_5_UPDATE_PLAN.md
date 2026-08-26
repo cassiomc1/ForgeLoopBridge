@@ -1,5 +1,9 @@
 # ForgeLoopBridge — ForgeLoop 1.5 Integration Update Plan
 
+> Historical plan: implemented for ForgeLoop 1.5-era synchronization.
+> Superseded for current ForgeLoop integration work by
+> `FORGELOOPBRIDGE_CURRENT_FORGELOOP_SYNC_UPDATE_PLAN.md`.
+
 > **For agentic workers:** execute this plan task-by-task, preserving ForgeLoop as the only protocol authority. Prefer an official ForgeLoop structured integration when the active host exposes one; otherwise use the project-local ForgeLoop CLI. Do not manually synthesize ForgeLoop lifecycle, claim, recovery, ledger, ownership, or completion state.
 
 **Goal:** Align ForgeLoopBridge with the current ForgeLoop 1.5.0 architecture, recovery/ownership model, structured integration surfaces, deterministic `next` control flow, and multi-task coordination model without turning ForgeLoopBridge into a second ForgeLoop implementation.

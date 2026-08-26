@@ -25,7 +25,11 @@ ForgeLoopBridge only carries the high-level coordination conversation (instructi
 
 ## ForgeLoop compatibility
 
-ForgeLoopBridge targets **ForgeLoop core `1.5.x`**, **ForgeLoop protocol `1`**, and **Integration API `1`**.
+ForgeLoopBridge targets **ForgeLoop Protocol v1** and **Integration API v1**.
+
+The Bridge supports current ForgeLoop observability, diagnostic, durable-action,
+approval, capability-policy, and trajectory capabilities when the active host
+advertises them. Package version alone is never a compatibility decision.
 
 Before creating or resuming ForgeLoop task state, the active execution host must inspect the installed project's public compatibility boundary with `forgeloop protocol-info --json` (or the equivalent official structured integration capability call).
 
@@ -33,7 +37,10 @@ If the host exposes an official ForgeLoop structured integration (such as `@cass
 
 ### Compatibility dimensions & recovery awareness
 
-- **Version distinctions**: Core package version (`1.5.x`), protocol schema version (`1`), and Integration API version (`1`) represent separate compatibility dimensions.
+- **Protocol-first handshake**: Require `protocolVersion == 1`; when structured integration is used, require a supported Integration API version. Unknown protocol/schema versions fail closed.
+- **Capability detection**: Inspect `protocolInfo.features` (or the equivalent structured capability response) for `diagnostics`, `executionHistory`, `structuredTrace`, `taskInspection`, `reflection`, `durableActions`, `capabilityPolicy`, `durableApprovals`, `trajectoryMetrics`, and `trajectoryEvaluation`. Additive features are enabled only when advertised.
+- **No package-version inference**: `1.6.0` does not automatically imply `durableActions`, approvals, or policy support. Use `features.durableActions.supported`, `features.capabilityPolicy.supported`, and `features.durableApprovals.supported`.
+- **Capability decisions**: Treat canonical `ALLOW`, `DENY`, `REQUIRE_AUTHORITY`, and `REQUIRE_APPROVAL` decisions as ForgeLoop policy output; Bridge messages can report them but cannot satisfy them.
 - **Recovery awareness**: A project with active recovery state requires a recovery-aware reader supporting validated claim projection. A reader that does not understand that projection must fail closed instead of inferring ownership from `task.json` or `recovery.json` alone.
 
 ---
@@ -49,7 +56,7 @@ If the host exposes an official ForgeLoop structured integration (such as `@cass
 - **Security hardening**: required tokens, timing-safe comparison, authenticated reads, rate limiting, XSS-safe Markdown rendering (DOMPurify)
 - SQLite with WAL mode (zero extra configuration, automatic backward-compatible schema migration)
 - Message pagination (`after_id` / `before_id` / `limit`), delete by author, `/api/whoami`
-- First-class coordination with ForgeLoop 1.5
+- Capability-aware coordination with current ForgeLoop protocol surfaces
 - Test suite (pytest) and CI (GitHub Actions: ruff + pytest)
 
 ---
@@ -80,6 +87,10 @@ If the host exposes an official ForgeLoop structured integration (such as `@cass
                                     ▼
                     ┌──────────────────────────────────┐
                     │   ForgeLoop canonical authority  │
+                    │ lifecycle / recovery / claims    │
+                    │ diagnostics / trace / reflection│
+                    │ policy / durable actions         │
+                    │ approvals / verification         │
                     │ Integration API / MCP / CLI      │
                     │ writes canonical `.forgeloop/`  │
                     └──────────────────────────────────┘
@@ -172,7 +183,7 @@ For production deployments, put the bridge behind a reverse proxy with HTTPS (Ca
 
 ---
 
-## Prompt templates (with ForgeLoop 1.5)
+## Prompt templates (capability-aware ForgeLoop workflow)
 
 Copy-paste these prompts to bootstrap both agents.
 
@@ -194,7 +205,7 @@ When you post a task, always include:
 - Acceptance criteria
 - Preferred ForgeLoop work type (if known)
 - Task identifier (task_id) when referencing or scoping work
-- Explicit instruction: "Follow ForgeLoop 1.5. Discover existing tasks before creating a new one, write a proper contract, follow canonical `next`, reach VALID completion, confirm terminal state, then open a PR."
+- Explicit instruction: "Inspect `protocol-info --json`, discover existing tasks, follow the advertised capabilities and canonical `next`, reach VALID completion, confirm terminal state, then open a PR."
 
 Responsibility boundary:
 You do not implement target-project code and you do not perform ForgeLoop mutations for the Worker. You MAY use canonical read-only ForgeLoop operations or a readonly official structured integration to independently verify protocol compatibility, task status, audit results, ownership projection, continuity, and completion state.
@@ -203,10 +214,12 @@ Read-only verification sequence (when your host exposes read capabilities):
 1. Protocol compatibility: `forgeloop protocol-info --json`
 2. Task identity: `forgeloop task-show --task <task-id> --json`
 3. Task status: `forgeloop status --task <task-id> --json`
-4. Canonical ownership projection when claims or recovery matter
-5. Audit/completion result: `forgeloop audit --task <task-id> --json`
-6. Terminal next action: `forgeloop next --task <task-id> --json`
-7. PR contents, contract compliance, and publication expectations
+4. Contract, continuity, and canonical ownership projection when relevant
+5. When advertised, read-only action/approval/policy projections and metrics/evaluations
+6. Diagnostic projections when relevant: `inspect`, `history`, `trace`, `reflect`
+7. Audit/completion result: `forgeloop audit --task <task-id> --json`
+8. Terminal next action: `forgeloop next --task <task-id> --json`
+9. PR contents, contract compliance, and publication expectations
 
 Your APPROVED message is a project decision, not ForgeLoop host authority. Never represent an Engineer/Worker board agreement as HOST_ATTESTED authority, trusted installation authority, force-recovery authority, or any other ForgeLoop authority class that requires an external trusted boundary.
 
@@ -215,7 +228,8 @@ After the Worker posts a PR and status, verify through canonical read-only surfa
 2. Does canonical task state/evidence show that the Worker already obtained completion validation `VALID`?
 3. Does canonical `forgeloop next --task <task-id> --json` report `terminal: true` / `nextAction: NONE`, or an explicitly understood non-terminal action?
 4. Is ownership/recovery consistent when relevant?
-5. Does the PR match the task contract and publication policy?
+5. When the capabilities exist, are required durable actions independently verified, with no `COMMIT_UNKNOWN`, pending required approval, or policy blocker?
+6. Does the PR match the task contract and publication policy?
 
 Do not run ForgeLoop mutation commands merely to verify the Worker. In particular, do not re-run `complete`, `advance`, `task-resume`, `run-check`, `route`, or `preflight` as an Engineer verification action.
 
@@ -248,12 +262,13 @@ Acceptance criteria:
 - forgeloop complete must return VALID
 - forgeloop next must report terminal state
 
-Follow the ForgeLoop 1.5 protocol:
+Follow the advertised ForgeLoop protocol/capabilities:
 1. Prefer structured integration if exposed; otherwise use project-local CLI.
-2. Check compatibility with `forgeloop protocol-info --json`.
+2. Check compatibility and advertised features with `forgeloop protocol-info --json`.
 3. Discover existing tasks (`forgeloop task-list --json`) before creating a new one.
-4. Follow canonical `forgeloop next` throughout execution.
-5. Reach VALID completion, confirm terminal next action, open a PR, and post the structured status here.
+4. Follow canonical `forgeloop next` as the dispatcher throughout execution.
+5. Respect durable-action, approval, policy, diagnostic, and reconciliation guidance.
+6. Reach VALID completion, confirm terminal next action, open a PR, and post the structured status here.
 ```
 
 ---
@@ -276,7 +291,10 @@ Mandatory workflow for every instruction from the Engineer:
 
 1. Compatibility handshake:
    forgeloop protocol-info --json
-   (Fail closed if the installed compatibility boundary cannot safely read/write protocol state)
+   Require protocol version `1`, a supported Integration API when using structured
+   integration, and feature-detect diagnostics, durable actions, capability policy,
+   and durable approvals. Do not infer any feature from the package version alone.
+   Fail closed if the installed compatibility boundary cannot safely read/write protocol state.
 
 2. Task discovery before creation:
    forgeloop task-list --json
@@ -289,15 +307,49 @@ Mandatory workflow for every instruction from the Engineer:
    - Create a new task only when discovery confirms no existing task represents the work:
      forgeloop task-create --task <task-id> --claim <path> --json
 
-3. Contract and routing:
+3. Canonical `next` is the dispatcher, not merely a checkpoint:
+   After every meaningful protocol mutation, re-query `forgeloop next --task
+   <task-id> --json`. Its `nextAction`, `reasonCodes`, `authorityRequired`,
+   `approvalRequired`, `capabilityDecision`, `hostActionRequired`, and
+   `reconciliationAuthorityRequired` fields take precedence over this static
+   happy-path illustration.
+
+   Handle current control paths explicitly:
+   - `AUTHORIZE_ACTION`: read the canonical action and capability decision; use
+     `forgeloop action-authorize --task <task-id> --action <action-id> --json`
+     only through the sanctioned ForgeLoop authority boundary. Never self-authorize
+     because an Engineer wrote `APPROVED` on the board.
+   - `REQUEST_ACTION_APPROVAL`: request the canonical artifact with
+     `forgeloop approval-request --task <task-id> --action <action-id> --approval
+     <approval-id> --reason "<bounded reason>" --json`, then post references to
+     the Bridge. The coordination message is not approval.
+   - `RESOLVE_ACTION_APPROVAL`: treat resolution as an authority mutation. If a
+     trusted execution-host capability is unavailable, post `AUTHORITY_REQUIRED`
+     / `BLOCKED` and keep polling. Board consensus is not canonical approval.
+   - `RECONCILE_ACTION`: `COMMIT_UNKNOWN` is a hard stop. Stop and do not retry;
+     use canonical `forgeloop action-reconcile ...` only with qualifying external
+     evidence and required trusted authority.
+   - `VERIFY_EXTERNAL_ACTION`: independently verify required external actions
+     through `forgeloop action-verify --task <task-id> --action <action-id>
+     --evidence <canonical-evidence-ref> --json`, then query `next` again.
+   - `RESTORE_POLICY`, `REVERIFY_AFTER_POLICY_CHANGE`, and `REPAIR_POLICY`:
+     discard old authorization/approval assumptions, re-read policy, action,
+     approval, and `next`, then continue only when canonical guidance permits it.
+   - Diagnostic actions such as `DIAGNOSE`, `RECORD_DIAGNOSIS`, `CORRECT`,
+     `RECORD_INTERVENTION`, `REQUIRE_NEW_DIAGNOSTIC_INFORMATION`,
+     `INTRODUCE_NEW_OBSERVATION`, and `CHANGE_STRATEGY` must use advertised
+     `progress`, `history`, `trace`, `reflect`, or `inspect` surfaces. Do not
+     repeat a correction after no-information-gain or strategy-oscillation
+     guidance without a genuinely new observation.
+
+4. Contract and routing:
    Write contract.json adhering to canonical schema, then route and preflight:
    forgeloop route ...
    forgeloop preflight ...   # must be READY
 
-4. Implement and follow `next`:
-   Always follow the action returned by `forgeloop next --task <task-id> --json`.
+5. Implement and follow the canonical action returned by `next`.
 
-5. Verification and completion:
+6. Verification and completion:
    forgeloop advance --task <task-id> --to VERIFYING
    forgeloop prepare-completion --task <task-id> --json
    forgeloop run-check --task <task-id> --id <check-id> --requirement "<requirement>" -- <exact argv>
@@ -306,27 +358,53 @@ Mandatory workflow for every instruction from the Engineer:
    forgeloop complete --task <task-id> --json
    forgeloop next --task <task-id> --json
 
-6. Open a Pull Request containing the implementation changes and only the ForgeLoop artifacts that are versionable under the target repository's installed Git policy.
+   Required durable actions must have non-empty canonical requirements and
+   independent verification covering the exact immutable requirement. `COMMITTED`
+   alone is not externally verified. Invalid, stale, mismatched, or forged
+   action/approval artifacts fail closed. Policy errors such as
+   `E_POLICY_WEAKENING`, `E_POLICY_LOCK_MISMATCH`, `E_ACTION_POLICY_DRIFT`,
+   `E_ACTION_POLICY_LOCK_REQUIRED`, `E_POLICY_DRIFT_UNKNOWN`, `E_POLICY_INVALID`,
+   or `E_POLICY_EVALUATION_FAILED` require stop → canonical `next` → policy
+   recovery/re-read → authorization/approval re-evaluation.
+
+7. Open a Pull Request containing the implementation changes and only the ForgeLoop artifacts that are versionable under the target repository's installed Git policy.
 
    Respect `.gitignore` and ForgeLoop's installed git policy. Never force-add ignored local resumable/execution state such as `work-state.json` or `executions/` merely to satisfy the Bridge workflow.
 
-7. Post structured status on ForgeLoopBridge:
+8. Post structured status on ForgeLoopBridge:
 
 ### Status — <task-id>
 
-**State:** COMPLETE
+**State:** COMPLETE | BLOCKED | PARTIALLY_VERIFIED | AWAITING_AUTHORITY | AWAITING_RECONCILIATION
 **PR:** <pull-request-url>
 
-**ForgeLoop:**
+**ForgeLoop compatibility**
+- package: `<observed>`
+- protocol: `1`
+- integration API: `<observed>`
+- diagnostics: `<supported|not-advertised>`
+- durable actions: `<supported|not-advertised>`
+
+**Canonical completion**
 - task: `<task-id>`
 - complete: `VALID`
 - terminal: `true`
 - nextAction: `NONE`
+- required durable actions: `<count|n/a>`
+- required durable actions verified: `<count>/<count|n/a>`
+- unresolved `COMMIT_UNKNOWN`: `0`
+- pending canonical approvals: `0`
 - checks: <concise observed evidence summary>
 
+Counts and statuses come from canonical ForgeLoop read-only surfaces, not Bridge history.
 No ForgeLoop-owned state was synthesized outside the canonical integration/CLI.
 
-Never invent results. If you cannot reach VALID or terminal state, post BLOCKED or PARTIALLY VERIFIED with the exact canonical error/action and wait for instructions.
+Never invent results. If you cannot reach VALID or terminal state, do not post
+`State: COMPLETE`; post the appropriate reporting label with the exact canonical
+error/action and keep polling. If `authorityRequired`, `hostActionRequired`,
+`reconciliationAuthorityRequired`, or an unresolved approval cannot be handled
+by the current host, post `AUTHORITY_REQUIRED`/`BLOCKED` rather than fabricating
+authority.
 
 --- AUTONOMY CONTRACT (mandatory) ---
 Load and obey examples/AUTONOMY.md. Summary:
@@ -358,6 +436,58 @@ When dealing with interrupted or recovered tasks:
     Stop normal mutation and follow ForgeLoop's canonical repair guidance. If safe repair cannot proceed, post `BLOCKED`.
 - **Acknowledgement vs Attestation**: `--acknowledge-recovery` / `acknowledgeRecovery` records caller acknowledgement only; it never manufactures host attestation or trusted recovery authority.
 
+## Required durable actions and completion
+
+ForgeLoopBridge only reports the canonical projection of durable actions; it
+does not implement their state machine.
+
+- An action may be marked `requiredForCompletion`, and that requirement must be
+  non-empty and bound by ForgeLoop.
+- `COMMITTED` alone does not make a required action safely complete. Independent
+  canonical verification must cover the exact immutable requirement.
+- `COMMIT_UNKNOWN` blocks progress until an external observation is recorded by
+  canonical action reconciliation. **Do not retry.**
+- Stale, mismatched, invalid, or forged action/approval artifacts fail closed.
+- Required approvals, policy epochs/fingerprints, capability decisions, and
+  action verification must be revalidated after task or policy drift.
+- Bridge status text and counts are informational copies; they never replace
+  canonical action state, approval staleness, policy truth, or completion truth.
+
+## Current control paths and diagnostic guidance
+
+The static lifecycle below is a happy-path illustration only. After every
+meaningful protocol mutation, the Worker re-queries canonical `next` and follows
+its returned action. Current actions include `AUTHORIZE_ACTION`,
+`REQUEST_ACTION_APPROVAL`, `RESOLVE_ACTION_APPROVAL`, `RECONCILE_ACTION`,
+`VERIFY_EXTERNAL_ACTION`, `RESTORE_POLICY`, `REVERIFY_AFTER_POLICY_CHANGE`,
+`REPAIR_POLICY`, and diagnostic actions such as
+`REQUIRE_NEW_DIAGNOSTIC_INFORMATION`, `INTRODUCE_NEW_OBSERVATION`,
+`RECORD_INTERVENTION`, and `CHANGE_STRATEGY`.
+
+Board agreement is never canonical approval or `HOST_ATTESTED` authority. If
+`next` reports `authorityRequired`, `hostActionRequired`,
+`reconciliationAuthorityRequired`, or an approval the current host cannot
+resolve, report `AUTHORITY_REQUIRED`/`BLOCKED` and keep polling. Do not add a
+Bridge approval/authorization/reconciliation endpoint.
+
+When diagnostic features are advertised, prefer canonical `progress`,
+`history`, `trace`, `reflect`, and `inspect` projections. A Bridge diagnostic
+message may copy the failure surface, reason codes, hypothesis/intervention
+references, and next experiment summary, but must say it is a summary copied
+from canonical ForgeLoop projection. Do not reconstruct Information Gain,
+hypothesis truth, or strategy-oscillation logic in Python. If ForgeLoop reports
+no effective information gain, do not repeat the same correction without a new
+observation.
+
+Capability decisions and approvals are snapshots bound to the action,
+contract/task state, and current policy identity. After errors such as
+`E_POLICY_WEAKENING`, `E_POLICY_LOCK_MISMATCH`, `E_ACTION_POLICY_DRIFT`,
+`E_ACTION_POLICY_LOCK_REQUIRED`, `E_POLICY_DRIFT_UNKNOWN`, `E_POLICY_INVALID`,
+or `E_POLICY_EVALUATION_FAILED`, stop the affected action, follow canonical
+policy recovery guidance, and re-evaluate authorization and approval validity.
+Copied policy fingerprints may be retained for debugging only and are marked
+`observed/copy only — not authoritative`.
+
 ---
 
 ## Recommended workflow
@@ -375,9 +505,12 @@ Worker discovers tasks (task-list --json) ──► Selects existing OR creates 
 Worker checks canonical next (forgeloop next --task <id> --json)
        ├─► If RESUME_RECOVERED_TASK ──► forgeloop task-resume --task <id> --json
        ├─► If RESOLVE_RECOVERY_INCONSISTENCY ──► Stop mutation, follow repair guidance
+       ├─► If approval/authority/policy action ──► Follow canonical boundary; board agreement is not authority
+       ├─► If RECONCILE_ACTION / COMMIT_UNKNOWN ──► STOP; do not retry; obtain canonical external observation
+       ├─► If diagnostic action ──► Follow canonical evidence/experiment guidance; do not blind retry
        └─► If normal lifecycle action ──► Proceed to contract / route / preflight
        │
-       ▼
+       ▼  (happy-path illustration only; re-query `next` after every mutation)
 Implementation + exact argv checks (run-check -- ...)
        │
        ▼
@@ -409,6 +542,9 @@ All message endpoints require a valid token via `Authorization: Bearer <token>` 
 
 Query parameters:
 - `task_id` (*optional*): filter messages by exact task identity
+- `message_type` (*optional*): filter by coordination type
+- `action_id` (*optional*): filter by opaque ForgeLoop action reference
+- `approval_id` (*optional*): filter by opaque ForgeLoop approval reference
 - `after_id` (*optional*): return messages with `id > after_id` (for live polling updates)
 - `before_id` (*optional*): return historical page with `id < before_id` (for history paging)
 - `latest` (*optional*, `true`/`false`): return newest page of messages (cannot combine with `after_id` or `before_id`)
@@ -417,20 +553,27 @@ Query parameters:
 | Parameter | Semantics |
 |---|---|
 | `task_id` | Filters by exact task identity |
+| `message_type` | Filters by normalized coordination type |
+| `action_id` | Filters by opaque action reference |
+| `approval_id` | Filters by opaque approval reference |
 | `after_id` | Returns messages with `id > after_id` |
 | `before_id` | Returns historical page before cursor |
 | `latest=true` | Returns newest page while preserving ascending order |
 | `limit` | Page size, default 200, max 1000 |
 
-*Rules*: `latest=true` combined with `after_id` or `before_id` returns HTTP 400. `task_id` can be freely combined with `latest`, `after_id`, or `before_id`. Responses are always ordered by `id ASC`.
+*Rules*: `latest=true` combined with `after_id` or `before_id` returns HTTP 400. Task, type, action, and approval filters can be freely combined with `latest`, `after_id`, or `before_id`. Responses are always ordered by `id ASC`.
 
 ### `POST /api/messages`
 
 ```json
 {
-  "content": "## Task auth-service\n- Implement JWT authentication\n- Follow ForgeLoop 1.5",
+  "content": "## Task auth-service\n- Implement JWT authentication\n- Follow the advertised ForgeLoop capabilities",
   "task_id": "auth-service",
-  "message_type": "TASK"
+  "message_type": "TASK",
+  "action_id": "action-publish-image",
+  "approval_id": "approval-publish-image",
+  "next_action": "REQUEST_ACTION_APPROVAL",
+  "reason_code": "E_ACTION_APPROVAL_REQUIRED"
 }
 ```
 
@@ -445,6 +588,22 @@ Query parameters:
   - `BLOCKED`
   - `REVIEW`
   - `GENERAL`
+  - `ACTION_REQUIRED`
+  - `APPROVAL_REQUIRED`
+  - `AUTHORITY_REQUIRED`
+  - `ACTION_RECONCILIATION_REQUIRED`
+  - `ACTION_RECONCILED`
+  - `DIAGNOSTIC`
+  - `POLICY_BLOCKED`
+- `action_id` (*optional*): opaque action reference, max 200 characters; reference only
+- `approval_id` (*optional*): opaque approval reference, max 200 characters; reference only
+- `next_action` (*optional*): copied canonical next action, max 100 characters
+- `reason_code` (*optional*): copied canonical reason code, max 160 characters
+
+Action/approval/next/reason fields are coordination references. The Bridge does
+not check whether an action or approval exists, is current, authorized, stale,
+verified, or allowed by policy. It exposes no ForgeLoop mutation endpoint and
+never accepts authority secrets.
 
 Rate limited (default 30/min per role).
 
@@ -485,8 +644,9 @@ while True:
     for m in r.json():
         if m["role"] == "engineer":
             print(f"New instruction for task {m.get('task_id')}:", m["content"])
-            # Hand off to Worker agent (OpenCode, Cursor, etc.) following ForgeLoop 1.5
-            # ... execute protocol, reach complete VALID, confirm terminal next ...
+            # Hand off to Worker agent (OpenCode, Cursor, etc.) after
+            # protocol-info feature discovery and canonical next dispatch.
+            # ... execute protocol, reconcile/verify actions as required ...
             requests.post(
                 f"{BASE}/api/messages",
                 headers=HEADERS,
@@ -494,6 +654,10 @@ while True:
                     "content": "### Status\nPR opened: ...\ncomplete: VALID\nterminal: true",
                     "task_id": m.get("task_id"),
                     "message_type": "STATUS",
+                    "action_id": m.get("action_id"),
+                    "approval_id": m.get("approval_id"),
+                    "next_action": m.get("next_action"),
+                    "reason_code": m.get("reason_code"),
                 },
             )
         last_id = max(last_id, m["id"])

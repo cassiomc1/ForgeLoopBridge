@@ -57,3 +57,45 @@ def test_loaded_history_reapplies_active_task_filter():
 
     assert filter_pos > prepend_pos
 
+
+def test_new_message_types_appear_in_composer_and_filters():
+    for message_type in (
+        "ACTION_REQUIRED",
+        "APPROVAL_REQUIRED",
+        "AUTHORITY_REQUIRED",
+        "ACTION_RECONCILIATION_REQUIRED",
+        "ACTION_RECONCILED",
+        "DIAGNOSTIC",
+        "POLICY_BLOCKED",
+    ):
+        assert f'value="{message_type}"' in INDEX
+
+    assert 'id="message-type-filter"' in INDEX
+
+
+def test_action_and_approval_metadata_have_safe_rendering():
+    assert 'id="composer-action-id"' in INDEX
+    assert 'id="composer-approval-id"' in INDEX
+    assert "msg.action_id" in INDEX
+    assert "msg.approval_id" in INDEX
+    assert "msg.next_action" in INDEX
+    assert "msg.reason_code" in INDEX
+    assert "badge.textContent = text" in INDEX
+    assert "createBadge('action'" in INDEX
+    assert "createBadge('approval'" in INDEX
+    assert "DOMPurify.sanitize" in INDEX
+
+
+def test_metadata_filters_keep_authenticated_message_requests():
+    assert 'id="action-filter"' in INDEX
+    assert 'id="approval-filter"' in INDEX
+    assert "currentActionFilter" in INDEX
+    assert "currentApprovalFilter" in INDEX
+    assert "headers: authHeaders()" in INDEX
+
+
+def test_browser_has_no_host_authority_secret_controls():
+    lowered = INDEX.lower()
+    assert "host_grant_token" not in lowered
+    assert "authority_secret" not in lowered
+    assert "approval_secret" not in lowered

@@ -73,6 +73,10 @@
     .badge.worker { color: var(--worker); border-color: var(--worker); }
     .badge.task { color: var(--text-muted); border-color: var(--border); font-family: ui-monospace, monospace; text-transform: none; }
     .badge.type { color: var(--accent); border-color: var(--accent); }
+    .badge.action { color: #d2a8ff; border-color: #d2a8ff; font-family: ui-monospace, monospace; text-transform: none; }
+    .badge.approval { color: #ffa657; border-color: #ffa657; font-family: ui-monospace, monospace; text-transform: none; }
+    .badge.next { color: #79c0ff; border-color: #79c0ff; font-family: ui-monospace, monospace; text-transform: none; }
+    .badge.reason { color: #ff7b72; border-color: #ff7b72; font-family: ui-monospace, monospace; text-transform: none; }
 
     .task-filter {
       background: var(--bg);
@@ -86,6 +90,11 @@
     .task-filter:focus {
       outline: none;
       border-color: var(--engineer);
+    }
+
+    .filter-input {
+      min-width: 110px;
+      max-width: 150px;
     }
 
     .metadata-inputs {
@@ -384,6 +393,26 @@
       <select id="task-filter" class="task-filter" title="Filter by task">
         <option value="">All tasks</option>
       </select>
+      <select id="message-type-filter" class="task-filter" title="Filter by message type">
+        <option value="">All types</option>
+        <option value="TASK">TASK</option>
+        <option value="STATUS">STATUS</option>
+        <option value="DECISION_NEEDED">DECISION_NEEDED</option>
+        <option value="DECISION_RESOLVED">DECISION_RESOLVED</option>
+        <option value="DECISION_TAKEN">DECISION_TAKEN</option>
+        <option value="BLOCKED">BLOCKED</option>
+        <option value="REVIEW">REVIEW</option>
+        <option value="GENERAL">GENERAL</option>
+        <option value="ACTION_REQUIRED">ACTION_REQUIRED</option>
+        <option value="APPROVAL_REQUIRED">APPROVAL_REQUIRED</option>
+        <option value="AUTHORITY_REQUIRED">AUTHORITY_REQUIRED</option>
+        <option value="ACTION_RECONCILIATION_REQUIRED">ACTION_RECONCILIATION_REQUIRED</option>
+        <option value="ACTION_RECONCILED">ACTION_RECONCILED</option>
+        <option value="DIAGNOSTIC">DIAGNOSTIC</option>
+        <option value="POLICY_BLOCKED">POLICY_BLOCKED</option>
+      </select>
+      <input id="action-filter" class="task-filter filter-input" type="search" placeholder="Action ID" title="Filter by action" autocomplete="off" />
+      <input id="approval-filter" class="task-filter filter-input" type="search" placeholder="Approval ID" title="Filter by approval" autocomplete="off" />
       <span class="badge hidden" id="my-role"></span>
       <span>Msgs: <strong id="total">0</strong></span>
       <span>Last: <strong id="last-role">—</strong></span>
@@ -411,7 +440,16 @@
           <option value="BLOCKED">BLOCKED</option>
           <option value="REVIEW">REVIEW</option>
           <option value="GENERAL">GENERAL</option>
+          <option value="ACTION_REQUIRED">ACTION_REQUIRED</option>
+          <option value="APPROVAL_REQUIRED">APPROVAL_REQUIRED</option>
+          <option value="AUTHORITY_REQUIRED">AUTHORITY_REQUIRED</option>
+          <option value="ACTION_RECONCILIATION_REQUIRED">ACTION_RECONCILIATION_REQUIRED</option>
+          <option value="ACTION_RECONCILED">ACTION_RECONCILED</option>
+          <option value="DIAGNOSTIC">DIAGNOSTIC</option>
+          <option value="POLICY_BLOCKED">POLICY_BLOCKED</option>
         </select>
+        <input type="text" id="composer-action-id" class="meta-input" placeholder="Action ID (optional)" maxlength="200" autocomplete="off" />
+        <input type="text" id="composer-approval-id" class="meta-input" placeholder="Approval ID (optional)" maxlength="200" autocomplete="off" />
       </div>
       <textarea id="content" placeholder="Write in Markdown…&#10;&#10;## Task X&#10;- clear instruction&#10;- acceptance criteria"></textarea>
       <div class="composer-row">
@@ -431,6 +469,9 @@
     let knownIds = new Set();
     let eventSource = null;
     let currentTaskFilter = '';
+    let currentMessageTypeFilter = '';
+    let currentActionFilter = '';
+    let currentApprovalFilter = '';
 
     const authHeaders = () => ({ 'Authorization': 'Bearer ' + token });
 
@@ -472,12 +513,22 @@
       const messages = board.querySelectorAll('.message');
       messages.forEach(el => {
         const msgTaskId = el.dataset.taskId || '';
-        if (!currentTaskFilter || msgTaskId === currentTaskFilter) {
-          el.style.display = '';
-        } else {
-          el.style.display = 'none';
-        }
+        const msgType = el.dataset.messageType || '';
+        const msgActionId = (el.dataset.actionId || '').toLowerCase();
+        const msgApprovalId = (el.dataset.approvalId || '').toLowerCase();
+        const matches = (!currentTaskFilter || msgTaskId === currentTaskFilter) &&
+          (!currentMessageTypeFilter || msgType === currentMessageTypeFilter) &&
+          (!currentActionFilter || msgActionId.includes(currentActionFilter)) &&
+          (!currentApprovalFilter || msgApprovalId.includes(currentApprovalFilter));
+        el.style.display = matches ? '' : 'none';
       });
+    }
+
+    function createBadge(className, text) {
+      const badge = document.createElement('span');
+      badge.className = `badge ${className}`;
+      badge.textContent = text;
+      return badge;
     }
 
     function buildMessageElement(msg) {
@@ -491,41 +542,72 @@
       const roleLabel = msg.role === 'engineer' ? 'Engineer' : 'Worker';
       const canDelete = msg.role === myRole;
 
-      let metaHtml = '';
-      if (msg.task_id) {
-        metaHtml += `<span class="badge task">task: ${escapeHtml(msg.task_id)}</span>`;
-      }
-      if (msg.message_type) {
-        metaHtml += `<span class="badge type">${escapeHtml(msg.message_type)}</span>`;
-      }
-
       const div = document.createElement('div');
       div.className = 'message';
       div.dataset.id = msg.id;
       div.dataset.taskId = msg.task_id || '';
       div.dataset.messageType = msg.message_type || '';
+      div.dataset.actionId = msg.action_id || '';
+      div.dataset.approvalId = msg.approval_id || '';
+      div.dataset.nextAction = msg.next_action || '';
+      div.dataset.reasonCode = msg.reason_code || '';
 
-      if (currentTaskFilter && div.dataset.taskId !== currentTaskFilter) {
-        div.style.display = 'none';
+      const header = document.createElement('div');
+      header.className = 'message-header';
+      const left = document.createElement('span');
+      left.className = 'left';
+
+      const role = document.createElement('span');
+      role.className = `role ${msg.role === 'engineer' ? 'engineer' : 'worker'}`;
+      role.textContent = roleLabel;
+      left.appendChild(role);
+
+      if (msg.task_id) left.appendChild(createBadge('task', `task: ${msg.task_id}`));
+      if (msg.message_type) left.appendChild(createBadge('type', msg.message_type));
+      if (msg.action_id) left.appendChild(createBadge('action', `action: ${msg.action_id}`));
+      if (msg.approval_id) left.appendChild(createBadge('approval', `approval: ${msg.approval_id}`));
+      if (msg.next_action) left.appendChild(createBadge('next', `nextAction: ${msg.next_action}`));
+      if (msg.reason_code) left.appendChild(createBadge('reason', `reason: ${msg.reason_code}`));
+
+      const time = document.createElement('span');
+      time.className = 'time';
+      time.textContent = formatTime(msg.created_at);
+      left.appendChild(time);
+      header.appendChild(left);
+
+      const actions = document.createElement('span');
+      if (canDelete) {
+        const deleteButton = document.createElement('button');
+        deleteButton.className = 'delete-btn';
+        deleteButton.title = 'Delete message';
+        deleteButton.textContent = '🗑';
+        actions.appendChild(deleteButton);
       }
+      header.appendChild(actions);
+      div.appendChild(header);
 
-      div.innerHTML = `
-        <div class="message-header">
-          <span class="left">
-            <span class="role ${msg.role}">${roleLabel}</span>
-            ${metaHtml}
-            <span class="time">${formatTime(msg.created_at)}</span>
-          </span>
-          <span>${canDelete ? '<button class="delete-btn" title="Delete message">🗑</button>' : ''}</span>
-        </div>
-        <div class="message-body">${renderMarkdown(msg.content)}</div>
-      `;
+      const body = document.createElement('div');
+      body.className = 'message-body';
+      body.innerHTML = renderMarkdown(msg.content);
+      div.appendChild(body);
+
+      applyTaskFilterToElement(div);
 
       if (canDelete) {
         div.querySelector('.delete-btn').addEventListener('click', () => deleteMessage(msg.id));
       }
 
       return div;
+    }
+
+    function applyTaskFilterToElement(el) {
+      const msgActionId = (el.dataset.actionId || '').toLowerCase();
+      const msgApprovalId = (el.dataset.approvalId || '').toLowerCase();
+      const matches = (!currentTaskFilter || (el.dataset.taskId || '') === currentTaskFilter) &&
+        (!currentMessageTypeFilter || (el.dataset.messageType || '') === currentMessageTypeFilter) &&
+        (!currentActionFilter || msgActionId.includes(currentActionFilter)) &&
+        (!currentApprovalFilter || msgApprovalId.includes(currentApprovalFilter));
+      el.style.display = matches ? '' : 'none';
     }
 
     function appendMessage(msg) {
@@ -670,6 +752,8 @@
 
       const taskIdInput = document.getElementById('composer-task-id').value.trim();
       const typeInput = document.getElementById('composer-message-type').value;
+      const actionIdInput = document.getElementById('composer-action-id').value.trim();
+      const approvalIdInput = document.getElementById('composer-approval-id').value.trim();
 
       const btn = document.getElementById('post-btn');
       btn.disabled = true;
@@ -678,6 +762,8 @@
         const payload = { token, content };
         if (taskIdInput) payload.task_id = taskIdInput;
         if (typeInput) payload.message_type = typeInput;
+        if (actionIdInput) payload.action_id = actionIdInput;
+        if (approvalIdInput) payload.approval_id = approvalIdInput;
 
         const res = await fetch('/api/messages', {
           method: 'POST',
@@ -695,6 +781,8 @@
         appendMessage(msg);
         lastId = Math.max(lastId, msg.id);
         document.getElementById('content').value = '';
+        document.getElementById('composer-action-id').value = '';
+        document.getElementById('composer-approval-id').value = '';
         refreshStatus();
       } catch (e) {
         alert('Network error');
@@ -780,6 +868,18 @@
     });
     document.getElementById('task-filter').addEventListener('change', (e) => {
       currentTaskFilter = e.target.value;
+      applyTaskFilter();
+    });
+    document.getElementById('message-type-filter').addEventListener('change', (e) => {
+      currentMessageTypeFilter = e.target.value;
+      applyTaskFilter();
+    });
+    document.getElementById('action-filter').addEventListener('input', (e) => {
+      currentActionFilter = e.target.value.trim().toLowerCase();
+      applyTaskFilter();
+    });
+    document.getElementById('approval-filter').addEventListener('input', (e) => {
+      currentApprovalFilter = e.target.value.trim().toLowerCase();
       applyTaskFilter();
     });
 

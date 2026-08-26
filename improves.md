@@ -2,7 +2,7 @@
 
 > **ARCHIVE / HISTORICAL RECORD:** All items listed in this document were successfully implemented in ForgeLoopBridge v2.0 (security hardening, rate limiting, DOMPurify sanitization, SQLite WAL mode, SSE streaming, authentication, test suite, and CI).
 >
-> Active project alignment and roadmap follow the **ForgeLoop 1.5.0 Integration Specification** documented in [README.md](README.md) and [examples/AUTONOMY.md](examples/AUTONOMY.md).
+> Active project alignment follows the capability-aware ForgeLoop Protocol v1 / Integration API v1 contract documented in [README.md](README.md) and [examples/AUTONOMY.md](examples/AUTONOMY.md). The historical 1.5-era references below describe completed work and are not the current compatibility target.
 
 
 ---

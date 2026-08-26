@@ -34,10 +34,57 @@ def test_readme_documents_recovery_invariants():
     assert "task-resume" in README
 
 
-def test_readme_documents_version_dimensions():
-    assert "1.5.x" in README
-    assert "protocol `1`" in README or "protocol 1" in README
-    assert "Integration API `1`" in README or "Integration API 1" in README
+def test_readme_documents_capability_first_compatibility():
+    assert "Protocol v1" in README
+    assert "Integration API v1" in README
+    assert "protocol-info --json" in README
+    assert "protocolVersion" in README
+    assert "durableActions" in README
+    assert "features.durableActions" in README
+    assert "package version alone" in README
+
+
+def test_current_docs_cover_control_boundaries_and_diagnostics():
+    text = f"{README}\n{AUTONOMY}".lower()
+    for required in (
+        "feature-detect",
+        "commit_unknown",
+        "do not retry",
+        "require_approval",
+        "host_attested",
+        "policy",
+        "action-reconcile",
+        "action-verify",
+        "structured",
+        "trace",
+        "reflect",
+        "terminal",
+        "nextaction",
+    ):
+        assert required in text
+
+
+def test_current_docs_reject_authority_and_state_inference():
+    text = f"{README}\n{AUTONOMY}".lower()
+    for forbidden in (
+        "engineer approved == forgeloop approval",
+        "bridge approval grants host_attested",
+        "retry commit_unknown",
+        "committed means externally verified",
+        "complete valid alone means done",
+        "bridge determines action state",
+        "bridge determines approval staleness",
+        "package 1.6.0 always means durableactions",
+    ):
+        assert forbidden not in text
+
+
+def test_historical_plan_is_marked_superseded():
+    historical = (ROOT / "FORGELOOPBRIDGE_FORGELOOP_1_5_UPDATE_PLAN.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Historical plan" in historical
+    assert "FORGELOOPBRIDGE_CURRENT_FORGELOOP_SYNC_UPDATE_PLAN.md" in historical
 
 
 WORKER_POLL = (ROOT / "examples" / "worker_poll.py").read_text(encoding="utf-8")
@@ -63,3 +110,15 @@ def test_worker_poller_docs_use_task_scoped_complete():
     assert "forgeloop complete --task <task-id> --json" in WORKER_POLL
 
 
+def test_env_example_exists_and_covers_required_tokens():
+    env_example_path = ROOT / ".env.example"
+    assert env_example_path.exists()
+    content = env_example_path.read_text(encoding="utf-8")
+    assert "ENGINEER_TOKEN=" in content
+    assert "WORKER_TOKEN=" in content
+    assert "PORT=" in content
+
+
+def test_pyproject_version_matches_app_version():
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'version = "2.0.0"' in pyproject

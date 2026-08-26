@@ -91,7 +91,26 @@ VALID_MESSAGE_TYPES = frozenset({
     "BLOCKED",
     "REVIEW",
     "GENERAL",
+    "ACTION_REQUIRED",
+    "APPROVAL_REQUIRED",
+    "AUTHORITY_REQUIRED",
+    "ACTION_RECONCILIATION_REQUIRED",
+    "ACTION_RECONCILED",
+    "DIAGNOSTIC",
+    "POLICY_BLOCKED",
 })
+
+
+def normalize_optional_reference(value):
+    """Trim optional coordination references without interpreting ForgeLoop state."""
+    if value is None:
+        return None
+    stripped = str(value).strip()
+    if not stripped:
+        return None
+    if any(ord(char) < 32 or ord(char) == 127 for char in stripped):
+        raise ValueError("metadata references must contain printable characters only")
+    return stripped
 
 
 class MessageCreate(BaseModel):
@@ -99,14 +118,21 @@ class MessageCreate(BaseModel):
     content: str = Field(..., min_length=1, max_length=50000)
     task_id: str | None = Field(default=None, min_length=1, max_length=200)
     message_type: str | None = Field(default=None, min_length=1, max_length=40)
+    action_id: str | None = Field(default=None, min_length=1, max_length=200)
+    approval_id: str | None = Field(default=None, min_length=1, max_length=200)
+    next_action: str | None = Field(default=None, min_length=1, max_length=100)
+    reason_code: str | None = Field(default=None, min_length=1, max_length=160)
 
-    @field_validator("task_id", mode="before")
+    @field_validator("task_id", "action_id", "approval_id", "next_action", "reason_code", mode="before")
     @classmethod
-    def normalize_task_id(cls, value):
-        if value is None:
-            return None
-        stripped = str(value).strip()
-        return stripped or None
+    def normalize_references(cls, value):
+        return normalize_optional_reference(value)
+
+    @field_validator("message_type", mode="before")
+    @classmethod
+    def normalize_message_type(cls, value):
+        normalized = normalize_optional_reference(value)
+        return normalized.upper() if normalized else None
 
 
 class MessageOut(BaseModel):
@@ -116,6 +142,10 @@ class MessageOut(BaseModel):
     created_at: float
     task_id: str | None = None
     message_type: str | None = None
+    action_id: str | None = None
+    approval_id: str | None = None
+    next_action: str | None = None
+    reason_code: str | None = None
 
 
 # ─── Auth helpers ─────────────────────────────────────────────────────────────
@@ -168,16 +198,26 @@ async def init_db():
                 content TEXT NOT NULL,
                 created_at REAL NOT NULL,
                 task_id TEXT,
-                message_type TEXT
+                message_type TEXT,
+                action_id TEXT,
+                approval_id TEXT,
+                next_action TEXT,
+                reason_code TEXT
             )
         """)
         # Safe schema migration for existing databases:
         cursor = await db.execute("PRAGMA table_info(messages)")
         columns = {row["name"] for row in await cursor.fetchall()}
-        if "task_id" not in columns:
-            await db.execute("ALTER TABLE messages ADD COLUMN task_id TEXT")
-        if "message_type" not in columns:
-            await db.execute("ALTER TABLE messages ADD COLUMN message_type TEXT")
+        for column in (
+            "task_id",
+            "message_type",
+            "action_id",
+            "approval_id",
+            "next_action",
+            "reason_code",
+        ):
+            if column not in columns:
+                await db.execute(f"ALTER TABLE messages ADD COLUMN {column} TEXT")
 
         await db.execute("""
             CREATE INDEX IF NOT EXISTS idx_messages_created_at
@@ -186,6 +226,18 @@ async def init_db():
         await db.execute("""
             CREATE INDEX IF NOT EXISTS idx_messages_task_id
             ON messages(task_id)
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_messages_action_id
+            ON messages(action_id)
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_messages_approval_id
+            ON messages(approval_id)
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_messages_message_type
+            ON messages(message_type)
         """)
         await db.commit()
     logger.info("Database ready at %s", DB_PATH)
@@ -212,6 +264,9 @@ async def get_messages(
     request: Request,
     token: str | None = None,
     task_id: str | None = None,
+    message_type: str | None = None,
+    action_id: str | None = None,
+    approval_id: str | None = None,
     after_id: int | None = None,
     before_id: int | None = None,
     latest: bool = False,
@@ -220,6 +275,9 @@ async def get_messages(
     """Return messages ordered by id ASC. Requires a valid token.
 
     - `task_id`: filter by task identity (exact match)
+    - `message_type`: filter by normalized coordination type
+    - `action_id`: filter by action reference (exact match)
+    - `approval_id`: filter by approval reference (exact match)
     - `after_id`: only messages with id > after_id (live updates)
     - `before_id`: only messages with id < before_id (history paging)
     - `latest`: return newest page of messages (cannot combine with after_id / before_id)
@@ -234,12 +292,33 @@ async def get_messages(
             detail="latest cannot be combined with after_id or before_id",
         )
 
-    query = "SELECT id, role, content, created_at, task_id, message_type FROM messages"
+    try:
+        task_id = normalize_optional_reference(task_id)
+        message_type = normalize_optional_reference(message_type)
+        message_type = message_type.upper() if message_type else None
+        action_id = normalize_optional_reference(action_id)
+        approval_id = normalize_optional_reference(approval_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    query = (
+        "SELECT id, role, content, created_at, task_id, message_type, "
+        "action_id, approval_id, next_action, reason_code FROM messages"
+    )
     clauses, params = [], []
 
     if task_id is not None:
         clauses.append("task_id = ?")
         params.append(task_id)
+    if message_type is not None:
+        clauses.append("message_type = ?")
+        params.append(message_type)
+    if action_id is not None:
+        clauses.append("action_id = ?")
+        params.append(action_id)
+    if approval_id is not None:
+        clauses.append("approval_id = ?")
+        params.append(approval_id)
     if after_id is not None:
         clauses.append("id > ?")
         params.append(after_id)
@@ -263,7 +342,16 @@ async def get_messages(
     messages = [MessageOut(**dict(row)) for row in rows]
     if latest or before_id is not None:
         messages.reverse()
-    logger.debug("GET /api/messages role=%s count=%d task_id=%s latest=%s", role, len(messages), task_id, latest)
+    logger.debug(
+        "GET /api/messages role=%s count=%d task_id=%s message_type=%s action_id=%s approval_id=%s latest=%s",
+        role,
+        len(messages),
+        task_id,
+        message_type,
+        action_id,
+        approval_id,
+        latest,
+    )
     return messages
 
 
@@ -280,7 +368,7 @@ async def post_message(msg: MessageCreate, request: Request):
     task_id = msg.task_id
     message_type = None
     if msg.message_type:
-        normalized_type = msg.message_type.strip().upper()
+        normalized_type = msg.message_type
         if normalized_type not in VALID_MESSAGE_TYPES:
             raise HTTPException(
                 status_code=422,
@@ -292,11 +380,28 @@ async def post_message(msg: MessageCreate, request: Request):
 
     async with connect_db() as db:
         cursor = await db.execute(
-            "INSERT INTO messages (role, content, created_at, task_id, message_type) VALUES (?, ?, ?, ?, ?)",
-            (role, content, created_at, task_id, message_type),
+            """
+            INSERT INTO messages (
+                role, content, created_at, task_id, message_type,
+                action_id, approval_id, next_action, reason_code
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                role,
+                content,
+                created_at,
+                task_id,
+                message_type,
+                msg.action_id,
+                msg.approval_id,
+                msg.next_action,
+                msg.reason_code,
+            ),
         )
         await db.commit()
         msg_id = cursor.lastrowid
+        if msg_id is None:
+            raise HTTPException(status_code=500, detail="Could not allocate message id")
 
     out = MessageOut(
         id=int(msg_id),
@@ -305,6 +410,10 @@ async def post_message(msg: MessageCreate, request: Request):
         created_at=created_at,
         task_id=task_id,
         message_type=message_type,
+        action_id=msg.action_id,
+        approval_id=msg.approval_id,
+        next_action=msg.next_action,
+        reason_code=msg.reason_code,
     )
     broadcast(out)
     return out
