@@ -46,7 +46,7 @@ Interfaces:
 - disconnect_slow_subscriber(queue: asyncio.Queue) -> None.
 - event_stream(request: Request, queue: asyncio.Queue): the route's async generator.
 
-- [ ] Step 1: Write a failing behavior test.
+- [x] Step 1: Write a failing behavior test.
 
 Use a request double whose is_disconnected method always returns False. Fill a queue to capacity, start event_stream, call broadcast with one more MessageOut, assert the queue leaves _subscribers, drain the maxsize minus one buffered events, and assert the next anext(generator) raises StopAsyncIteration.
 
@@ -70,21 +70,21 @@ Use a request double whose is_disconnected method always returns False. Fill a q
             await asyncio.wait_for(anext(generator), timeout=1)
         await generator.aclose()
 
-- [ ] Step 2: Run the focused test and verify it fails for the missing/incorrect termination behavior.
+- [x] Step 2: Run the focused test and verify it fails for the missing/incorrect termination behavior.
 
     ./.venv/bin/python -m pytest -q tests/test_main.py::test_sse_overflow_terminates_active_stream
 
-- [ ] Step 3: Implement the minimal sentinel flow.
+- [x] Step 3: Implement the minimal sentinel flow.
 
 Add SSE_DISCONNECT. Make disconnect_slow_subscriber discard the queue, remove one item with get_nowait when needed, and enqueue the sentinel with put_nowait. Use an explicit except asyncio.QueueFull branch followed by an except Exception branch, and route both through this helper. Move the nested route generator to event_stream, break when the dequeued item is SSE_DISCONNECT, preserve keepalives and request disconnect checks, and pass event_stream(request, queue) to StreamingResponse.
 
-- [ ] Step 4: Run the focused test and the existing REST recovery test.
+- [x] Step 4: Run the focused test and the existing REST recovery test.
 
     ./.venv/bin/python -m pytest -q tests/test_main.py -k 'sse_overflow or sse_broadcast'
 
 The new test and the existing persisted-message after_id test must both pass.
 
-- [ ] Step 5: Commit the focused correction.
+- [x] Step 5: Commit the focused correction.
 
     git add main.py tests/test_main.py
     git commit -m "fix: terminate overflowed SSE subscribers"
@@ -103,7 +103,7 @@ Interfaces:
 - fetch_latest_message_id() -> int, implemented through fetch_latest_messages(limit=1).
 - initialize_first_start(start_mode: str, auto_ack: bool = False) -> int.
 
-- [ ] Step 1: Write failing tests for pending and explicit now.
+- [x] Step 1: Write failing tests for pending and explicit now.
 
 For pending, patch the latest page with worker messages and two Engineer messages, patch handoff_message, assert only the newest Engineer message is handed off and the cursor is saved only after it. For now, patch the same transport, assert handoff_message is not called, and assert the newest board ID is saved.
 
@@ -147,23 +147,23 @@ For pending, patch the latest page with worker messages and two Engineer message
         assert handed_off == []
         assert worker_poll.load_last_seen() == 42
 
-- [ ] Step 2: Run the focused tests and verify the expected red failure.
+- [x] Step 2: Run the focused tests and verify the expected red failure.
 
     ./.venv/bin/python -m pytest -q tests/test_worker_poll.py -k 'first_start'
 
-- [ ] Step 3: Implement latest-page bootstrap and explicit modes.
+- [x] Step 3: Implement latest-page bootstrap and explicit modes.
 
 Implement fetch_latest_messages with GET /api/messages and params latest=true, limit=200. Keep fetch_latest_message_id as a limit-one wrapper. Implement initialize_first_start so history returns zero without skipping via a pre-saved cursor, now saves the newest ID without handoff, pending hands off the newest Engineer-authored message through process_polled_messages, and an empty/no-Engineer page saves the newest page ID. Add argparse choices pending, now, and history, default pending. Use STATE_FILE.exists() in main to distinguish a missing cursor from a saved numeric zero. Keep normal polling and post-handoff cursor semantics unchanged.
 
-- [ ] Step 4: Add the atomic cursor write and its test.
+- [x] Step 4: Add the atomic cursor write and its test.
 
 Write the cursor to STATE_FILE.with_name(f"{STATE_FILE.name}.tmp") with UTF-8 encoding, then replace STATE_FILE. Extend the cursor test to assert the value is readable and the sibling temporary file does not remain.
 
-- [ ] Step 5: Run all Worker tests.
+- [x] Step 5: Run all Worker tests.
 
     ./.venv/bin/python -m pytest -q tests/test_worker_poll.py
 
-- [ ] Step 6: Commit the Worker correction.
+- [x] Step 6: Commit the Worker correction.
 
     git add examples/worker_poll.py tests/test_worker_poll.py
     git commit -m "fix: preserve first-run Worker instructions"
@@ -182,29 +182,29 @@ Interfaces:
 - Independent _sse_ticket_timestamps store and check_sse_ticket_rate_limit(role: str) -> None.
 - issue_sse_ticket(role: str) -> tuple[str, float].
 
-- [ ] Step 1: Write failing tests.
+- [x] Step 1: Write failing tests.
 
 Set the ticket limit and post limit to one, issue two tickets, and post one message; assert statuses 200, 429, and 200 to prove independent budgets. Add a TTL parser test with 0.5 and an inclusive minimum of one second. Change the existing response assertion to compare expires_in with the configured float exactly.
 
-- [ ] Step 2: Run the focused tests and verify the expected red failures.
+- [x] Step 2: Run the focused tests and verify the expected red failures.
 
     ./.venv/bin/python -m pytest -q tests/test_main.py -k 'ticket or ttl'
 
-- [ ] Step 3: Implement the hardening.
+- [x] Step 3: Implement the hardening.
 
 Extend _env_float with minimum_inclusive=False, retaining strict behavior for existing callers and using an inclusive minimum for SSE_TICKET_TTL. Add SSE_TICKET_RATE_LIMIT=30 and SSE_TICKET_RATE_WINDOW=60, an independent deque/lock pair, and a limiter that raises HTTP 429. Clear that store in the test fixture and lifespan. Authenticate, rate-limit, then issue in /api/stream-ticket. Return the exact float TTL instead of int truncation.
 
-- [ ] Step 4: Add the two variables to .env.example.
+- [x] Step 4: Add the two variables to .env.example.
 
     SSE_TICKET_RATE_LIMIT=30
     SSE_TICKET_RATE_WINDOW=60
 
-- [ ] Step 5: Run ticket-focused tests and the full suite.
+- [x] Step 5: Run ticket-focused tests and the full suite.
 
     ./.venv/bin/python -m pytest -q tests/test_main.py -k 'ticket or ttl'
     ./.venv/bin/python -m pytest -q
 
-- [ ] Step 6: Commit the ticket hardening.
+- [x] Step 6: Commit the ticket hardening.
 
     git add main.py tests/test_main.py .env.example
     git commit -m "fix: bound SSE ticket issuance"
@@ -218,27 +218,27 @@ Files:
 - Modify README.md.
 - Modify tests/test_docs.py.
 
-- [ ] Step 1: Write failing documentation assertions.
+- [x] Step 1: Write failing documentation assertions.
 
 Require the current record to contain explicit stream closure and a fresh SSE ticket. Require README to mention one application worker, shared broadcast backend, Authorization: Bearer, legacy query-token compatibility, .worker_last_seen, --start-mode now, and sse_ticket_rate_limit.
 
-- [ ] Step 2: Run the focused doc tests and verify the expected red failure.
+- [x] Step 2: Run the focused doc tests and verify the expected red failure.
 
     ./.venv/bin/python -m pytest -q tests/test_docs.py -k 'stream_close or topology or start_policy'
 
-- [ ] Step 3: Update the synchronization record.
+- [x] Step 3: Update the synchronization record.
 
 State that every subscriber has bounded buffering, queue overflow explicitly closes the affected stream, and the browser falls back to REST after_id reconciliation and requests a fresh SSE ticket.
 
-- [ ] Step 4: Update README.
+- [x] Step 4: Update README.
 
 Add the independent ticket limiter variables and TTL floor to the environment table; document one application worker for deterministic realtime SSE unless a shared broadcast backend exists; prefer Bearer headers and mark query-token authentication as legacy/deprecated; document intentional /api/status activity metadata; explain that .worker_last_seen is a local transport checkpoint, not canonical ForgeLoop state; and describe pending (default), now (explicit skip), and history (cursor-zero redelivery).
 
-- [ ] Step 5: Run documentation tests.
+- [x] Step 5: Run documentation tests.
 
     ./.venv/bin/python -m pytest -q tests/test_docs.py
 
-- [ ] Step 6: Commit documentation.
+- [x] Step 6: Commit documentation.
 
     git add README.md FORGELOOPBRIDGE_CURRENT_FORGELOOP_SYNC_UPDATE_PLAN.md tests/test_docs.py
     git commit -m "docs: describe reliable Bridge recovery semantics"
@@ -247,7 +247,7 @@ Add the independent ticket limiter variables and TTL floor to the environment ta
 
 ### Task 5: Validate, review, publish, and merge
 
-- [ ] Step 1: Run the complete local matrix from the isolated worktree.
+- [x] Step 1: Run the complete local matrix from the isolated worktree.
 
     ./.venv/bin/python -m pytest -q
     ./.venv/bin/ruff check .
@@ -257,11 +257,11 @@ Add the independent ticket limiter variables and TTL floor to the environment ta
 
 Verify the diff preserves the ForgeLoop authority boundary and contains no .forgeloop parsing or mutation endpoint.
 
-- [ ] Step 2: Review the requirements line by line.
+- [x] Step 2: Review the requirements line by line.
 
 Confirm the P0 SSE and Worker acceptance criteria, independent ticket limiter, TTL floor/exact response, single-process documentation, Bearer preference, public status disclosure, atomic cursor persistence, and all start-mode documentation.
 
-- [ ] Step 3: Request code review before publishing.
+- [x] Step 3: Request code review before publishing.
 
 Use the review workflow with the fork-point base SHA and branch-tip head SHA. Fix every Critical or Important finding, rerun the full matrix, and commit fixes.
 
