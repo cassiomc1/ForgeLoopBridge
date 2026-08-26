@@ -102,6 +102,7 @@ async def check_rate_limit(key: str) -> None:
 _subscribers: set[asyncio.Queue] = set()
 _sse_tickets: dict[str, tuple[str, float]] = {}
 _sse_ticket_lock = asyncio.Lock()
+SSE_DISCONNECT = object()
 
 
 def create_sse_queue() -> asyncio.Queue:
@@ -135,15 +136,27 @@ async def resolve_sse_ticket(ticket: str) -> str:
     return entry[0]
 
 
+def disconnect_slow_subscriber(queue: asyncio.Queue) -> None:
+    _subscribers.discard(queue)
+    try:
+        queue.get_nowait()
+    except asyncio.QueueEmpty:
+        pass
+    try:
+        queue.put_nowait(SSE_DISCONNECT)
+    except asyncio.QueueFull:
+        pass
+
+
 def broadcast(message: "MessageOut") -> None:
     for q in list(_subscribers):
         try:
             q.put_nowait(message)
         except asyncio.QueueFull:
-            # Drop slow subscribers; they can recover through GET /api/messages?after_id=.
-            _subscribers.discard(q)
+            # Disconnect slow subscribers; they recover through GET /api/messages?after_id=.
+            disconnect_slow_subscriber(q)
         except Exception:
-            _subscribers.discard(q)
+            disconnect_slow_subscriber(q)
 
 
 # ─── Models ───────────────────────────────────────────────────────────────────
@@ -518,6 +531,22 @@ async def stream_ticket(request: Request):
     return {"ticket": ticket, "expires_in": expires_in}
 
 
+async def event_stream(request: Request, queue: asyncio.Queue):
+    try:
+        while True:
+            if await request.is_disconnected():
+                break
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=15)
+                if item is SSE_DISCONNECT:
+                    break
+                yield f"data: {item.model_dump_json()}\n\n"
+            except TimeoutError:
+                yield ": keepalive\n\n"
+    finally:
+        _subscribers.discard(queue)
+
+
 @app.get("/api/stream")
 async def stream(request: Request, token: str | None = None, ticket: str | None = None):
     """Server-Sent Events stream of new messages (real-time push).
@@ -533,20 +562,7 @@ async def stream(request: Request, token: str | None = None, ticket: str | None 
     queue = create_sse_queue()
     _subscribers.add(queue)
 
-    async def event_gen():
-        try:
-            while True:
-                if await request.is_disconnected():
-                    break
-                try:
-                    msg = await asyncio.wait_for(queue.get(), timeout=15)
-                    yield f"data: {msg.model_dump_json()}\n\n"
-                except TimeoutError:
-                    yield ": keepalive\n\n"
-        finally:
-            _subscribers.discard(queue)
-
-    return StreamingResponse(event_gen(), media_type="text/event-stream")
+    return StreamingResponse(event_stream(request, queue), media_type="text/event-stream")
 
 
 @app.get("/healthz")

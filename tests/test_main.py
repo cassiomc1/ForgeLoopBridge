@@ -410,6 +410,28 @@ async def test_sse_overflow_drops_slow_subscriber_and_rest_reconciles(client):
     assert recovered.json()[-1]["content"] == "recover me"
 
 
+class ConnectedRequest:
+    async def is_disconnected(self):
+        return False
+
+
+async def test_sse_overflow_terminates_active_stream():
+    queue = main.create_sse_queue()
+    main._subscribers.add(queue)
+    for _ in range(queue.maxsize):
+        queue.put_nowait(main.MessageOut(id=0, role="worker", content="buffered", created_at=0))
+
+    generator = main.event_stream(ConnectedRequest(), queue)
+    main.broadcast(main.MessageOut(id=1, role="engineer", content="overflow", created_at=1))
+
+    assert queue not in main._subscribers
+    for _ in range(queue.maxsize - 1):
+        await asyncio.wait_for(anext(generator), timeout=1)
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.wait_for(anext(generator), timeout=1)
+    await generator.aclose()
+
+
 @pytest.mark.parametrize(
     ("name", "raw", "default", "minimum", "maximum"),
     (
