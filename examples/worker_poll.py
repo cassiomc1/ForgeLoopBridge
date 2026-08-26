@@ -93,10 +93,15 @@ def post_status(
     print("Status posted successfully.")
 
 
-def fetch_latest_messages(limit: int = LATEST_PAGE_SIZE) -> list[dict]:
+def fetch_messages_page(before_id: int | None = None, limit: int = LATEST_PAGE_SIZE) -> list[dict]:
+    params: dict = {"limit": limit}
+    if before_id is not None:
+        params["before_id"] = before_id
+    else:
+        params["latest"] = "true"
     r = requests.get(
         f"{BASE_URL}/api/messages",
-        params={"latest": "true", "limit": limit},
+        params=params,
         headers={"Authorization": f"Bearer {WORKER_TOKEN}"},
         timeout=15,
     )
@@ -104,9 +109,34 @@ def fetch_latest_messages(limit: int = LATEST_PAGE_SIZE) -> list[dict]:
     return r.json()
 
 
+def fetch_latest_messages(limit: int = LATEST_PAGE_SIZE) -> list[dict]:
+    return fetch_messages_page(before_id=None, limit=limit)
+
+
 def fetch_latest_message_id() -> int:
     messages = fetch_latest_messages(limit=1)
     return int(messages[-1]["id"]) if messages else 0
+
+
+def fetch_latest_engineer_message(page_size: int = LATEST_PAGE_SIZE) -> dict | None:
+    before_id = None
+    while True:
+        if before_id is None:
+            messages = fetch_latest_messages(limit=page_size)
+        else:
+            messages = fetch_messages_page(before_id=before_id, limit=page_size)
+
+        if not messages:
+            return None
+
+        for message in reversed(messages):
+            if message.get("role") == "engineer":
+                return message
+
+        if len(messages) < page_size:
+            return None
+
+        before_id = int(messages[0]["id"])
 
 
 def load_last_seen() -> int:
@@ -232,21 +262,16 @@ def initialize_first_start(start_mode: str, auto_ack: bool = False) -> int:
     if start_mode == "history":
         return 0
 
-    messages = fetch_latest_messages()
-    if not messages:
-        save_last_seen(0)
-        return 0
-
     if start_mode == "now":
-        last_seen = int(messages[-1]["id"])
+        last_seen = fetch_latest_message_id()
         save_last_seen(last_seen)
         return last_seen
 
-    engineer_messages = [message for message in messages if message.get("role") == "engineer"]
-    if engineer_messages:
-        return process_polled_messages([engineer_messages[-1]], last_seen=0, auto_ack=auto_ack)
+    latest_engineer = fetch_latest_engineer_message()
+    if latest_engineer is not None:
+        return process_polled_messages([latest_engineer], last_seen=0, auto_ack=auto_ack)
 
-    last_seen = int(messages[-1]["id"])
+    last_seen = fetch_latest_message_id()
     save_last_seen(last_seen)
     return last_seen
 

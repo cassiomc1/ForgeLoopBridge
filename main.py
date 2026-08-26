@@ -154,7 +154,7 @@ async def resolve_sse_ticket(ticket: str) -> str:
     now = time.time()
     async with _sse_ticket_lock:
         _purge_sse_tickets(now)
-        entry = _sse_tickets.get(ticket)
+        entry = _sse_tickets.pop(ticket, None)
     if entry is None:
         raise HTTPException(status_code=401, detail="Invalid or expired SSE ticket")
     return entry[0]
@@ -162,10 +162,11 @@ async def resolve_sse_ticket(ticket: str) -> str:
 
 def disconnect_slow_subscriber(queue: asyncio.Queue) -> None:
     _subscribers.discard(queue)
-    try:
-        queue.get_nowait()
-    except asyncio.QueueEmpty:
-        pass
+    while True:
+        try:
+            queue.get_nowait()
+        except asyncio.QueueEmpty:
+            break
     try:
         queue.put_nowait(SSE_DISCONNECT)
     except asyncio.QueueFull:

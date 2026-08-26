@@ -192,6 +192,9 @@ async def test_stream_ticket_requires_auth_and_is_role_bound(client):
     assert data["expires_in"] == main.SSE_TICKET_TTL
     assert WORKER_TOKEN not in data["ticket"]
     assert await main.resolve_sse_ticket(data["ticket"]) == "worker"
+    with pytest.raises(main.HTTPException) as exc_info:
+        await main.resolve_sse_ticket(data["ticket"])
+    assert exc_info.value.status_code == 401
 
 
 async def test_stream_ticket_rate_limit_is_independent_from_post_limit(client, monkeypatch):
@@ -454,8 +457,6 @@ async def test_sse_overflow_terminates_active_stream():
     main.broadcast(main.MessageOut(id=1, role="engineer", content="overflow", created_at=1))
 
     assert queue not in main._subscribers
-    for _ in range(queue.maxsize - 1):
-        await asyncio.wait_for(anext(generator), timeout=1)
     with pytest.raises(StopAsyncIteration):
         await asyncio.wait_for(anext(generator), timeout=1)
     await generator.aclose()
