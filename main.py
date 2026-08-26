@@ -57,15 +57,24 @@ def _env_int(name: str, default: int, minimum: int, maximum: int | None = None) 
     return value
 
 
-def _env_float(name: str, default: float, minimum: float, maximum: float | None = None) -> float:
+def _env_float(
+    name: str,
+    default: float,
+    minimum: float,
+    maximum: float | None = None,
+    *,
+    minimum_inclusive: bool = False,
+) -> float:
     raw = os.getenv(name, str(default))
     try:
         value = float(raw)
     except (TypeError, ValueError) as exc:
         raise RuntimeError(f"{name} must be a number; got {raw!r}") from exc
-    if not math.isfinite(value) or value <= minimum or (maximum is not None and value > maximum):
+    below_minimum = value < minimum if minimum_inclusive else value <= minimum
+    if not math.isfinite(value) or below_minimum or (maximum is not None and value > maximum):
         upper = f" and <= {maximum}" if maximum is not None else ""
-        raise RuntimeError(f"{name} must be > {minimum}{upper}; got {value}")
+        comparator = ">=" if minimum_inclusive else ">"
+        raise RuntimeError(f"{name} must be {comparator} {minimum}{upper}; got {value}")
     return value
 
 
@@ -74,7 +83,9 @@ RATE_LIMIT_POSTS = _env_int("RATE_LIMIT_POSTS", 30, 1)
 RATE_LIMIT_WINDOW = _env_float("RATE_LIMIT_WINDOW", 60, 0)
 DEFAULT_PAGE_SIZE = _env_int("DEFAULT_PAGE_SIZE", 200, 1, MAX_PAGE_SIZE)
 SSE_QUEUE_SIZE = _env_int("SSE_QUEUE_SIZE", 256, 16, 10000)
-SSE_TICKET_TTL = _env_float("SSE_TICKET_TTL", 30, 0, 300)
+SSE_TICKET_TTL = _env_float("SSE_TICKET_TTL", 30, 1, 300, minimum_inclusive=True)
+SSE_TICKET_RATE_LIMIT = _env_int("SSE_TICKET_RATE_LIMIT", 30, 1)
+SSE_TICKET_RATE_WINDOW = _env_float("SSE_TICKET_RATE_WINDOW", 60, 0)
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -85,6 +96,8 @@ logger = logging.getLogger("forgebridge")
 # ─── Rate limiting (in-memory sliding window) ────────────────────────────────
 _post_timestamps: dict[str, deque[float]] = defaultdict(deque)
 _rl_lock = asyncio.Lock()
+_sse_ticket_timestamps: dict[str, deque[float]] = defaultdict(deque)
+_sse_ticket_rl_lock = asyncio.Lock()
 
 
 async def check_rate_limit(key: str) -> None:
@@ -94,6 +107,17 @@ async def check_rate_limit(key: str) -> None:
         while window and now - window[0] > RATE_LIMIT_WINDOW:
             window.popleft()
         if len(window) >= RATE_LIMIT_POSTS:
+            raise HTTPException(status_code=429, detail="Rate limit exceeded, slow down")
+        window.append(now)
+
+
+async def check_sse_ticket_rate_limit(role: str) -> None:
+    now = time.time()
+    async with _sse_ticket_rl_lock:
+        window = _sse_ticket_timestamps[role]
+        while window and now - window[0] > SSE_TICKET_RATE_WINDOW:
+            window.popleft()
+        if len(window) >= SSE_TICKET_RATE_LIMIT:
             raise HTTPException(status_code=429, detail="Rate limit exceeded, slow down")
         window.append(now)
 
@@ -116,14 +140,14 @@ def _purge_sse_tickets(now: float) -> None:
             _sse_tickets.pop(ticket, None)
 
 
-async def issue_sse_ticket(role: str) -> tuple[str, int]:
+async def issue_sse_ticket(role: str) -> tuple[str, float]:
     now = time.time()
     ticket = secrets.token_urlsafe(32)
     expires_at = now + SSE_TICKET_TTL
     async with _sse_ticket_lock:
         _purge_sse_tickets(now)
         _sse_tickets[ticket] = (role, expires_at)
-    return ticket, int(SSE_TICKET_TTL)
+    return ticket, SSE_TICKET_TTL
 
 
 async def resolve_sse_ticket(ticket: str) -> str:
@@ -327,6 +351,7 @@ async def lifespan(app: FastAPI):
     yield
     _subscribers.clear()
     _sse_tickets.clear()
+    _sse_ticket_timestamps.clear()
 
 
 app = FastAPI(
@@ -527,6 +552,7 @@ async def whoami(request: Request, token: str | None = None):
 async def stream_ticket(request: Request):
     """Issue a short-lived ticket for browser EventSource connections."""
     role = await require_reader(request, None)
+    await check_sse_ticket_rate_limit(role)
     ticket, expires_in = await issue_sse_ticket(role)
     return {"ticket": ticket, "expires_in": expires_in}
 
