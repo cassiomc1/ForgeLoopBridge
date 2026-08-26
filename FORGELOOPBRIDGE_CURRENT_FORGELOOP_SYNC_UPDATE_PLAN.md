@@ -32,8 +32,10 @@ Bridge cannot manufacture trusted host authority or canonical approval.
   `after_id`/`before_id` recovery.
 - Browser SSE uses a short-lived stream ticket; SSE is a low-latency hint, not
   the canonical delivery journal.
-- Every SSE subscriber has bounded buffering. A slow subscriber is removed and
-  must reconcile through REST.
+- Every SSE subscriber has bounded buffering.
+- Queue overflow explicitly closes the affected stream.
+- The browser then falls back to REST `after_id` reconciliation and requests a
+  fresh SSE ticket.
 - Worker instructions are processed before their local cursor advances, so
   failures result in safe at-least-once redelivery.
 - `COMMIT_UNKNOWN` handling is triggered only by explicit reported control

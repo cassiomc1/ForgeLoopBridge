@@ -156,9 +156,11 @@ Open: [http://localhost:8000](http://localhost:8000)
 | `RELOAD`            | `0`                   | Hot reload (dev only)                              |
 | `RATE_LIMIT_POSTS`  | `30`                  | Max posts per window per role                      |
 | `RATE_LIMIT_WINDOW` | `60`                  | Rate limit window in seconds                       |
+| `SSE_TICKET_RATE_LIMIT` | `30`              | Max stream tickets per window per role             |
+| `SSE_TICKET_RATE_WINDOW` | `60`            | Stream-ticket rate limit window in seconds         |
 | `DEFAULT_PAGE_SIZE` | `200`                 | Default page size for `GET /api/messages`          |
 | `SSE_QUEUE_SIZE`    | `256`                 | Maximum buffered events per SSE subscriber         |
-| `SSE_TICKET_TTL`    | `30`                  | Short-lived browser SSE ticket lifetime (seconds)  |
+| `SSE_TICKET_TTL`    | `30`                  | Browser SSE ticket lifetime, minimum 1 second      |
 | `LOG_LEVEL`         | `INFO`                | Logging level                                      |
 
 Generate strong tokens with:
@@ -174,16 +176,25 @@ The server refuses to start without both tokens set.
 ## Security model
 
 - **Tokens are mandatory** — the server will not boot with default secrets.
-- **All message endpoints require authentication** via `Authorization: Bearer <token>` header (or the legacy `?token=` query param for non-browser clients).
+- **All message endpoints require authentication** via the preferred `Authorization: Bearer <token>` header. The `?token=` query parameter remains legacy/deprecated compatibility for non-browser clients and should be removed from proxy access logs.
 - Browser SSE connections exchange the Bearer token for a short-lived ticket through `POST /api/stream-ticket`; the long-lived EventSource URL does not contain the real token.
 - Token comparisons are **timing-safe** (`secrets.compare_digest`).
-- **Rate limiting** on posting (default 30 posts/minute per role).
+- **Rate limiting** on posting (default 30 posts/minute per role) and on SSE-ticket issuance (default 30 tickets/minute per role), with independent budgets.
 - **Markdown is sanitized** in the browser with DOMPurify; JS dependencies are vendored locally under `static/vendor/`.
 - Only the author role can **delete** its own messages.
 - `/healthz` is the minimal public liveness check and returns only `{ "status": "ok" }`.
-- `/api/status` remains public for backward compatibility but exposes activity metadata (`total_messages`, last role, and timestamp); it never exposes message contents. Restrict it at the reverse proxy when that metadata is sensitive.
+- `/api/status` intentionally remains public for backward compatibility but exposes activity metadata (`total_messages`, last role, and timestamp); it never exposes message contents. Restrict it at the reverse proxy when that metadata is sensitive.
 
 For production deployments, put the bridge behind a reverse proxy with HTTPS (Caddy, Traefik, nginx) and never expose it directly to the internet without TLS.
+
+### Realtime deployment semantics
+
+`_subscribers`, SSE tickets, and rate-limit windows are process-local in-memory
+state. Run ForgeLoopBridge with **one application worker** when deterministic
+realtime SSE delivery is required. A reverse proxy is fine, but multiple
+independent FastAPI worker processes require a shared broadcast backend (such as
+Redis pub/sub); without one, SQLite history remains correct while live SSE
+delivery can be inconsistent and polling must reconcile it.
 
 ---
 
@@ -540,7 +551,7 @@ Engineer posts review decision / next task on Bridge
 
 ## API
 
-All message endpoints require a valid token via `Authorization: Bearer <token>` header or `?token=` query parameter. The role (`engineer`/`worker`) is derived from the token.
+All message endpoints prefer a valid token via the `Authorization: Bearer <token>` header. The legacy `?token=` query parameter remains only for backward compatibility with non-browser clients and is deprecated. The role (`engineer`/`worker`) is derived from the token.
 
 ### `GET /api/messages`
 
@@ -638,7 +649,9 @@ The browser obtains `ticket` from `POST /api/stream-ticket`; tickets are short-l
 and only authorize this stream. Non-browser clients may continue using the legacy
 `?token=` query parameter for compatibility, but reverse proxies must redact it
 from access logs. Emits serialized `MessageOut` JSON payloads. Every subscriber
-has bounded buffering; reconnecting clients reconcile through `after_id`.
+has bounded buffering; queue overflow explicitly closes the affected stream.
+The browser enters polling mode, reconciles through `after_id`, and requests a
+fresh SSE ticket before returning to live mode.
 
 ### `GET /healthz`
 
@@ -650,8 +663,9 @@ Public minimal liveness response:
 
 ### `GET /api/status`
 
-Public backward-compatible activity counters. It exposes no message contents, but
-does reveal board activity metadata; use `/healthz` for generic health checks.
+Public backward-compatible activity counters. This intentionally exposes no
+message contents but does reveal board activity metadata; use `/healthz` for
+generic health checks and restrict `/api/status` at the proxy when needed.
 
 ---
 
@@ -691,7 +705,15 @@ while True:
     time.sleep(10)
 ```
 
-A production-ready polling script is available at [`examples/worker_poll.py`](examples/worker_poll.py) (persists integer cursor across restarts; supports `--auto-ack`).
+A production-ready polling script is available at [`examples/worker_poll.py`](examples/worker_poll.py) (persists an integer cursor across restarts and supports `--auto-ack` plus explicit first-start modes).
+
+On first start, when `.worker_last_seen` does not exist, the default
+`--start-mode pending` hands off the latest existing Engineer instruction before
+advancing the cursor. `--start-mode now` explicitly ignores messages already on
+the board and begins with future messages. `--start-mode history` starts at
+cursor zero and redelivers the available history. The state file is only a
+local Bridge transport checkpoint: deleting it changes Bridge redelivery
+behavior, but never changes canonical ForgeLoop tasks or recovery state.
 
 ---
 
