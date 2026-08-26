@@ -156,3 +156,22 @@ def test_readme_documents_architecture_correct_banner_and_reported_metadata():
 def test_pyproject_version_matches_app_version():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'version = "2.0.0"' in pyproject
+
+
+def test_current_sync_record_documents_stream_close_before_rest_recovery():
+    current = (ROOT / "FORGELOOPBRIDGE_CURRENT_FORGELOOP_SYNC_UPDATE_PLAN.md").read_text(
+        encoding="utf-8"
+    )
+    assert "explicitly closes the affected stream" in current
+    assert "fresh SSE ticket" in current
+
+
+def test_readme_documents_realtime_topology_and_worker_start_policy():
+    text = README.lower()
+    assert "one application worker" in text
+    assert "shared broadcast backend" in text
+    assert "authorization: bearer" in text
+    assert "legacy" in text
+    assert ".worker_last_seen" in text
+    assert "--start-mode now" in text
+    assert "sse_ticket_rate_limit" in text

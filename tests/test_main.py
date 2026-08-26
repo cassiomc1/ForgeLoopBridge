@@ -26,6 +26,7 @@ async def clean_db():
     async with main.connect_db() as db:
         await db.execute("DELETE FROM messages")
     main._post_timestamps.clear()
+    main._sse_ticket_timestamps.clear()
     main._subscribers.clear()
     main._sse_tickets.clear()
     yield
@@ -188,9 +189,37 @@ async def test_stream_ticket_requires_auth_and_is_role_bound(client):
     assert r.status_code == 200
     data = r.json()
     assert data["ticket"]
-    assert data["expires_in"] == int(main.SSE_TICKET_TTL)
+    assert data["expires_in"] == main.SSE_TICKET_TTL
     assert WORKER_TOKEN not in data["ticket"]
     assert await main.resolve_sse_ticket(data["ticket"]) == "worker"
+
+
+async def test_stream_ticket_rate_limit_is_independent_from_post_limit(client, monkeypatch):
+    monkeypatch.setattr(main, "SSE_TICKET_RATE_LIMIT", 1, raising=False)
+    monkeypatch.setattr(main, "RATE_LIMIT_POSTS", 1)
+
+    first_ticket = await client.post("/api/stream-ticket", headers=HEADERS_WORKER)
+    second_ticket = await client.post("/api/stream-ticket", headers=HEADERS_WORKER)
+    first_post = await post(client, "post budget is separate", HEADERS_WORKER)
+
+    assert first_ticket.status_code == 200
+    assert second_ticket.status_code == 429
+    assert first_post.status_code == 200
+
+
+async def test_stream_ticket_reports_fractional_ttl_exactly(client, monkeypatch):
+    monkeypatch.setattr(main, "SSE_TICKET_TTL", 1.5)
+
+    response = await client.post("/api/stream-ticket", headers=HEADERS_WORKER)
+
+    assert response.status_code == 200
+    assert response.json()["expires_in"] == 1.5
+
+
+def test_sse_ticket_ttl_requires_at_least_one_second(monkeypatch):
+    monkeypatch.setenv("SSE_TICKET_TTL", "0.5")
+    with pytest.raises(RuntimeError, match="SSE_TICKET_TTL"):
+        main._env_float("SSE_TICKET_TTL", 30, 1, 300, minimum_inclusive=True)
 
 
 # ─── Rate limit ───────────────────────────────────────────────────────────────
@@ -408,6 +437,28 @@ async def test_sse_overflow_drops_slow_subscriber_and_rest_reconciles(client):
     )
     assert recovered.status_code == 200
     assert recovered.json()[-1]["content"] == "recover me"
+
+
+class ConnectedRequest:
+    async def is_disconnected(self):
+        return False
+
+
+async def test_sse_overflow_terminates_active_stream():
+    queue = main.create_sse_queue()
+    main._subscribers.add(queue)
+    for _ in range(queue.maxsize):
+        queue.put_nowait(main.MessageOut(id=0, role="worker", content="buffered", created_at=0))
+
+    generator = main.event_stream(ConnectedRequest(), queue)
+    main.broadcast(main.MessageOut(id=1, role="engineer", content="overflow", created_at=1))
+
+    assert queue not in main._subscribers
+    for _ in range(queue.maxsize - 1):
+        await asyncio.wait_for(anext(generator), timeout=1)
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.wait_for(anext(generator), timeout=1)
+    await generator.aclose()
 
 
 @pytest.mark.parametrize(

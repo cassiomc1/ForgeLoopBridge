@@ -21,11 +21,16 @@ workflow:
 7. Open PR and report structured Markdown status on ForgeLoopBridge.
 
 Usage:
-    python worker_poll.py [--auto-ack]
+    python worker_poll.py [--auto-ack] [--start-mode pending|now|history]
 
 `--auto-ack` posts an immediate receipt/status acknowledgement for each new
 instruction. It never resolves approvals, grants authority, or changes
 ForgeLoop state. Disabled by default to keep the board clean.
+
+`--start-mode pending` is the default and hands off the latest existing
+Engineer instruction on a first start. Use `--start-mode now` explicitly to
+ignore messages already on the board, or `--start-mode history` to replay from
+cursor zero.
 """
 
 import argparse
@@ -39,6 +44,8 @@ WORKER_TOKEN = "change-me"                  # same token configured on the serve
 POLL_INTERVAL = 10                          # seconds
 STATE_FILE = Path(__file__).parent / ".worker_last_seen"  # survives restarts
 COMMIT_UNKNOWN_REASON_CODES = frozenset({"COMMIT_UNKNOWN", "E_ACTION_COMMIT_UNKNOWN"})
+START_MODES = ("pending", "now", "history")
+LATEST_PAGE_SIZE = 200
 
 
 FORGELOOP_BOOTSTRAP = """
@@ -86,15 +93,19 @@ def post_status(
     print("Status posted successfully.")
 
 
-def fetch_latest_message_id() -> int:
+def fetch_latest_messages(limit: int = LATEST_PAGE_SIZE) -> list[dict]:
     r = requests.get(
         f"{BASE_URL}/api/messages",
-        params={"latest": "true", "limit": 1},
+        params={"latest": "true", "limit": limit},
         headers={"Authorization": f"Bearer {WORKER_TOKEN}"},
         timeout=15,
     )
     r.raise_for_status()
-    messages = r.json()
+    return r.json()
+
+
+def fetch_latest_message_id() -> int:
+    messages = fetch_latest_messages(limit=1)
     return int(messages[-1]["id"]) if messages else 0
 
 
@@ -106,7 +117,9 @@ def load_last_seen() -> int:
 
 
 def save_last_seen(message_id: int):
-    STATE_FILE.write_text(str(message_id))
+    temporary_file = STATE_FILE.with_name(f"{STATE_FILE.name}.tmp")
+    temporary_file.write_text(str(message_id), encoding="utf-8")
+    temporary_file.replace(STATE_FILE)
 
 
 def reports_commit_unknown_control_event(message: dict) -> bool:
@@ -212,6 +225,32 @@ def process_polled_messages(messages: list[dict], last_seen: int, auto_ack: bool
     return last_seen
 
 
+def initialize_first_start(start_mode: str, auto_ack: bool = False) -> int:
+    """Initialize a missing cursor without silently losing the current task."""
+    if start_mode not in START_MODES:
+        raise ValueError(f"Unsupported start mode: {start_mode}")
+    if start_mode == "history":
+        return 0
+
+    messages = fetch_latest_messages()
+    if not messages:
+        save_last_seen(0)
+        return 0
+
+    if start_mode == "now":
+        last_seen = int(messages[-1]["id"])
+        save_last_seen(last_seen)
+        return last_seen
+
+    engineer_messages = [message for message in messages if message.get("role") == "engineer"]
+    if engineer_messages:
+        return process_polled_messages([engineer_messages[-1]], last_seen=0, auto_ack=auto_ack)
+
+    last_seen = int(messages[-1]["id"])
+    save_last_seen(last_seen)
+    return last_seen
+
+
 def main():
     parser = argparse.ArgumentParser(description="ForgeLoopBridge worker poller")
     parser.add_argument(
@@ -219,14 +258,18 @@ def main():
         action="store_true",
         help="post an immediate receipt/status acknowledgement per instruction",
     )
+    parser.add_argument(
+        "--start-mode",
+        choices=START_MODES,
+        default="pending",
+        help="first-start policy: deliver latest Engineer instruction, skip board, or replay history",
+    )
     args = parser.parse_args()
 
     last_seen = load_last_seen()
-    if last_seen == 0:
-        # First run: skip history, start from the latest message.
-        last_seen = fetch_latest_message_id()
-        save_last_seen(last_seen)
-        print(f"First run: starting from message id {last_seen}")
+    if not STATE_FILE.exists():
+        last_seen = initialize_first_start(args.start_mode, auto_ack=args.auto_ack)
+        print(f"First run ({args.start_mode}): starting from message id {last_seen}")
     else:
         print(f"Resuming from message id {last_seen}")
 

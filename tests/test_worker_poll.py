@@ -158,3 +158,64 @@ def test_cursor_is_saved_only_after_successful_engineer_handoff(tmp_path, monkey
     monkeypatch.setattr(worker_poll, "handoff_message", lambda message, auto_ack=False: None)
     assert worker_poll.process_polled_messages([message], last_seen=100) == 101
     assert worker_poll.load_last_seen() == 101
+
+
+def test_first_start_pending_hands_off_latest_engineer_instruction(tmp_path, monkeypatch):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    messages = [
+        {"id": 40, "role": "worker", "content": "old receipt"},
+        {"id": 41, "role": "engineer", "message_type": "TASK", "content": "old task"},
+        {"id": 42, "role": "worker", "content": "old status"},
+        {"id": 43, "role": "engineer", "message_type": "TASK", "content": "current task"},
+    ]
+    handed_off = []
+    monkeypatch.setattr(worker_poll, "fetch_latest_messages", lambda limit=200: messages)
+    monkeypatch.setattr(
+        worker_poll,
+        "handoff_message",
+        lambda message, auto_ack=False: handed_off.append(message),
+    )
+
+    assert worker_poll.initialize_first_start("pending") == 43
+    assert [message["id"] for message in handed_off] == [43]
+    assert worker_poll.load_last_seen() == 43
+
+
+def test_first_start_now_skips_existing_messages_explicitly(tmp_path, monkeypatch):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    monkeypatch.setattr(
+        worker_poll,
+        "fetch_latest_messages",
+        lambda limit=200: [
+            {"id": 42, "role": "engineer", "message_type": "TASK", "content": "existing"}
+        ],
+    )
+    handed_off = []
+    monkeypatch.setattr(
+        worker_poll,
+        "handoff_message",
+        lambda message, auto_ack=False: handed_off.append(message),
+    )
+
+    assert worker_poll.initialize_first_start("now") == 42
+    assert handed_off == []
+    assert worker_poll.load_last_seen() == 42
+
+
+def test_save_last_seen_replaces_a_temporary_cursor_file(tmp_path, monkeypatch):
+    state_file = tmp_path / "last-seen"
+    replaced = []
+    original_replace = Path.replace
+
+    def record_replace(path, target):
+        replaced.append((path, target))
+        return original_replace(path, target)
+
+    monkeypatch.setattr(worker_poll, "STATE_FILE", state_file)
+    monkeypatch.setattr(Path, "replace", record_replace)
+
+    worker_poll.save_last_seen(7)
+
+    assert state_file.read_text(encoding="utf-8") == "7"
+    assert replaced == [(tmp_path / "last-seen.tmp", state_file)]
+    assert not (tmp_path / "last-seen.tmp").exists()
