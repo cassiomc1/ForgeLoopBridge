@@ -4,20 +4,28 @@ Minimal example of how the Worker can monitor ForgeLoopBridge.
 This script is a transport adapter. When an instruction is received, invoke
 your Worker agent/harness (e.g. OpenCode, Cursor, or local agent).
 
-The Worker agent MUST follow the canonical ForgeLoop 1.5 workflow:
+The Worker agent MUST use the current advertised ForgeLoop protocol/capability
+workflow:
 1. Prefer official ForgeLoop structured integration when exposed by the host;
    otherwise use the project-local ForgeLoop CLI.
-2. Inspect compatibility with `forgeloop protocol-info --json`.
+2. Inspect `forgeloop protocol-info --json` and feature-detect capabilities;
+   never infer durable actions or approvals from a package version alone.
 3. Discover existing tasks (`forgeloop task-list --json`) before creating a new one.
-4. Follow canonical `forgeloop next` as the control authority.
-5. Reach VALID completion (`forgeloop complete --task <task-id> --json`) and verify terminal `nextAction: NONE`.
-6. Open PR and report structured Markdown status on ForgeLoopBridge.
+4. Treat canonical `forgeloop next` as the dispatcher after every meaningful
+   protocol mutation. The example lifecycle is a happy-path illustration only.
+5. Respect canonical action, approval, policy, diagnostic, and reconciliation
+   guidance. `COMMIT_UNKNOWN` is a hard stop: do not retry the action.
+6. Reach VALID completion with `forgeloop complete --task <task-id> --json` and
+   verify terminal `nextAction: NONE` before posting a COMPLETE status;
+   otherwise report the exact blocked/partial state.
+7. Open PR and report structured Markdown status on ForgeLoopBridge.
 
 Usage:
     python worker_poll.py [--auto-ack]
 
-`--auto-ack` posts an immediate "processing..." status for each new
-instruction. Disabled by default to keep the board clean.
+`--auto-ack` posts an immediate receipt/status acknowledgement for each new
+instruction. It never resolves approvals, grants authority, or changes
+ForgeLoop state. Disabled by default to keep the board clean.
 """
 
 import argparse
@@ -32,14 +40,40 @@ POLL_INTERVAL = 10                          # seconds
 STATE_FILE = Path(__file__).parent / ".worker_last_seen"  # survives restarts
 
 
-def post_status(content: str, task_id: str | None = None, message_type: str = "STATUS"):
+FORGELOOP_BOOTSTRAP = """
+Before creating or resuming protocol state, inspect:
+  forgeloop protocol-info --json
+Then use the advertised feature set for diagnostics, durableActions,
+capabilityPolicy, and durableApprovals. Query `forgeloop next --task
+<task-id> --json` after every meaningful mutation; its nextAction, reasonCodes,
+authorityRequired, approvalRequired, capabilityDecision, hostActionRequired,
+and reconciliationAuthorityRequired fields take precedence over examples.
+""".strip()
+
+
+def post_status(
+    content: str,
+    task_id: str | None = None,
+    message_type: str = "STATUS",
+    action_id: str | None = None,
+    approval_id: str | None = None,
+    next_action: str | None = None,
+    reason_code: str | None = None,
+):
     payload: dict = {
         "token": WORKER_TOKEN,
         "content": content,
         "message_type": message_type,
     }
-    if task_id:
-        payload["task_id"] = task_id
+    for key, value in (
+        ("task_id", task_id),
+        ("action_id", action_id),
+        ("approval_id", approval_id),
+        ("next_action", next_action),
+        ("reason_code", reason_code),
+    ):
+        if value:
+            payload[key] = value
 
     r = requests.post(
         f"{BASE_URL}/api/messages",
@@ -74,12 +108,44 @@ def save_last_seen(message_id: int):
     STATE_FILE.write_text(str(message_id))
 
 
+def is_commit_unknown(message: dict) -> bool:
+    """Detect a coordination hard-stop signal without interpreting protocol state."""
+    fields = (
+        message.get("content", ""),
+        message.get("next_action", ""),
+        message.get("reason_code", ""),
+    )
+    return any("COMMIT_UNKNOWN" in str(field).upper() for field in fields)
+
+
+def print_control_event(message: dict):
+    """Print copied canonical guidance for the human/operator-facing worker log."""
+    fields = {
+        "Task": message.get("task_id"),
+        "Type": message.get("message_type"),
+        "Action": message.get("action_id"),
+        "Approval": message.get("approval_id"),
+        "Next": message.get("next_action"),
+        "Reason": message.get("reason_code"),
+    }
+    if any(value for value in fields.values()):
+        print("FORGELOOP CONTROL EVENT")
+        for label, value in fields.items():
+            if value:
+                print(f"{label}: {value}")
+        print("This is a coordination event, not ForgeLoop authority.")
+
+    if is_commit_unknown(message):
+        print("HARD STOP: COMMIT_UNKNOWN; do not retry this action.")
+        print("Record external observation through canonical ForgeLoop reconciliation.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="ForgeLoopBridge worker poller")
     parser.add_argument(
         "--auto-ack",
         action="store_true",
-        help="post an immediate 'processing...' status per instruction",
+        help="post an immediate receipt/status acknowledgement per instruction",
     )
     args = parser.parse_args()
 
@@ -125,22 +191,36 @@ def main():
                 print("=" * 60)
                 print(msg["content"])
                 print("=" * 60 + "\n")
+                print_control_event(msg)
 
                 # ────────────────────────────────────────────────
                 # HERE you hand off the instruction to your Worker
                 # agent/harness (OpenCode, Cursor, script, etc.).
-                # The agent follows ForgeLoop 1.5 protocol operations.
+                # The agent follows advertised ForgeLoop protocol operations.
                 # ────────────────────────────────────────────────
 
                 if args.auto_ack:
+                    ack_content = (
+                        "### Receipt\n"
+                        f"Source message type: `{msg_type or 'unspecified'}`\n\n"
+                        "Received coordination event; processing with the advertised "
+                        "ForgeLoop protocol/capabilities.\n\n"
+                        "This acknowledgement is informational only and does not grant "
+                        "approval or host authority."
+                    )
+                    if is_commit_unknown(msg):
+                        ack_content += (
+                            "\n\n**Hard stop:** `COMMIT_UNKNOWN` is unresolved. Do not retry; "
+                            "follow canonical action reconciliation."
+                        )
                     post_status(
-                        content=(
-                            "### Status\n"
-                            "Received instruction and processing with ForgeLoop...\n\n"
-                            "*(replace this message with the real result + PR link)*"
-                        ),
+                        content=ack_content,
                         task_id=task_id,
                         message_type="STATUS",
+                        action_id=msg.get("action_id"),
+                        approval_id=msg.get("approval_id"),
+                        next_action=msg.get("next_action"),
+                        reason_code=msg.get("reason_code"),
                     )
 
         except Exception as e:
@@ -151,4 +231,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

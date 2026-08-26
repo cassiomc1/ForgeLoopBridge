@@ -1,3 +1,5 @@
+import asyncio
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -218,6 +220,155 @@ async def test_post_roundtrip_with_task_metadata(client):
     assert msgs[0]["message_type"] == "TASK"
 
 
+async def test_post_roundtrip_with_action_approval_metadata(client):
+    r = await client.post(
+        "/api/messages",
+        headers=HEADERS_WORKER,
+        json={
+            "content": "Canonical approval is required.",
+            "task_id": "  release-task  ",
+            "message_type": "approval_required",
+            "action_id": "  action-publish  ",
+            "approval_id": "  approval-publish  ",
+            "next_action": "  REQUEST_ACTION_APPROVAL  ",
+            "reason_code": "  E_ACTION_APPROVAL_REQUIRED  ",
+        },
+    )
+    assert r.status_code == 200
+    assert r.json()["task_id"] == "release-task"
+    assert r.json()["message_type"] == "APPROVAL_REQUIRED"
+    assert r.json()["action_id"] == "action-publish"
+    assert r.json()["approval_id"] == "approval-publish"
+    assert r.json()["next_action"] == "REQUEST_ACTION_APPROVAL"
+    assert r.json()["reason_code"] == "E_ACTION_APPROVAL_REQUIRED"
+
+    r_get = await client.get(
+        "/api/messages",
+        params={"action_id": "action-publish"},
+        headers=HEADERS_ENGINEER,
+    )
+    assert r_get.status_code == 200
+    assert r_get.json()[0]["approval_id"] == "approval-publish"
+
+
+async def test_new_message_types_are_accepted(client):
+    for message_type in (
+        "ACTION_REQUIRED",
+        "APPROVAL_REQUIRED",
+        "AUTHORITY_REQUIRED",
+        "ACTION_RECONCILIATION_REQUIRED",
+        "ACTION_RECONCILED",
+        "DIAGNOSTIC",
+        "POLICY_BLOCKED",
+    ):
+        r = await client.post(
+            "/api/messages",
+            headers=HEADERS_ENGINEER,
+            json={"content": message_type, "message_type": message_type},
+        )
+        assert r.status_code == 200
+        assert r.json()["message_type"] == message_type
+
+
+async def test_reference_metadata_rejects_overlong_or_control_values(client):
+    for field, size in (
+        ("action_id", 201),
+        ("approval_id", 201),
+        ("next_action", 101),
+        ("reason_code", 161),
+    ):
+        r = await client.post(
+            "/api/messages",
+            headers=HEADERS_ENGINEER,
+            json={"content": "metadata", field: "x" * size},
+        )
+        assert r.status_code == 422
+
+    r_control = await client.post(
+        "/api/messages",
+        headers=HEADERS_ENGINEER,
+        json={"content": "metadata", "action_id": "action-1\nforged"},
+    )
+    assert r_control.status_code == 422
+
+
+async def test_reference_filters_combine_with_task_and_pagination(client):
+    for i in range(3):
+        await client.post(
+            "/api/messages",
+            headers=HEADERS_ENGINEER,
+            json={
+                "content": f"approval-{i}",
+                "task_id": "release",
+                "message_type": "APPROVAL_REQUIRED",
+                "action_id": "action-release",
+                "approval_id": f"approval-{i}",
+            },
+        )
+    await client.post(
+        "/api/messages",
+        headers=HEADERS_ENGINEER,
+        json={
+            "content": "different task",
+            "task_id": "other",
+            "message_type": "APPROVAL_REQUIRED",
+            "action_id": "action-other",
+            "approval_id": "approval-other",
+        },
+    )
+
+    r = await client.get(
+        "/api/messages",
+        params={
+            "task_id": "release",
+            "message_type": "approval_required",
+            "action_id": "action-release",
+            "limit": 2,
+        },
+        headers=HEADERS_WORKER,
+    )
+    assert r.status_code == 200
+    assert [message["content"] for message in r.json()] == ["approval-0", "approval-1"]
+
+    r_latest = await client.get(
+        "/api/messages",
+        params={
+            "task_id": "release",
+            "approval_id": "approval-2",
+            "latest": "true",
+        },
+        headers=HEADERS_WORKER,
+    )
+    assert [message["content"] for message in r_latest.json()] == ["approval-2"]
+
+
+async def test_sse_broadcast_serializes_reference_metadata(client):
+    queue = asyncio.Queue()
+    main._subscribers.add(queue)
+    try:
+        r = await client.post(
+            "/api/messages",
+            headers=HEADERS_ENGINEER,
+            json={
+                "content": "sse metadata",
+                "message_type": "ACTION_RECONCILIATION_REQUIRED",
+                "action_id": "action-sse",
+                "approval_id": "approval-sse",
+                "next_action": "RECONCILE_ACTION",
+                "reason_code": "COMMIT_UNKNOWN",
+            },
+        )
+        assert r.status_code == 200
+        event = await asyncio.wait_for(queue.get(), timeout=1)
+        payload = json.loads(event.model_dump_json())
+        assert payload["action_id"] == "action-sse"
+        assert payload["approval_id"] == "approval-sse"
+        assert payload["next_action"] == "RECONCILE_ACTION"
+        assert payload["reason_code"] == "COMMIT_UNKNOWN"
+    finally:
+        main._subscribers.discard(queue)
+
+
 async def test_legacy_post_without_task_metadata_still_works(client):
     r = await post(client, "legacy message", HEADERS_ENGINEER)
     assert r.status_code == 200
@@ -343,16 +494,32 @@ async def test_database_migration_from_legacy_schema(tmp_path, monkeypatch):
         assert msgs[0]["content"] == "legacy msg"
         assert msgs[0]["task_id"] is None
         assert msgs[0]["message_type"] is None
+        assert msgs[0]["action_id"] is None
+        assert msgs[0]["approval_id"] is None
+        assert msgs[0]["next_action"] is None
+        assert msgs[0]["reason_code"] is None
 
         # Post new message with metadata to migrated db
         r_post = await c.post(
             "/api/messages",
             headers=HEADERS_ENGINEER,
-            json={"content": "new msg", "task_id": "task-x", "message_type": "TASK"},
+            json={
+                "content": "new msg",
+                "task_id": "task-x",
+                "message_type": "ACTION_REQUIRED",
+                "action_id": "action-x",
+                "approval_id": "approval-x",
+                "next_action": "AUTHORIZE_ACTION",
+                "reason_code": "E_ACTION_AUTHORITY_REQUIRED",
+            },
         )
         assert r_post.status_code == 200
         assert r_post.json()["task_id"] == "task-x"
-        assert r_post.json()["message_type"] == "TASK"
+        assert r_post.json()["message_type"] == "ACTION_REQUIRED"
+        assert r_post.json()["action_id"] == "action-x"
+        assert r_post.json()["approval_id"] == "approval-x"
+        assert r_post.json()["next_action"] == "AUTHORIZE_ACTION"
+        assert r_post.json()["reason_code"] == "E_ACTION_AUTHORITY_REQUIRED"
 
 
 # ─── Latest Page Pagination ───────────────────────────────────────────────────
@@ -435,6 +602,4 @@ async def test_task_id_is_trimmed(client):
     )
     assert r.status_code == 200
     assert r.json()["task_id"] == "auth-feature"
-
-
 
