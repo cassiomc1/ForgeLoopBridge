@@ -5,6 +5,7 @@ between Engineer and Worker agents.
 
 import asyncio
 import logging
+import math
 import os
 import secrets
 import time
@@ -23,7 +24,6 @@ BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = Path(os.getenv("FORGEBRIDGE_DB", str(BASE_DIR / "data" / "forgebridge.db")))
 STATIC_DIR = BASE_DIR / "static"
 HOST = os.getenv("HOST", "0.0.0.0")
-PORT = int(os.getenv("PORT", "8000"))
 RELOAD = os.getenv("RELOAD") == "1"
 
 ENGINEER_TOKEN = os.getenv("ENGINEER_TOKEN")
@@ -42,10 +42,39 @@ if len(ENGINEER_TOKEN) < 16 or len(WORKER_TOKEN) < 16:
         "use `openssl rand -hex 32` to generate strong ones."
     )
 
-RATE_LIMIT_POSTS = int(os.getenv("RATE_LIMIT_POSTS", "30"))
-RATE_LIMIT_WINDOW = float(os.getenv("RATE_LIMIT_WINDOW", "60"))
-DEFAULT_PAGE_SIZE = int(os.getenv("DEFAULT_PAGE_SIZE", "200"))
 MAX_PAGE_SIZE = 1000
+
+
+def _env_int(name: str, default: int, minimum: int, maximum: int | None = None) -> int:
+    raw = os.getenv(name, str(default))
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"{name} must be an integer; got {raw!r}") from exc
+    if value < minimum or (maximum is not None and value > maximum):
+        upper = f" and <= {maximum}" if maximum is not None else ""
+        raise RuntimeError(f"{name} must be >= {minimum}{upper}; got {value}")
+    return value
+
+
+def _env_float(name: str, default: float, minimum: float, maximum: float | None = None) -> float:
+    raw = os.getenv(name, str(default))
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"{name} must be a number; got {raw!r}") from exc
+    if not math.isfinite(value) or value <= minimum or (maximum is not None and value > maximum):
+        upper = f" and <= {maximum}" if maximum is not None else ""
+        raise RuntimeError(f"{name} must be > {minimum}{upper}; got {value}")
+    return value
+
+
+PORT = _env_int("PORT", 8000, 1, 65535)
+RATE_LIMIT_POSTS = _env_int("RATE_LIMIT_POSTS", 30, 1)
+RATE_LIMIT_WINDOW = _env_float("RATE_LIMIT_WINDOW", 60, 0)
+DEFAULT_PAGE_SIZE = _env_int("DEFAULT_PAGE_SIZE", 200, 1, MAX_PAGE_SIZE)
+SSE_QUEUE_SIZE = _env_int("SSE_QUEUE_SIZE", 256, 16, 10000)
+SSE_TICKET_TTL = _env_float("SSE_TICKET_TTL", 30, 0, 300)
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -71,12 +100,48 @@ async def check_rate_limit(key: str) -> None:
 
 # ─── SSE subscribers ──────────────────────────────────────────────────────────
 _subscribers: set[asyncio.Queue] = set()
+_sse_tickets: dict[str, tuple[str, float]] = {}
+_sse_ticket_lock = asyncio.Lock()
+
+
+def create_sse_queue() -> asyncio.Queue:
+    """Create a bounded queue so one stalled client cannot grow memory forever."""
+    return asyncio.Queue(maxsize=SSE_QUEUE_SIZE)
+
+
+def _purge_sse_tickets(now: float) -> None:
+    for ticket, (_, expires_at) in list(_sse_tickets.items()):
+        if expires_at <= now:
+            _sse_tickets.pop(ticket, None)
+
+
+async def issue_sse_ticket(role: str) -> tuple[str, int]:
+    now = time.time()
+    ticket = secrets.token_urlsafe(32)
+    expires_at = now + SSE_TICKET_TTL
+    async with _sse_ticket_lock:
+        _purge_sse_tickets(now)
+        _sse_tickets[ticket] = (role, expires_at)
+    return ticket, int(SSE_TICKET_TTL)
+
+
+async def resolve_sse_ticket(ticket: str) -> str:
+    now = time.time()
+    async with _sse_ticket_lock:
+        _purge_sse_tickets(now)
+        entry = _sse_tickets.get(ticket)
+    if entry is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired SSE ticket")
+    return entry[0]
 
 
 def broadcast(message: "MessageOut") -> None:
     for q in list(_subscribers):
         try:
             q.put_nowait(message)
+        except asyncio.QueueFull:
+            # Drop slow subscribers; they can recover through GET /api/messages?after_id=.
+            _subscribers.discard(q)
         except Exception:
             _subscribers.discard(q)
 
@@ -248,6 +313,7 @@ async def lifespan(app: FastAPI):
     await init_db()
     yield
     _subscribers.clear()
+    _sse_tickets.clear()
 
 
 app = FastAPI(
@@ -444,12 +510,27 @@ async def whoami(request: Request, token: str | None = None):
     return {"role": role}
 
 
-@app.get("/api/stream")
-async def stream(request: Request, token: str | None = None):
-    """Server-Sent Events stream of new messages (real-time push)."""
-    await require_reader(request, token)
+@app.post("/api/stream-ticket")
+async def stream_ticket(request: Request):
+    """Issue a short-lived ticket for browser EventSource connections."""
+    role = await require_reader(request, None)
+    ticket, expires_in = await issue_sse_ticket(role)
+    return {"ticket": ticket, "expires_in": expires_in}
 
-    queue: asyncio.Queue = asyncio.Queue()
+
+@app.get("/api/stream")
+async def stream(request: Request, token: str | None = None, ticket: str | None = None):
+    """Server-Sent Events stream of new messages (real-time push).
+
+    Browser clients use a short-lived ticket. The legacy token query parameter
+    remains available for non-browser clients for backward compatibility.
+    """
+    if ticket:
+        await resolve_sse_ticket(ticket)
+    else:
+        await require_reader(request, token)
+
+    queue = create_sse_queue()
     _subscribers.add(queue)
 
     async def event_gen():
@@ -466,6 +547,12 @@ async def stream(request: Request, token: str | None = None):
             _subscribers.discard(queue)
 
     return StreamingResponse(event_gen(), media_type="text/event-stream")
+
+
+@app.get("/healthz")
+async def healthz():
+    """Minimal public liveness endpoint for load balancers and process checks."""
+    return {"status": "ok"}
 
 
 @app.get("/api/status")

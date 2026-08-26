@@ -38,6 +38,7 @@ BASE_URL = "http://localhost:8000"          # change to your ForgeLoopBridge URL
 WORKER_TOKEN = "change-me"                  # same token configured on the server
 POLL_INTERVAL = 10                          # seconds
 STATE_FILE = Path(__file__).parent / ".worker_last_seen"  # survives restarts
+COMMIT_UNKNOWN_REASON_CODES = frozenset({"COMMIT_UNKNOWN", "E_ACTION_COMMIT_UNKNOWN"})
 
 
 FORGELOOP_BOOTSTRAP = """
@@ -108,14 +109,17 @@ def save_last_seen(message_id: int):
     STATE_FILE.write_text(str(message_id))
 
 
-def is_commit_unknown(message: dict) -> bool:
-    """Detect a coordination hard-stop signal without interpreting protocol state."""
-    fields = (
-        message.get("content", ""),
-        message.get("next_action", ""),
-        message.get("reason_code", ""),
+def reports_commit_unknown_control_event(message: dict) -> bool:
+    """Detect an explicit Bridge-reported reconciliation event.
+
+    The Bridge transports coordination metadata; it must not infer canonical
+    ForgeLoop state from free-form Markdown content.
+    """
+    return (
+        message.get("message_type") == "ACTION_RECONCILIATION_REQUIRED"
+        or message.get("next_action") == "RECONCILE_ACTION"
+        or message.get("reason_code") in COMMIT_UNKNOWN_REASON_CODES
     )
-    return any("COMMIT_UNKNOWN" in str(field).upper() for field in fields)
 
 
 def print_control_event(message: dict):
@@ -135,9 +139,77 @@ def print_control_event(message: dict):
                 print(f"{label}: {value}")
         print("This is a coordination event, not ForgeLoop authority.")
 
-    if is_commit_unknown(message):
+    if reports_commit_unknown_control_event(message):
         print("HARD STOP: COMMIT_UNKNOWN; do not retry this action.")
         print("Record external observation through canonical ForgeLoop reconciliation.")
+
+
+def handoff_message(message: dict, auto_ack: bool = False) -> None:
+    """Display and optionally acknowledge one Engineer instruction."""
+    task_id = message.get("task_id")
+    msg_type = message.get("message_type")
+
+    print("\n" + "=" * 60)
+    print("NEW INSTRUCTION FROM ENGINEER")
+    if task_id:
+        print(f"Task: {task_id}")
+    if msg_type:
+        print(f"Type: {msg_type}")
+    print("=" * 60)
+    print(message["content"])
+    print("=" * 60 + "\n")
+    print_control_event(message)
+
+    # ────────────────────────────────────────────────────────────────
+    # HERE you hand off the instruction to your Worker agent/harness
+    # (OpenCode, Cursor, script, etc.). The agent follows advertised
+    # ForgeLoop protocol operations.
+    # ────────────────────────────────────────────────────────────────
+
+    if auto_ack:
+        ack_content = (
+            "### Receipt\n"
+            f"Source message type: `{msg_type or 'unspecified'}`\n\n"
+            "Received coordination event; processing with the advertised "
+            "ForgeLoop protocol/capabilities.\n\n"
+            "This acknowledgement is informational only and does not grant "
+            "approval or host authority."
+        )
+        if reports_commit_unknown_control_event(message):
+            ack_content += (
+                "\n\n**Hard stop:** `COMMIT_UNKNOWN` is unresolved. Do not retry; "
+                "follow canonical action reconciliation."
+            )
+        post_status(
+            content=ack_content,
+            task_id=task_id,
+            message_type="STATUS",
+            action_id=message.get("action_id"),
+            approval_id=message.get("approval_id"),
+            next_action=message.get("next_action"),
+            reason_code=message.get("reason_code"),
+        )
+
+
+def process_polled_messages(messages: list[dict], last_seen: int, auto_ack: bool = False) -> int:
+    """Handle a batch and persist each cursor only after safe handling.
+
+    Engineer instructions are intentionally at-least-once: a failure during
+    handoff or acknowledgement leaves that message eligible for redelivery.
+    """
+    for message in messages:
+        message_id = int(message["id"])
+
+        if message["role"] != "engineer":
+            last_seen = max(last_seen, message_id)
+            save_last_seen(last_seen)
+            continue
+
+        handoff_message(message, auto_ack=auto_ack)
+        last_seen = max(last_seen, message_id)
+        save_last_seen(last_seen)
+
+    return last_seen
 
 
 def main():
@@ -171,57 +243,7 @@ def main():
             r.raise_for_status()
             messages = r.json()
 
-            for msg in messages:
-                msg_id = int(msg["id"])
-                last_seen = max(last_seen, msg_id)
-                save_last_seen(last_seen)
-
-                if msg["role"] != "engineer":
-                    continue
-
-                task_id = msg.get("task_id")
-                msg_type = msg.get("message_type")
-
-                print("\n" + "=" * 60)
-                print("NEW INSTRUCTION FROM ENGINEER")
-                if task_id:
-                    print(f"Task: {task_id}")
-                if msg_type:
-                    print(f"Type: {msg_type}")
-                print("=" * 60)
-                print(msg["content"])
-                print("=" * 60 + "\n")
-                print_control_event(msg)
-
-                # ────────────────────────────────────────────────
-                # HERE you hand off the instruction to your Worker
-                # agent/harness (OpenCode, Cursor, script, etc.).
-                # The agent follows advertised ForgeLoop protocol operations.
-                # ────────────────────────────────────────────────
-
-                if args.auto_ack:
-                    ack_content = (
-                        "### Receipt\n"
-                        f"Source message type: `{msg_type or 'unspecified'}`\n\n"
-                        "Received coordination event; processing with the advertised "
-                        "ForgeLoop protocol/capabilities.\n\n"
-                        "This acknowledgement is informational only and does not grant "
-                        "approval or host authority."
-                    )
-                    if is_commit_unknown(msg):
-                        ack_content += (
-                            "\n\n**Hard stop:** `COMMIT_UNKNOWN` is unresolved. Do not retry; "
-                            "follow canonical action reconciliation."
-                        )
-                    post_status(
-                        content=ack_content,
-                        task_id=task_id,
-                        message_type="STATUS",
-                        action_id=msg.get("action_id"),
-                        approval_id=msg.get("approval_id"),
-                        next_action=msg.get("next_action"),
-                        reason_code=msg.get("reason_code"),
-                    )
+            last_seen = process_polled_messages(messages, last_seen, auto_ack=args.auto_ack)
 
         except Exception as e:
             print(f"[error] {e}")

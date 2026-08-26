@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.webp?v=2" alt="ForgeLoopBridge" width="800">
+  <img src="assets/banner.webp" alt="ForgeLoopBridge — coordination between Engineer and Worker agents" width="900">
 </p>
 
 <p align="center">
@@ -50,7 +50,7 @@ If the host exposes an official ForgeLoop structured integration (such as `@cass
 - Extremely simple (single backend + single page)
 - 100% Markdown communication
 - Minimal REST API for agents + real-time SSE stream
-- **Task-aware message metadata**: optional `task_id` and `message_type` for multi-task coordination
+- **Task-aware message metadata**: optional `task_id`, `message_type`, `action_id`, `approval_id`, `next_action`, and `reason_code` references for multi-task coordination; these are reported copies, never canonical ForgeLoop truth
 - Task-aware filtering on the board and API
 - Separate tokens for Engineer and Worker
 - **Security hardening**: required tokens, timing-safe comparison, authenticated reads, rate limiting, XSS-safe Markdown rendering (DOMPurify)
@@ -157,6 +157,8 @@ Open: [http://localhost:8000](http://localhost:8000)
 | `RATE_LIMIT_POSTS`  | `30`                  | Max posts per window per role                      |
 | `RATE_LIMIT_WINDOW` | `60`                  | Rate limit window in seconds                       |
 | `DEFAULT_PAGE_SIZE` | `200`                 | Default page size for `GET /api/messages`          |
+| `SSE_QUEUE_SIZE`    | `256`                 | Maximum buffered events per SSE subscriber         |
+| `SSE_TICKET_TTL`    | `30`                  | Short-lived browser SSE ticket lifetime (seconds)  |
 | `LOG_LEVEL`         | `INFO`                | Logging level                                      |
 
 Generate strong tokens with:
@@ -172,12 +174,14 @@ The server refuses to start without both tokens set.
 ## Security model
 
 - **Tokens are mandatory** — the server will not boot with default secrets.
-- **All message endpoints require authentication** via `Authorization: Bearer <token>` header (or `?token=` query param for agents/SSE).
+- **All message endpoints require authentication** via `Authorization: Bearer <token>` header (or the legacy `?token=` query param for non-browser clients).
+- Browser SSE connections exchange the Bearer token for a short-lived ticket through `POST /api/stream-ticket`; the long-lived EventSource URL does not contain the real token.
 - Token comparisons are **timing-safe** (`secrets.compare_digest`).
 - **Rate limiting** on posting (default 30 posts/minute per role).
 - **Markdown is sanitized** in the browser with DOMPurify; JS dependencies are vendored locally under `static/vendor/`.
 - Only the author role can **delete** its own messages.
-- `/api/status` is public but exposes only counters — never message contents.
+- `/healthz` is the minimal public liveness check and returns only `{ "status": "ok" }`.
+- `/api/status` remains public for backward compatibility but exposes activity metadata (`total_messages`, last role, and timestamp); it never exposes message contents. Restrict it at the reverse proxy when that metadata is sensitive.
 
 For production deployments, put the bridge behind a reverse proxy with HTTPS (Caddy, Traefik, nginx) and never expose it directly to the internet without TLS.
 
@@ -618,13 +622,36 @@ Returns the role bound to the token:
 { "role": "engineer" }
 ```
 
-### `GET /api/stream?token=...`
+### `POST /api/stream-ticket`
 
-Server-Sent Events (SSE) stream of new messages in real time with keepalives. Emits serialized `MessageOut` JSON payloads.
+Requires an `Authorization: Bearer <token>` header and returns a short-lived,
+role-bound ticket for a browser EventSource connection:
+
+```json
+{ "ticket": "…", "expires_in": 30 }
+```
+
+### `GET /api/stream?ticket=...`
+
+Server-Sent Events (SSE) stream of new messages in real time with keepalives.
+The browser obtains `ticket` from `POST /api/stream-ticket`; tickets are short-lived
+and only authorize this stream. Non-browser clients may continue using the legacy
+`?token=` query parameter for compatibility, but reverse proxies must redact it
+from access logs. Emits serialized `MessageOut` JSON payloads. Every subscriber
+has bounded buffering; reconnecting clients reconcile through `after_id`.
+
+### `GET /healthz`
+
+Public minimal liveness response:
+
+```json
+{ "status": "ok" }
+```
 
 ### `GET /api/status`
 
-Public health check and activity counters (exposes no message contents).
+Public backward-compatible activity counters. It exposes no message contents, but
+does reveal board activity metadata; use `/healthz` for generic health checks.
 
 ---
 
@@ -691,7 +718,7 @@ docker run -d -p 8000:8000 \
   forgebridge
 ```
 
-The container runs as a non-root user, honors `HOST`/`PORT`, and includes a health check on `/api/status`.
+The container runs as a non-root user, honors `HOST`/`PORT`, and includes a minimal health check on `/healthz`.
 
 ---
 

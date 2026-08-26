@@ -77,6 +77,7 @@
     .badge.approval { color: #ffa657; border-color: #ffa657; font-family: ui-monospace, monospace; text-transform: none; }
     .badge.next { color: #79c0ff; border-color: #79c0ff; font-family: ui-monospace, monospace; text-transform: none; }
     .badge.reason { color: #ff7b72; border-color: #ff7b72; font-family: ui-monospace, monospace; text-transform: none; }
+    .hidden { display: none !important; }
 
     .task-filter {
       background: var(--bg);
@@ -347,6 +348,8 @@
     .conn-status { font-size: 0.75rem; }
     .conn-status.live { color: var(--worker); }
     .conn-status.polling { color: #d29922; }
+    .conn-status.disconnected { color: var(--text-muted); }
+    .filter-note { color: var(--text-muted); font-size: 0.7rem; }
     .history-btn {
       align-self: center;
       background: var(--surface);
@@ -413,6 +416,7 @@
       </select>
       <input id="action-filter" class="task-filter filter-input" type="search" placeholder="Action ID" title="Filter by action" autocomplete="off" />
       <input id="approval-filter" class="task-filter filter-input" type="search" placeholder="Approval ID" title="Filter by approval" autocomplete="off" />
+      <span class="filter-note" title="Filters inspect messages already loaded in this browser session.">Filters apply to loaded messages.</span>
       <span class="badge hidden" id="my-role"></span>
       <span>Msgs: <strong id="total">0</strong></span>
       <span>Last: <strong id="last-role">—</strong></span>
@@ -468,6 +472,7 @@
     let oldestId = 0;
     let knownIds = new Set();
     let eventSource = null;
+    let streamStarting = false;
     let currentTaskFilter = '';
     let currentMessageTypeFilter = '';
     let currentActionFilter = '';
@@ -509,7 +514,7 @@
       }
     }
 
-    function applyTaskFilter() {
+    function applyFilters() {
       const messages = board.querySelectorAll('.message');
       messages.forEach(el => {
         const msgTaskId = el.dataset.taskId || '';
@@ -524,12 +529,15 @@
       });
     }
 
-    function createBadge(className, text) {
+    function createBadge(className, text, title = '') {
       const badge = document.createElement('span');
       badge.className = `badge ${className}`;
       badge.textContent = text;
+      if (title) badge.title = title;
       return badge;
     }
+
+    const reportedMetadataTitle = 'Coordination metadata reported by an agent. Verify through canonical ForgeLoop.';
 
     function buildMessageElement(msg) {
       if (knownIds.has(msg.id)) return null;
@@ -564,10 +572,10 @@
 
       if (msg.task_id) left.appendChild(createBadge('task', `task: ${msg.task_id}`));
       if (msg.message_type) left.appendChild(createBadge('type', msg.message_type));
-      if (msg.action_id) left.appendChild(createBadge('action', `action: ${msg.action_id}`));
-      if (msg.approval_id) left.appendChild(createBadge('approval', `approval: ${msg.approval_id}`));
-      if (msg.next_action) left.appendChild(createBadge('next', `nextAction: ${msg.next_action}`));
-      if (msg.reason_code) left.appendChild(createBadge('reason', `reason: ${msg.reason_code}`));
+      if (msg.action_id) left.appendChild(createBadge('action', `reported action: ${msg.action_id}`, reportedMetadataTitle));
+      if (msg.approval_id) left.appendChild(createBadge('approval', `reported approval: ${msg.approval_id}`, reportedMetadataTitle));
+      if (msg.next_action) left.appendChild(createBadge('next', `reported next: ${msg.next_action}`, reportedMetadataTitle));
+      if (msg.reason_code) left.appendChild(createBadge('reason', `reported reason: ${msg.reason_code}`, reportedMetadataTitle));
 
       const time = document.createElement('span');
       time.className = 'time';
@@ -591,7 +599,7 @@
       body.innerHTML = renderMarkdown(msg.content);
       div.appendChild(body);
 
-      applyTaskFilterToElement(div);
+      applyFiltersToElement(div);
 
       if (canDelete) {
         div.querySelector('.delete-btn').addEventListener('click', () => deleteMessage(msg.id));
@@ -600,7 +608,7 @@
       return div;
     }
 
-    function applyTaskFilterToElement(el) {
+    function applyFiltersToElement(el) {
       const msgActionId = (el.dataset.actionId || '').toLowerCase();
       const msgApprovalId = (el.dataset.approvalId || '').toLowerCase();
       const matches = (!currentTaskFilter || (el.dataset.taskId || '') === currentTaskFilter) &&
@@ -659,7 +667,7 @@
 
         const messages = await res.json();
         prependMessagesPreservingScroll(messages);
-        applyTaskFilter();
+        applyFilters();
 
         if (messages.length < 200) {
           loadOlderBtn.hidden = true;
@@ -672,6 +680,10 @@
     }
 
     async function fetchMessages(initial = false) {
+      if (!token || !myRole) {
+        setConnStatus('disconnected');
+        return;
+      }
       try {
         const params = new URLSearchParams();
         if (initial) {
@@ -706,15 +718,32 @@
         el.textContent = '● live'; el.className = 'conn-status live';
       } else if (mode === 'polling') {
         el.textContent = '● polling'; el.className = 'conn-status polling';
+      } else if (mode === 'disconnected') {
+        el.textContent = '○ disconnected'; el.className = 'conn-status disconnected';
       } else {
         el.textContent = 'connecting…'; el.className = 'conn-status polling';
       }
     }
 
-    function startStream() {
-      if (eventSource) eventSource.close();
+    async function startStream() {
+      if (!token || !myRole) {
+        setConnStatus('disconnected');
+        return;
+      }
+      if (streamStarting) return;
+      streamStarting = true;
+      if (eventSource) { eventSource.close(); eventSource = null; }
       try {
-        eventSource = new EventSource('/api/stream?token=' + encodeURIComponent(token));
+        const ticketRes = await fetch('/api/stream-ticket', {
+          method: 'POST',
+          headers: authHeaders(),
+        });
+        if (ticketRes.status === 401 || ticketRes.status === 403) { lock(); return; }
+        if (!ticketRes.ok) { setConnStatus('polling'); return; }
+        const ticketData = await ticketRes.json();
+        if (!ticketData.ticket) { setConnStatus('polling'); return; }
+
+        eventSource = new EventSource('/api/stream?ticket=' + encodeURIComponent(ticketData.ticket));
         eventSource.onopen = async () => {
           setConnStatus('live');
           await fetchMessages(false);
@@ -727,9 +756,12 @@
         };
         eventSource.onerror = () => {
           setConnStatus('polling');
+          if (eventSource) { eventSource.close(); eventSource = null; }
         };
       } catch (e) {
         setConnStatus('polling');
+      } finally {
+        streamStarting = false;
       }
     }
 
@@ -823,12 +855,41 @@
         myRole === 'engineer' ? 'Engineer' : 'Worker';
     }
 
+    function resetBoard() {
+      board.querySelectorAll('.message').forEach(el => el.remove());
+      if (!emptyState.isConnected) board.appendChild(emptyState);
+      lastId = 0;
+      oldestId = 0;
+      knownIds.clear();
+      const loadOlderBtn = document.getElementById('load-older');
+      loadOlderBtn.hidden = true;
+      loadOlderBtn.disabled = false;
+    }
+
     function lock() {
       sessionStorage.removeItem('flb_token');
       sessionStorage.removeItem('flb_role');
       token = ''; myRole = '';
       if (eventSource) { eventSource.close(); eventSource = null; }
-      location.reload();
+      resetBoard();
+      document.getElementById('composer').classList.remove('visible');
+      const badge = document.getElementById('my-role');
+      badge.classList.add('hidden');
+      badge.classList.remove('engineer', 'worker');
+      document.getElementById('composer-role').textContent = '—';
+      document.getElementById('unlock-error').textContent = 'Session expired. Connect again.';
+      document.getElementById('unlock').style.display = 'flex';
+      setConnStatus('disconnected');
+    }
+
+    async function bootAuthenticatedSession() {
+      if (!token || !myRole) {
+        setConnStatus('disconnected');
+        return;
+      }
+      showBoard();
+      await fetchMessages(true);
+      if (token && myRole) await startStream();
     }
 
     async function connect(tkn) {
@@ -855,7 +916,7 @@
     document.getElementById('unlock-btn').addEventListener('click', async () => {
       const tkn = document.getElementById('unlock-token').value.trim();
       if (!tkn) return;
-      if (await connect(tkn)) showBoard();
+      if (await connect(tkn)) await bootAuthenticatedSession();
     });
     document.getElementById('unlock-token').addEventListener('keydown', async (e) => {
       if (e.key === 'Enter') document.getElementById('unlock-btn').click();
@@ -868,29 +929,32 @@
     });
     document.getElementById('task-filter').addEventListener('change', (e) => {
       currentTaskFilter = e.target.value;
-      applyTaskFilter();
+      applyFilters();
     });
     document.getElementById('message-type-filter').addEventListener('change', (e) => {
       currentMessageTypeFilter = e.target.value;
-      applyTaskFilter();
+      applyFilters();
     });
     document.getElementById('action-filter').addEventListener('input', (e) => {
       currentActionFilter = e.target.value.trim().toLowerCase();
-      applyTaskFilter();
+      applyFilters();
     });
     document.getElementById('approval-filter').addEventListener('input', (e) => {
       currentApprovalFilter = e.target.value.trim().toLowerCase();
-      applyTaskFilter();
+      applyFilters();
     });
 
     // Boot: resume session or wait for unlock
     if (token && myRole) {
-      showBoard();
+      bootAuthenticatedSession();
+    } else {
+      setConnStatus('disconnected');
     }
-    fetchMessages(true).then(() => startStream());
     setInterval(() => {
+      if (!token || !myRole) return;
       if (eventSource && eventSource.readyState <= 1) return;
       fetchMessages(false);
+      if (!eventSource && !streamStarting) startStream();
     }, 8000);
   </script>
 </body>
