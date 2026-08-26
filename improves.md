@@ -1,8 +1,15 @@
 # ForgeLoopBridge — Historical Audit & Improvements Log (v2.0)
 
-> **ARCHIVE / HISTORICAL RECORD:** All items listed in this document were successfully implemented in ForgeLoopBridge v2.0 (security hardening, rate limiting, DOMPurify sanitization, SQLite WAL mode, SSE streaming, authentication, test suite, and CI).
+> **ARCHIVE / HISTORICAL RECORD**
 >
-> Active project alignment follows the capability-aware ForgeLoop Protocol v1 / Integration API v1 contract documented in [README.md](README.md) and [examples/AUTONOMY.md](examples/AUTONOMY.md). The historical 1.5-era references below describe completed work and are not the current compatibility target.
+> This document preserves the original v2.0 audit. Major items were addressed,
+> but the individual implementation suggestions below are historical and must
+> not be read as exact descriptions of the current source tree.
+>
+> Active project alignment follows the capability-aware ForgeLoop Protocol v1 /
+> Integration API v1 contract documented in [README.md](README.md) and
+> [examples/AUTONOMY.md](examples/AUTONOMY.md). Check the current source and
+> tests before applying any suggestion from this archive.
 
 
 ---

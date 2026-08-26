@@ -26,6 +26,8 @@ async def clean_db():
     async with main.connect_db() as db:
         await db.execute("DELETE FROM messages")
     main._post_timestamps.clear()
+    main._subscribers.clear()
+    main._sse_tickets.clear()
     yield
 
 
@@ -170,6 +172,25 @@ async def test_status_public_no_auth_needed(client):
     data = r.json()
     assert data["total_messages"] >= 1
     assert "content" not in str(data)
+
+
+async def test_healthz_is_minimal_and_public(client):
+    r = await client.get("/healthz")
+    assert r.status_code == 200
+    assert r.json() == {"status": "ok"}
+
+
+async def test_stream_ticket_requires_auth_and_is_role_bound(client):
+    unauthorized = await client.post("/api/stream-ticket")
+    assert unauthorized.status_code == 401
+
+    r = await client.post("/api/stream-ticket", headers=HEADERS_WORKER)
+    assert r.status_code == 200
+    data = r.json()
+    assert data["ticket"]
+    assert data["expires_in"] == int(main.SSE_TICKET_TTL)
+    assert WORKER_TOKEN not in data["ticket"]
+    assert await main.resolve_sse_ticket(data["ticket"]) == "worker"
 
 
 # ─── Rate limit ───────────────────────────────────────────────────────────────
@@ -343,7 +364,8 @@ async def test_reference_filters_combine_with_task_and_pagination(client):
 
 
 async def test_sse_broadcast_serializes_reference_metadata(client):
-    queue = asyncio.Queue()
+    queue = main.create_sse_queue()
+    assert queue.maxsize == main.SSE_QUEUE_SIZE
     main._subscribers.add(queue)
     try:
         r = await client.post(
@@ -367,6 +389,48 @@ async def test_sse_broadcast_serializes_reference_metadata(client):
         assert payload["reason_code"] == "COMMIT_UNKNOWN"
     finally:
         main._subscribers.discard(queue)
+
+
+async def test_sse_overflow_drops_slow_subscriber_and_rest_reconciles(client):
+    queue = main.create_sse_queue()
+    main._subscribers.add(queue)
+    for _ in range(queue.maxsize):
+        queue.put_nowait(main.MessageOut(id=0, role="worker", content="buffered", created_at=0))
+
+    r_post = await post(client, "recover me", HEADERS_ENGINEER)
+    assert r_post.status_code == 200
+    assert queue not in main._subscribers
+
+    recovered = await client.get(
+        "/api/messages",
+        params={"after_id": 0},
+        headers=HEADERS_WORKER,
+    )
+    assert recovered.status_code == 200
+    assert recovered.json()[-1]["content"] == "recover me"
+
+
+@pytest.mark.parametrize(
+    ("name", "raw", "default", "minimum", "maximum"),
+    (
+        ("PORT", "0", 8000, 1, 65535),
+        ("PORT", "65536", 8000, 1, 65535),
+        ("RATE_LIMIT_POSTS", "0", 30, 1, None),
+        ("DEFAULT_PAGE_SIZE", "1001", 200, 1, main.MAX_PAGE_SIZE),
+        ("SSE_QUEUE_SIZE", "15", 256, 16, 10000),
+    ),
+)
+def test_integer_environment_bounds(monkeypatch, name, raw, default, minimum, maximum):
+    monkeypatch.setenv(name, raw)
+    with pytest.raises(RuntimeError, match=name):
+        main._env_int(name, default, minimum, maximum)
+
+
+@pytest.mark.parametrize("raw", ("0", "nan", "inf", "not-a-number"))
+def test_float_environment_must_be_positive_and_finite(monkeypatch, raw):
+    monkeypatch.setenv("RATE_LIMIT_WINDOW", raw)
+    with pytest.raises(RuntimeError, match="RATE_LIMIT_WINDOW"):
+        main._env_float("RATE_LIMIT_WINDOW", 60, 0)
 
 
 async def test_legacy_post_without_task_metadata_still_works(client):
@@ -602,4 +666,3 @@ async def test_task_id_is_trimmed(client):
     )
     assert r.status_code == 200
     assert r.json()["task_id"] == "auth-feature"
-

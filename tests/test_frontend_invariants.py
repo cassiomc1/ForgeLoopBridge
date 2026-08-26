@@ -8,8 +8,24 @@ def test_frontend_bootstrap_requests_latest_page():
     assert "params.set('latest', 'true')" in INDEX
 
 
+def test_frontend_waits_for_authentication_before_protected_bootstrap():
+    boot = INDEX[INDEX.index("// Boot:"):]
+    assert "if (token && myRole)" in boot
+    assert "bootAuthenticatedSession();" in boot
+    assert "fetchMessages(true).then(() => startStream())" not in INDEX
+    assert "location.reload()" not in INDEX
+    assert "if (!token || !myRole)" in INDEX
+
+
 def test_frontend_reconciles_after_sse_open():
     assert "await fetchMessages(false)" in INDEX
+
+
+def test_frontend_uses_short_lived_sse_ticket_instead_of_bearer_url():
+    assert "'/api/stream-ticket'" in INDEX
+    assert "method: 'POST'" in INDEX
+    assert "'/api/stream?ticket='" in INDEX
+    assert "'/api/stream?token=" not in INDEX
 
 
 def test_frontend_exposes_history_pagination():
@@ -38,7 +54,7 @@ def test_task_filter_change_does_not_mutate_history_button_state():
     end = INDEX.index("// Boot:", start)
     handler = INDEX[start:end]
 
-    assert "applyTaskFilter()" in handler
+    assert "applyFilters()" in handler
     assert "load-older" not in handler
     assert ".hidden" not in handler
 
@@ -53,7 +69,7 @@ def test_loaded_history_reapplies_active_task_filter():
     load_older = INDEX[load_older_start:fetch_messages_start]
 
     prepend_pos = load_older.index("prependMessagesPreservingScroll(messages)")
-    filter_pos = load_older.index("applyTaskFilter()")
+    filter_pos = load_older.index("applyFilters()")
 
     assert filter_pos > prepend_pos
 
@@ -83,7 +99,16 @@ def test_action_and_approval_metadata_have_safe_rendering():
     assert "badge.textContent = text" in INDEX
     assert "createBadge('action'" in INDEX
     assert "createBadge('approval'" in INDEX
+    assert "reported action:" in INDEX
+    assert "reported approval:" in INDEX
+    assert "reported next:" in INDEX
+    assert "reported reason:" in INDEX
+    assert "Coordination metadata reported by an agent" in INDEX
     assert "DOMPurify.sanitize" in INDEX
+
+
+def test_filter_scope_is_explicitly_loaded_messages_only():
+    assert "Filters apply to loaded messages." in INDEX
 
 
 def test_metadata_filters_keep_authenticated_message_requests():
