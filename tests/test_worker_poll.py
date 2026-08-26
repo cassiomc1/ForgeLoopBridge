@@ -219,3 +219,100 @@ def test_save_last_seen_replaces_a_temporary_cursor_file(tmp_path, monkeypatch):
     assert state_file.read_text(encoding="utf-8") == "7"
     assert replaced == [(tmp_path / "last-seen.tmp", state_file)]
     assert not (tmp_path / "last-seen.tmp").exists()
+
+
+def test_fetch_messages_page_forwards_before_id_and_limit(monkeypatch):
+    captured = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return [{"id": 10}]
+
+    def fake_get(url, *, params, headers, timeout):
+        captured["url"] = url
+        captured["params"] = params
+        captured["headers"] = headers
+        return FakeResponse()
+
+    monkeypatch.setattr(worker_poll.requests, "get", fake_get)
+
+    messages = worker_poll.fetch_messages_page(before_id=50, limit=20)
+    assert messages == [{"id": 10}]
+    assert captured["params"] == {"before_id": 50, "limit": 20}
+    assert "Bearer" in captured["headers"]["Authorization"]
+
+
+def test_first_start_pending_backward_pages_beyond_latest_page(tmp_path, monkeypatch):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+
+    # Engineer TASK #100 followed by 250 Worker status messages (#101 to #350)
+    engineer_task = {
+        "id": 100,
+        "role": "engineer",
+        "message_type": "TASK",
+        "content": "Execute protocol task.",
+    }
+    worker_messages = [
+        {"id": i, "role": "worker", "message_type": "STATUS", "content": f"Worker update {i}"}
+        for i in range(101, 351)
+    ]
+    all_messages = [engineer_task] + worker_messages
+
+    def fake_fetch_page(before_id=None, limit=200):
+        if before_id is None:
+            return all_messages[-limit:]
+        return [m for m in all_messages if m["id"] < before_id][-limit:]
+
+    monkeypatch.setattr(worker_poll, "fetch_messages_page", fake_fetch_page)
+    monkeypatch.setattr(
+        worker_poll,
+        "fetch_latest_messages",
+        lambda limit=200: fake_fetch_page(before_id=None, limit=limit),
+    )
+
+    handed_off = []
+    monkeypatch.setattr(
+        worker_poll,
+        "handoff_message",
+        lambda message, auto_ack=False: handed_off.append(message),
+    )
+
+    assert worker_poll.initialize_first_start("pending") == 100
+    assert [message["id"] for message in handed_off] == [100]
+    assert worker_poll.load_last_seen() == 100
+
+
+def test_first_start_pending_exhausts_history_when_no_engineer_message(tmp_path, monkeypatch):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+
+    # 250 worker messages, no engineer messages
+    worker_messages = [
+        {"id": i, "role": "worker", "message_type": "STATUS", "content": f"Worker update {i}"}
+        for i in range(1, 251)
+    ]
+
+    def fake_fetch_page(before_id=None, limit=200):
+        if before_id is None:
+            return worker_messages[-limit:]
+        return [m for m in worker_messages if m["id"] < before_id][-limit:]
+
+    monkeypatch.setattr(worker_poll, "fetch_messages_page", fake_fetch_page)
+    monkeypatch.setattr(
+        worker_poll,
+        "fetch_latest_messages",
+        lambda limit=200: fake_fetch_page(before_id=None, limit=limit),
+    )
+
+    handed_off = []
+    monkeypatch.setattr(
+        worker_poll,
+        "handoff_message",
+        lambda message, auto_ack=False: handed_off.append(message),
+    )
+
+    assert worker_poll.initialize_first_start("pending") == 250
+    assert handed_off == []
+    assert worker_poll.load_last_seen() == 250
