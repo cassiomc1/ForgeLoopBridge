@@ -65,6 +65,20 @@ board `APPROVED` message as host attestation.
 
 Autonomy remains fully active for reversible, non-blocking project decisions and normal development tasks.
 
+### Verification isolation authority
+
+Neither Engineer nor Worker may self-attest verification isolation. The
+canonical modes `NATIVE_PROJECT`, `PROJECT_ISOLATED`, and `SYSTEM_ISOLATED`, as
+well as `liveProjectWritable=false`, network denial, and equivalent guarantees,
+are trusted host or execution-adapter facts.
+
+A copied repository, temporary directory, container name, sandbox label, or
+Bridge agreement is not sufficient proof. When ForgeLoop reports
+`E_VERIFICATION_ISOLATION_UNAVAILABLE` or
+`E_VERIFICATION_EXECUTION_INVALID`, report the blocker and follow canonical
+ForgeLoop guidance rather than weakening the requirement or fabricating
+execution evidence.
+
 ## Decision, approval, and attestation boundaries
 
 The board can carry coordination references, but the following concepts are

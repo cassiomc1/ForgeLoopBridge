@@ -38,10 +38,38 @@ If the host exposes an official ForgeLoop structured integration (such as `@cass
 ### Compatibility dimensions & recovery awareness
 
 - **Protocol-first handshake**: Require `protocolVersion == 1`; when structured integration is used, require a supported Integration API version. Unknown protocol/schema versions fail closed.
-- **Capability detection**: Inspect `protocolInfo.features` (or the equivalent structured capability response) for `diagnostics`, `executionHistory`, `structuredTrace`, `taskInspection`, `reflection`, `durableActions`, `capabilityPolicy`, `durableApprovals`, `trajectoryMetrics`, and `trajectoryEvaluation`. Additive features are enabled only when advertised.
-- **No package-version inference**: `1.6.0` does not automatically imply `durableActions`, approvals, or policy support. Use `features.durableActions.supported`, `features.capabilityPolicy.supported`, and `features.durableApprovals.supported`.
+- **Capability detection**: Inspect `protocolInfo.features` (or the equivalent structured capability response) for `diagnostics`, `executionHistory`, `structuredTrace`, `taskInspection`, `reflection`, `durableActions`, `capabilityPolicy`, `durableApprovals`, `trajectoryMetrics`, `trajectoryEvaluation`, `verificationExecutionIsolation`, and `observabilityStability`. Additive features are enabled only when advertised.
+- **No package-version inference**: A package version alone does not imply that a capability is present. Use `features.durableActions.supported`, `features.capabilityPolicy.supported`, and `features.durableApprovals.supported`.
 - **Capability decisions**: Treat canonical `ALLOW`, `DENY`, `REQUIRE_AUTHORITY`, and `REQUIRE_APPROVAL` decisions as ForgeLoop policy output; Bridge messages can report them but cannot satisfy them.
 - **Recovery awareness**: A project with active recovery state requires a recovery-aware reader supporting validated claim projection. A reader that does not understand that projection must fail closed instead of inferring ownership from `task.json` or `recovery.json` alone.
+
+### Verification execution isolation
+
+ForgeLoop may require verification to execute through a trusted execution
+adapter. When `features.verificationExecutionIsolation.supported == true`, its
+advertised modes and trusted-adapter boundary are canonical ForgeLoop metadata.
+ForgeLoopBridge only coordinates a host that may provide that adapter; it does
+not provide, establish, or attest verification isolation.
+
+The canonical modes are:
+
+- `NATIVE_PROJECT`
+- `PROJECT_ISOLATED`
+- `SYSTEM_ISOLATED`
+
+`protocolProjectRoot` and the verification execution `cwd` are distinct
+concepts. A different cwd, copied repository, temporary checkout, container
+name, or Bridge message is not proof that the live project is protected.
+`liveProjectWritable=false` is valid only when enforced and reported by the
+trusted ForgeLoop execution adapter.
+Verification provenance distinguishes `executionKind=VERIFICATION` from
+`executionKind=DURABLE_ACTION`; the Bridge may transport that reported value but
+does not validate it.
+
+If ForgeLoop reports `E_VERIFICATION_ISOLATION_UNAVAILABLE` or
+`E_VERIFICATION_EXECUTION_INVALID`, treat verification as blocked and follow
+the canonical ForgeLoop recovery/next guidance. Do not downgrade isolation,
+repair contradictory metadata, or manually create execution evidence.
 
 ---
 
@@ -196,6 +224,15 @@ independent FastAPI worker processes require a shared broadcast backend (such as
 Redis pub/sub); without one, SQLite history remains correct while live SSE
 delivery can be inconsistent and polling must reconcile it.
 
+### Safe evidence publication
+
+ForgeLoopBridge is a coordination channel, not the canonical evidence
+repository. Prefer task IDs, action/approval IDs, opaque execution references,
+canonical reason codes, bounded status summaries, and PR URLs. Avoid publishing
+absolute local paths, environment secrets, raw credentials, unredacted
+execution output, or complete private `.forgeloop/` state unless it is strictly
+necessary and already redacted by the canonical owner.
+
 ---
 
 ## Prompt templates (capability-aware ForgeLoop workflow)
@@ -236,6 +273,12 @@ Read-only verification sequence (when your host exposes read capabilities):
 8. Terminal next action: `forgeloop next --task <task-id> --json`
 9. PR contents, contract compliance, and publication expectations
 
+When reviewing verification evidence:
+- Inspect whether `verificationExecutionIsolation` is advertised.
+- Distinguish `protocolProjectRoot` from the execution cwd (`cwd`).
+- Never infer isolation from path shape or copied metadata alone.
+- Treat ForgeLoop's canonical execution/audit projection as the source of truth.
+
 Your APPROVED message is a project decision, not ForgeLoop host authority. Never represent an Engineer/Worker board agreement as HOST_ATTESTED authority, trusted installation authority, force-recovery authority, or any other ForgeLoop authority class that requires an external trusted boundary.
 
 After the Worker posts a PR and status, verify through canonical read-only surfaces:
@@ -246,7 +289,7 @@ After the Worker posts a PR and status, verify through canonical read-only surfa
 5. When the capabilities exist, are required durable actions independently verified, with no `COMMIT_UNKNOWN`, pending required approval, or policy blocker?
 6. Does the PR match the task contract and publication policy?
 
-Do not run ForgeLoop mutation commands merely to verify the Worker. In particular, do not re-run `complete`, `advance`, `task-resume`, `run-check`, `route`, or `preflight` as an Engineer verification action.
+Do not run ForgeLoop mutation commands merely to verify the Worker. In particular, do not re-run `complete`, `advance`, `task-resume`, `run-check`, `route`, or `preflight` as an Engineer verification action. Do not re-run `run-check` merely to inspect isolation evidence; inspect the canonical evidence already produced by the Worker/host.
 
 Then either approve + post next task, or request precise changes.
 
@@ -308,8 +351,14 @@ Mandatory workflow for every instruction from the Engineer:
    forgeloop protocol-info --json
    Require protocol version `1`, a supported Integration API when using structured
    integration, and feature-detect diagnostics, durable actions, capability policy,
-   and durable approvals. Do not infer any feature from the package version alone.
+   durable approvals, and `verificationExecutionIsolation`. Do not infer any
+   feature from the package version alone.
    Fail closed if the installed compatibility boundary cannot safely read/write protocol state.
+
+   If verification requires `PROJECT_ISOLATED` or `SYSTEM_ISOLATED`, use only a
+   trusted ForgeLoop execution adapter that can enforce and report that boundary.
+   Never claim isolation manually or treat a temporary project copy as proof
+   that `liveProjectWritable=false`.
 
 2. Task discovery before creation:
    forgeloop task-list --json
@@ -356,6 +405,16 @@ Mandatory workflow for every instruction from the Engineer:
      `progress`, `history`, `trace`, `reflect`, or `inspect` surfaces. Do not
      repeat a correction after no-information-gain or strategy-oscillation
      guidance without a genuinely new observation.
+
+   Verification isolation is a trusted host boundary, not a project decision:
+   - `E_VERIFICATION_ISOLATION_UNAVAILABLE`: post `BLOCKED` with the exact
+     `reason_code` and canonical next action.
+   - `E_VERIFICATION_EXECUTION_INVALID`: post `BLOCKED` with the exact
+     `reason_code`; do not persist or fabricate replacement or synthetic evidence.
+   - Do not downgrade the required isolation or retry with weaker isolation;
+     do not switch to `NATIVE_PROJECT` to bypass a requirement, edit ForgeLoop
+     execution artifacts, manufacture isolation metadata in Markdown, or treat
+     Bridge agreement as trusted host capability.
 
 4. Contract and routing:
    Write contract.json adhering to canonical schema, then route and preflight:

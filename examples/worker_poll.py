@@ -9,7 +9,8 @@ workflow:
 1. Prefer official ForgeLoop structured integration when exposed by the host;
    otherwise use the project-local ForgeLoop CLI.
 2. Inspect `forgeloop protocol-info --json` and feature-detect capabilities;
-   never infer durable actions or approvals from a package version alone.
+   include `verificationExecutionIsolation`; never infer capabilities from a
+   package version alone or self-attest a trusted isolation boundary.
 3. Discover existing tasks (`forgeloop task-list --json`) before creating a new one.
 4. Treat canonical `forgeloop next` as the dispatcher after every meaningful
    protocol mutation. The example lifecycle is a happy-path illustration only.
@@ -44,6 +45,12 @@ WORKER_TOKEN = "change-me"                  # same token configured on the serve
 POLL_INTERVAL = 10                          # seconds
 STATE_FILE = Path(__file__).parent / ".worker_last_seen"  # survives restarts
 COMMIT_UNKNOWN_REASON_CODES = frozenset({"COMMIT_UNKNOWN", "E_ACTION_COMMIT_UNKNOWN"})
+VERIFICATION_ISOLATION_REASON_CODES = frozenset(
+    {
+        "E_VERIFICATION_ISOLATION_UNAVAILABLE",
+        "E_VERIFICATION_EXECUTION_INVALID",
+    }
+)
 START_MODES = ("pending", "now", "history")
 LATEST_PAGE_SIZE = 200
 
@@ -52,7 +59,9 @@ FORGELOOP_BOOTSTRAP = """
 Before creating or resuming protocol state, inspect:
   forgeloop protocol-info --json
 Then use the advertised feature set for diagnostics, durableActions,
-capabilityPolicy, and durableApprovals. Query `forgeloop next --task
+capabilityPolicy, durableApprovals, and verificationExecutionIsolation. For
+verification, trust only canonical ForgeLoop execution-adapter results; never
+infer isolation from cwd/path layout or Bridge metadata. Query `forgeloop next --task
 <task-id> --json` after every meaningful mutation; its nextAction, reasonCodes,
 authorityRequired, approvalRequired, capabilityDecision, hostActionRequired,
 and reconciliationAuthorityRequired fields take precedence over examples.
@@ -165,6 +174,11 @@ def reports_commit_unknown_control_event(message: dict) -> bool:
     )
 
 
+def reports_verification_isolation_block(message: dict) -> bool:
+    """Detect an explicit canonical verification-isolation blocker."""
+    return message.get("reason_code") in VERIFICATION_ISOLATION_REASON_CODES
+
+
 def print_control_event(message: dict):
     """Print copied canonical guidance for the human/operator-facing worker log."""
     fields = {
@@ -185,6 +199,11 @@ def print_control_event(message: dict):
     if reports_commit_unknown_control_event(message):
         print("HARD STOP: COMMIT_UNKNOWN; do not retry this action.")
         print("Record external observation through canonical ForgeLoop reconciliation.")
+
+    if reports_verification_isolation_block(message):
+        print("HARD STOP: verification isolation is unavailable or invalid.")
+        print("Do not downgrade the required isolation or fabricate execution evidence.")
+        print("Follow canonical ForgeLoop next/recovery guidance.")
 
 
 def handoff_message(message: dict, auto_ack: bool = False) -> None:
@@ -222,6 +241,12 @@ def handoff_message(message: dict, auto_ack: bool = False) -> None:
             ack_content += (
                 "\n\n**Hard stop:** `COMMIT_UNKNOWN` is unresolved. Do not retry; "
                 "follow canonical action reconciliation."
+            )
+        if reports_verification_isolation_block(message):
+            ack_content += (
+                "\n\n**Hard stop:** canonical verification isolation is unavailable "
+                "or invalid. No weaker-isolation retry or synthetic evidence will "
+                "be attempted."
             )
         post_status(
             content=ack_content,

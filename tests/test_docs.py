@@ -28,6 +28,53 @@ def test_readme_does_not_forbid_all_engineer_forgeloop_reads():
     assert "You never execute code or run ForgeLoop yourself." not in README
 
 
+def test_readme_feature_detects_verification_execution_isolation():
+    assert "verificationExecutionIsolation" in README
+    assert "observabilityStability" in README
+
+
+def test_readme_documents_verification_isolation_fail_closed():
+    text = README.lower()
+    assert "e_verification_isolation_unavailable" in text
+    assert "e_verification_execution_invalid" in text
+    assert "do not downgrade" in text
+    assert "liveprojectwritable=false" in text
+
+
+def test_readme_does_not_claim_bridge_provides_isolation():
+    text = README.lower()
+    forbidden = (
+        "forgeloopbridge provides system_isolated",
+        "bridge guarantees liveprojectwritable=false",
+        "bridge attests verification isolation",
+    )
+    for phrase in forbidden:
+        assert phrase not in text
+
+
+def test_engineer_prompt_documents_read_only_isolation_review():
+    engineer_section = README.split("### Engineer system prompt", 1)[1].split(
+        "### Worker system prompt", 1
+    )[0]
+    text = engineer_section.lower()
+    assert "verificationexecutionisolation" in text
+    assert "protocolprojectroot" in text
+    assert "execution cwd" in text
+    assert "do not re-run `run-check`" in text
+
+
+def test_worker_prompt_fails_closed_on_isolation_errors():
+    worker_section = README.split("### Worker system prompt", 1)[1].split(
+        "--- AUTONOMY CONTRACT", 1
+    )[0]
+    text = worker_section.lower()
+    assert "verificationexecutionisolation" in text
+    assert "e_verification_isolation_unavailable" in text
+    assert "e_verification_execution_invalid" in text
+    assert "do not downgrade" in text
+    assert "synthetic evidence" in text
+
+
 def test_readme_documents_recovery_invariants():
     assert "RESUME_RECOVERED_TASK" in README
     assert "RESOLVE_RECOVERY_INCONSISTENCY" in README
@@ -74,9 +121,19 @@ def test_current_docs_reject_authority_and_state_inference():
         "complete valid alone means done",
         "bridge determines action state",
         "bridge determines approval staleness",
+    ):
+        assert forbidden not in text
+
+
+def test_readme_does_not_gate_capabilities_on_patch_version():
+    text = README.lower()
+    for forbidden in (
+        "if forgeloop_version",
+        "forgeloop version >=",
         "package 1.6.0 always means durableactions",
     ):
         assert forbidden not in text
+    assert "package version alone" in text
 
 
 def test_worker_prompt_keeps_control_paths_non_authoritative():
@@ -110,6 +167,17 @@ def test_current_sync_record_exists_and_states_the_boundary():
     assert "after_id" in text
 
 
+def test_current_sync_record_documents_verification_isolation():
+    current = ROOT / "FORGELOOPBRIDGE_CURRENT_FORGELOOP_SYNC_UPDATE_PLAN.md"
+    text = current.read_text(encoding="utf-8")
+    assert "verificationExecutionIsolation" in text
+    assert "E_VERIFICATION_ISOLATION_UNAVAILABLE" in text
+    assert "E_VERIFICATION_EXECUTION_INVALID" in text
+    assert "observabilityStability" in text
+    assert "protocolProjectRoot" in text
+    assert "execution cwd" in text
+
+
 WORKER_POLL = (ROOT / "examples" / "worker_poll.py").read_text(encoding="utf-8")
 
 
@@ -131,6 +199,30 @@ def test_worker_prompt_respects_forgeloop_git_publication_policy():
 def test_worker_poller_docs_use_task_scoped_complete():
     assert "forgeloop complete --json" not in WORKER_POLL
     assert "forgeloop complete --task <task-id> --json" in WORKER_POLL
+
+
+def test_worker_poller_feature_detects_verification_isolation():
+    assert "verificationExecutionIsolation" in WORKER_POLL
+
+
+def test_worker_poller_knows_isolation_failure_codes():
+    assert "E_VERIFICATION_ISOLATION_UNAVAILABLE" in WORKER_POLL
+    assert "E_VERIFICATION_EXECUTION_INVALID" in WORKER_POLL
+
+
+def test_autonomy_does_not_allow_self_attested_isolation():
+    text = AUTONOMY.lower()
+    assert "project_isolated" in text
+    assert "system_isolated" in text
+    assert "self-attest" in text or "self-attested" in text
+    assert "liveprojectwritable=false" in text
+
+
+def test_readme_documents_safe_evidence_publication():
+    text = README.lower()
+    assert "absolute local paths" in text
+    assert "raw credentials" in text
+    assert "complete private `.forgeloop/` state" in text
 
 
 def test_env_example_exists_and_covers_required_tokens():
