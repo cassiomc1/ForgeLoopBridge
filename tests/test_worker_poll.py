@@ -114,6 +114,65 @@ def test_commit_unknown_is_a_hard_stop(capsys):
 
 
 @pytest.mark.parametrize(
+    "reason_code",
+    (
+        "E_VERIFICATION_ISOLATION_UNAVAILABLE",
+        "E_VERIFICATION_EXECUTION_INVALID",
+    ),
+)
+def test_verification_isolation_block_is_detected_by_explicit_reason_code(reason_code):
+    assert worker_poll.reports_verification_isolation_block(
+        {"reason_code": reason_code}
+    ) is True
+
+
+def test_free_form_text_does_not_trigger_verification_isolation_block():
+    assert worker_poll.reports_verification_isolation_block(
+        {"content": "Verification isolation is unavailable in this example."}
+    ) is False
+
+
+def test_verification_isolation_block_is_a_hard_stop(capsys):
+    message = {
+        "task_id": "verify",
+        "message_type": "BLOCKED",
+        "reason_code": "E_VERIFICATION_EXECUTION_INVALID",
+        "content": "canonical execution metadata was contradictory",
+    }
+
+    worker_poll.print_control_event(message)
+    output = capsys.readouterr().out.lower()
+    assert "hard stop" in output
+    assert "verification isolation" in output
+    assert "do not downgrade" in output
+    assert "canonical forgeloop" in output
+
+
+def test_auto_ack_preserves_isolation_blocker_and_adds_hard_stop_guidance(monkeypatch):
+    message = {
+        "id": 12,
+        "role": "engineer",
+        "task_id": "verify",
+        "message_type": "BLOCKED",
+        "reason_code": "E_VERIFICATION_ISOLATION_UNAVAILABLE",
+        "content": "the trusted adapter is unavailable",
+    }
+    captured = {}
+    monkeypatch.setattr(
+        worker_poll,
+        "post_status",
+        lambda **kwargs: captured.update(kwargs),
+    )
+
+    worker_poll.handoff_message(message, auto_ack=True)
+
+    assert captured["reason_code"] == "E_VERIFICATION_ISOLATION_UNAVAILABLE"
+    assert "hard stop" in captured["content"].lower()
+    assert "no weaker-isolation retry" in captured["content"].lower()
+    assert "synthetic evidence" in captured["content"].lower()
+
+
+@pytest.mark.parametrize(
     "metadata",
     (
         {"next_action": "RECONCILE_ACTION"},

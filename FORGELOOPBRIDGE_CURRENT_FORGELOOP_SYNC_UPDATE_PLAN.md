@@ -26,6 +26,30 @@ only transports Markdown conversation, status summaries, decision records,
 blockers, and pull-request references. An Engineer/Worker agreement on the
 Bridge cannot manufacture trusted host authority or canonical approval.
 
+## ForgeLoop 1.6.1 verification isolation boundary
+
+The current ForgeLoop Protocol v1 may advertise
+`features.verificationExecutionIsolation` and
+`features.observabilityStability`. ForgeLoopBridge does not provide, infer, or
+attest verification isolation; it only coordinates hosts that may support the
+trusted ForgeLoop execution adapter.
+
+The canonical adapter distinguishes `NATIVE_PROJECT`, `PROJECT_ISOLATED`, and
+`SYSTEM_ISOLATED`. `protocolProjectRoot` is not necessarily the verification
+execution cwd, and a separate cwd or copied directory is not proof that the
+live project is protected. `liveProjectWritable=false` is a trusted host
+guarantee, not a Bridge assertion.
+
+When canonical ForgeLoop reports:
+
+- `E_VERIFICATION_ISOLATION_UNAVAILABLE`
+- `E_VERIFICATION_EXECUTION_INVALID`
+
+the Bridge reports the exact blocker and agents follow canonical ForgeLoop
+recovery/next guidance. They must not weaken isolation, switch execution modes
+to bypass a requirement, synthesize execution provenance, edit ForgeLoop-owned
+artifacts, or treat Bridge agreement as trusted adapter evidence.
+
 ## Current coordination surfaces
 
 - REST messages use authenticated Bearer access and cursor-based
