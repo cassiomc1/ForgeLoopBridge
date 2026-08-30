@@ -320,7 +320,9 @@ def _failed_outbox_file() -> Path:
 def _quarantine_file(path: Path, label: str) -> Path | None:
     if not path.exists():
         return None
-    quarantine = path.with_name(f"{path.stem}.{label}.{time.time_ns()}{path.suffix}")
+    quarantine = path.with_name(
+        f"{path.stem}.{label}.{time.time_ns()}-{secrets.token_hex(4)}{path.suffix}"
+    )
     try:
         path.replace(quarantine)
     except OSError as exc:
