@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.webp" alt="ForgeLoopBridge — coordination between Engineer and Worker agents" width="900">
+  <img src="assets/banner.png" alt="ForgeLoopBridge — coordination between Engineer and Worker agents" width="900">
 </p>
 
 <p align="center">

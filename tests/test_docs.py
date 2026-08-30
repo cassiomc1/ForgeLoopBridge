@@ -307,7 +307,7 @@ def test_env_example_exists_and_covers_required_tokens():
 
 
 def test_readme_documents_architecture_correct_banner_and_reported_metadata():
-    assert 'src="assets/banner.webp"' in README
+    assert 'src="assets/banner.png"' in README
     assert "action_id" in README
     assert "approval_id" in README
     assert "next_action" in README
