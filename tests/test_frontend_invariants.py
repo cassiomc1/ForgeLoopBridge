@@ -107,6 +107,37 @@ def test_action_and_approval_metadata_have_safe_rendering():
     assert "DOMPurify.sanitize" in INDEX
 
 
+def test_typed_messages_have_filters_and_safe_structured_rendering():
+    assert 'id="typed-kind-filter"' in INDEX
+    assert 'id="correlation-filter"' in INDEX
+    assert 'id="composer-typed-kind"' in INDEX
+    assert 'id="composer-typed-payload"' in INDEX
+    assert "msg.typed" in INDEX
+    assert "typed.kind" in INDEX
+    assert "buildTypedDetails" in INDEX
+    assert "textContent = displayTypedValue(value)" in INDEX
+    assert "typed-fields" in INDEX
+    assert "currentTypedKindFilter" in INDEX
+    assert "currentCorrelationFilter" in INDEX
+
+
+def test_typed_values_do_not_bypass_html_sanitization():
+    typed_start = INDEX.index("function buildTypedDetails")
+    typed_end = INDEX.index("function buildMessageElement", typed_start)
+    typed_renderer = INDEX[typed_start:typed_end]
+    assert "innerHTML" not in typed_renderer
+    assert "textContent" in typed_renderer
+    assert "JSON.stringify" in INDEX[INDEX.index("function displayTypedValue"):typed_start]
+
+
+def test_frontend_keeps_typed_schema_separate_from_forgeloop_protocol():
+    assert "schema_version: 1" in INDEX
+    assert "canonical_refs" in INDEX
+    assert "message_key" in INDEX
+    assert "reply_to_id" in INDEX
+    assert "correlation_id" in INDEX
+
+
 def test_filter_scope_is_explicitly_loaded_messages_only():
     assert "Filters apply to loaded messages." in INDEX
 

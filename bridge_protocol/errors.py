@@ -1,0 +1,21 @@
+"""Stable error types for Bridge transport validation."""
+
+E_BRIDGE_TYPED_SCHEMA_UNSUPPORTED = "E_BRIDGE_TYPED_SCHEMA_UNSUPPORTED"
+E_BRIDGE_TYPED_PAYLOAD_INVALID = "E_BRIDGE_TYPED_PAYLOAD_INVALID"
+E_BRIDGE_TYPED_KIND_MISMATCH = "E_BRIDGE_TYPED_KIND_MISMATCH"
+E_BRIDGE_REPLY_NOT_FOUND = "E_BRIDGE_REPLY_NOT_FOUND"
+E_BRIDGE_REPLY_ROLE_INVALID = "E_BRIDGE_REPLY_ROLE_INVALID"
+E_BRIDGE_REPLY_KIND_INVALID = "E_BRIDGE_REPLY_KIND_INVALID"
+E_BRIDGE_CORRELATION_MISMATCH = "E_BRIDGE_CORRELATION_MISMATCH"
+E_BRIDGE_IDEMPOTENCY_CONFLICT = "E_BRIDGE_IDEMPOTENCY_CONFLICT"
+E_BRIDGE_CANONICAL_REF_INVALID = "E_BRIDGE_CANONICAL_REF_INVALID"
+
+
+class BridgeProtocolError(Exception):
+    """An expected, client-visible Bridge protocol validation failure."""
+
+    def __init__(self, code: str, message: str, *, status_code: int = 422):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status_code = status_code

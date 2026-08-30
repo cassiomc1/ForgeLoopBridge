@@ -77,6 +77,9 @@
     .badge.approval { color: #ffa657; border-color: #ffa657; font-family: ui-monospace, monospace; text-transform: none; }
     .badge.next { color: #79c0ff; border-color: #79c0ff; font-family: ui-monospace, monospace; text-transform: none; }
     .badge.reason { color: #ff7b72; border-color: #ff7b72; font-family: ui-monospace, monospace; text-transform: none; }
+    .badge.typed { color: #a5d6ff; border-color: #a5d6ff; }
+    .badge.correlation { color: #d2a8ff; border-color: #d2a8ff; font-family: ui-monospace, monospace; text-transform: none; }
+    .badge.reply { color: #ffa657; border-color: #ffa657; font-family: ui-monospace, monospace; text-transform: none; }
     .hidden { display: none !important; }
 
     .task-filter {
@@ -117,6 +120,48 @@
     .meta-input:focus {
       outline: none;
       border-color: var(--engineer);
+    }
+
+    .typed-composer {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+    }
+    .typed-composer summary { cursor: pointer; }
+    .typed-composer-fields {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .typed-composer-fields textarea { min-height: 90px; max-height: 180px; }
+
+    .typed-details {
+      margin: 0 16px 12px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+    }
+    .typed-details summary {
+      cursor: pointer;
+      padding: 6px 8px;
+      color: #a5d6ff;
+    }
+    .typed-fields {
+      display: grid;
+      grid-template-columns: minmax(120px, 0.35fr) minmax(0, 1fr);
+      gap: 4px 10px;
+      padding: 0 8px 8px;
+    }
+    .typed-field-label { color: var(--text-muted); }
+    .typed-field-value {
+      color: var(--text);
+      font-family: ui-monospace, monospace;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
     }
 
     main {
@@ -416,6 +461,20 @@
       </select>
       <input id="action-filter" class="task-filter filter-input" type="search" placeholder="Action ID" title="Filter by action" autocomplete="off" />
       <input id="approval-filter" class="task-filter filter-input" type="search" placeholder="Approval ID" title="Filter by approval" autocomplete="off" />
+      <select id="typed-kind-filter" class="task-filter" title="Filter by typed kind">
+        <option value="">All typed kinds</option>
+        <option value="TASK_REQUEST">TASK_REQUEST</option>
+        <option value="STATUS_UPDATE">STATUS_UPDATE</option>
+        <option value="DECISION_REQUEST">DECISION_REQUEST</option>
+        <option value="DECISION_RESPONSE">DECISION_RESPONSE</option>
+        <option value="BLOCKER">BLOCKER</option>
+        <option value="REVIEW_RESULT">REVIEW_RESULT</option>
+        <option value="CONTROL_NOTICE">CONTROL_NOTICE</option>
+        <option value="HANDOFF_NOTICE">HANDOFF_NOTICE</option>
+        <option value="VERIFICATION_REPORT">VERIFICATION_REPORT</option>
+        <option value="ATTESTATION_REPORT">ATTESTATION_REPORT</option>
+      </select>
+      <input id="correlation-filter" class="task-filter filter-input" type="search" placeholder="Correlation ID" title="Filter by correlation" autocomplete="off" />
       <span class="filter-note" title="Filters inspect messages already loaded in this browser session.">Filters apply to loaded messages.</span>
       <span class="badge hidden" id="my-role"></span>
       <span>Msgs: <strong id="total">0</strong></span>
@@ -455,6 +514,32 @@
         <input type="text" id="composer-action-id" class="meta-input" placeholder="Action ID (optional)" maxlength="200" autocomplete="off" />
         <input type="text" id="composer-approval-id" class="meta-input" placeholder="Approval ID (optional)" maxlength="200" autocomplete="off" />
       </div>
+      <details class="typed-composer">
+        <summary>Optional typed coordination message</summary>
+        <div class="typed-composer-fields">
+          <div class="metadata-inputs">
+            <select id="composer-typed-kind" class="meta-input">
+              <option value="">Typed kind (optional)</option>
+              <option value="TASK_REQUEST">TASK_REQUEST</option>
+              <option value="STATUS_UPDATE">STATUS_UPDATE</option>
+              <option value="DECISION_REQUEST">DECISION_REQUEST</option>
+              <option value="DECISION_RESPONSE">DECISION_RESPONSE</option>
+              <option value="BLOCKER">BLOCKER</option>
+              <option value="REVIEW_RESULT">REVIEW_RESULT</option>
+              <option value="CONTROL_NOTICE">CONTROL_NOTICE</option>
+              <option value="HANDOFF_NOTICE">HANDOFF_NOTICE</option>
+              <option value="VERIFICATION_REPORT">VERIFICATION_REPORT</option>
+              <option value="ATTESTATION_REPORT">ATTESTATION_REPORT</option>
+            </select>
+            <input type="text" id="composer-message-key" class="meta-input" placeholder="Message key (retry-safe)" maxlength="200" autocomplete="off" />
+            <input type="text" id="composer-correlation-id" class="meta-input" placeholder="Correlation ID (optional)" maxlength="200" autocomplete="off" />
+            <input type="number" id="composer-reply-to-id" class="meta-input" placeholder="Reply to ID (optional)" min="1" />
+          </div>
+          <textarea id="composer-typed-payload" class="meta-input" placeholder='Typed payload JSON, e.g. {"goal":"Implement the change","acceptance_criteria":[],"priority":"NORMAL"}'></textarea>
+          <input type="text" id="composer-canonical-refs" class="meta-input" placeholder='Opaque refs JSON (optional), e.g. [{"kind":"TASK","ref":"task-1"}]' autocomplete="off" />
+          <label><input type="checkbox" id="composer-expects-reply" /> Expects a reply</label>
+        </div>
+      </details>
       <textarea id="content" placeholder="Write in Markdown…&#10;&#10;## Task X&#10;- clear instruction&#10;- acceptance criteria"></textarea>
       <div class="composer-row">
         <span style="font-size:0.75rem;color:var(--text-muted);flex:1;">Ctrl+Enter to post · posting as <strong id="composer-role">—</strong></span>
@@ -477,6 +562,8 @@
     let currentMessageTypeFilter = '';
     let currentActionFilter = '';
     let currentApprovalFilter = '';
+    let currentTypedKindFilter = '';
+    let currentCorrelationFilter = '';
 
     const authHeaders = () => ({ 'Authorization': 'Bearer ' + token });
 
@@ -521,10 +608,14 @@
         const msgType = el.dataset.messageType || '';
         const msgActionId = (el.dataset.actionId || '').toLowerCase();
         const msgApprovalId = (el.dataset.approvalId || '').toLowerCase();
+        const msgTypedKind = el.dataset.typedKind || '';
+        const msgCorrelationId = (el.dataset.correlationId || '').toLowerCase();
         const matches = (!currentTaskFilter || msgTaskId === currentTaskFilter) &&
           (!currentMessageTypeFilter || msgType === currentMessageTypeFilter) &&
           (!currentActionFilter || msgActionId.includes(currentActionFilter)) &&
-          (!currentApprovalFilter || msgApprovalId.includes(currentApprovalFilter));
+          (!currentApprovalFilter || msgApprovalId.includes(currentApprovalFilter)) &&
+          (!currentTypedKindFilter || msgTypedKind === currentTypedKindFilter) &&
+          (!currentCorrelationFilter || msgCorrelationId.includes(currentCorrelationFilter));
         el.style.display = matches ? '' : 'none';
       });
     }
@@ -538,6 +629,47 @@
     }
 
     const reportedMetadataTitle = 'Coordination metadata reported by an agent. Verify through canonical ForgeLoop.';
+
+    function displayTypedValue(value) {
+      if (value === null || value === undefined) return '—';
+      if (typeof value === 'object') return JSON.stringify(value);
+      return String(value);
+    }
+
+    function appendTypedField(container, label, value) {
+      const labelEl = document.createElement('span');
+      labelEl.className = 'typed-field-label';
+      labelEl.textContent = label;
+      const valueEl = document.createElement('span');
+      valueEl.className = 'typed-field-value';
+      valueEl.textContent = displayTypedValue(value);
+      container.appendChild(labelEl);
+      container.appendChild(valueEl);
+    }
+
+    function buildTypedDetails(typed) {
+      if (!typed || typeof typed !== 'object') return null;
+
+      const details = document.createElement('details');
+      details.className = 'typed-details';
+      const summary = document.createElement('summary');
+      summary.textContent = `Typed coordination: ${typed.kind || 'unknown'}`;
+      details.appendChild(summary);
+
+      const fields = document.createElement('div');
+      fields.className = 'typed-fields';
+      appendTypedField(fields, 'Schema', typed.schema_version);
+      appendTypedField(fields, 'Message key', typed.message_key);
+      if (typed.correlation_id) appendTypedField(fields, 'Correlation', typed.correlation_id);
+      if (typed.reply_to_id) appendTypedField(fields, 'Reply to', typed.reply_to_id);
+      appendTypedField(fields, 'Expects reply', typed.expects_reply);
+      appendTypedField(fields, 'Payload', typed.payload);
+      if (typed.canonical_refs && typed.canonical_refs.length) {
+        appendTypedField(fields, 'Opaque refs', typed.canonical_refs);
+      }
+      details.appendChild(fields);
+      return details;
+    }
 
     function buildMessageElement(msg) {
       if (knownIds.has(msg.id)) return null;
@@ -559,6 +691,8 @@
       div.dataset.approvalId = msg.approval_id || '';
       div.dataset.nextAction = msg.next_action || '';
       div.dataset.reasonCode = msg.reason_code || '';
+      div.dataset.typedKind = msg.typed?.kind || '';
+      div.dataset.correlationId = msg.typed?.correlation_id || '';
 
       const header = document.createElement('div');
       header.className = 'message-header';
@@ -599,6 +733,18 @@
       body.innerHTML = renderMarkdown(msg.content);
       div.appendChild(body);
 
+      if (msg.typed) {
+        left.insertBefore(createBadge('typed', `typed: ${msg.typed.kind || 'unknown'}`, reportedMetadataTitle), time);
+        if (msg.typed.correlation_id) {
+          left.insertBefore(createBadge('correlation', `correlation: ${msg.typed.correlation_id}`, reportedMetadataTitle), time);
+        }
+        if (msg.typed.reply_to_id) {
+          left.insertBefore(createBadge('reply', `reply to: #${msg.typed.reply_to_id}`, reportedMetadataTitle), time);
+        }
+        const typedDetails = buildTypedDetails(msg.typed);
+        if (typedDetails) div.appendChild(typedDetails);
+      }
+
       applyFiltersToElement(div);
 
       if (canDelete) {
@@ -611,10 +757,14 @@
     function applyFiltersToElement(el) {
       const msgActionId = (el.dataset.actionId || '').toLowerCase();
       const msgApprovalId = (el.dataset.approvalId || '').toLowerCase();
+      const msgTypedKind = el.dataset.typedKind || '';
+      const msgCorrelationId = (el.dataset.correlationId || '').toLowerCase();
       const matches = (!currentTaskFilter || (el.dataset.taskId || '') === currentTaskFilter) &&
         (!currentMessageTypeFilter || (el.dataset.messageType || '') === currentMessageTypeFilter) &&
         (!currentActionFilter || msgActionId.includes(currentActionFilter)) &&
-        (!currentApprovalFilter || msgApprovalId.includes(currentApprovalFilter));
+        (!currentApprovalFilter || msgApprovalId.includes(currentApprovalFilter)) &&
+        (!currentTypedKindFilter || msgTypedKind === currentTypedKindFilter) &&
+        (!currentCorrelationFilter || msgCorrelationId.includes(currentCorrelationFilter));
       el.style.display = matches ? '' : 'none';
     }
 
@@ -786,6 +936,13 @@
       const typeInput = document.getElementById('composer-message-type').value;
       const actionIdInput = document.getElementById('composer-action-id').value.trim();
       const approvalIdInput = document.getElementById('composer-approval-id').value.trim();
+      const typedKindInput = document.getElementById('composer-typed-kind').value;
+      const typedPayloadInput = document.getElementById('composer-typed-payload').value.trim();
+      const typedMessageKeyInput = document.getElementById('composer-message-key');
+      const typedCorrelationIdInput = document.getElementById('composer-correlation-id').value.trim();
+      const typedReplyToInput = document.getElementById('composer-reply-to-id').value.trim();
+      const typedRefsInput = document.getElementById('composer-canonical-refs').value.trim();
+      const typedExpectsReply = document.getElementById('composer-expects-reply').checked;
 
       const btn = document.getElementById('post-btn');
       btn.disabled = true;
@@ -796,6 +953,62 @@
         if (typeInput) payload.message_type = typeInput;
         if (actionIdInput) payload.action_id = actionIdInput;
         if (approvalIdInput) payload.approval_id = approvalIdInput;
+
+        if (typedKindInput) {
+          let typedPayload = {};
+          if (typedPayloadInput) {
+            try {
+              typedPayload = JSON.parse(typedPayloadInput);
+            } catch (e) {
+              alert('Typed payload must be valid JSON.');
+              return;
+            }
+          }
+          if (!typedPayload || Array.isArray(typedPayload) || typeof typedPayload !== 'object') {
+            alert('Typed payload must be a JSON object.');
+            return;
+          }
+          if (typedPayload.kind && typedPayload.kind !== typedKindInput) {
+            alert('Typed payload kind must match the selected typed kind.');
+            return;
+          }
+
+          const browserKey = window.crypto && typeof window.crypto.randomUUID === 'function'
+            ? window.crypto.randomUUID()
+            : Date.now() + '-' + Math.random().toString(16).slice(2);
+          const stableKey = typedMessageKeyInput.value.trim() || 'browser-' + browserKey;
+          typedMessageKeyInput.value = stableKey;
+
+          let canonicalRefs = [];
+          if (typedRefsInput) {
+            try {
+              canonicalRefs = JSON.parse(typedRefsInput);
+            } catch (e) {
+              alert('Opaque references must be valid JSON.');
+              return;
+            }
+            if (!Array.isArray(canonicalRefs)) {
+              alert('Opaque references must be a JSON array.');
+              return;
+            }
+          }
+
+          const replyToId = typedReplyToInput ? Number(typedReplyToInput) : null;
+          if (replyToId !== null && (!Number.isInteger(replyToId) || replyToId < 1)) {
+            alert('Reply to ID must be a positive integer.');
+            return;
+          }
+          payload.typed = {
+            schema_version: 1,
+            kind: typedKindInput,
+            message_key: stableKey,
+            correlation_id: typedCorrelationIdInput || null,
+            reply_to_id: replyToId,
+            expects_reply: typedExpectsReply,
+            payload: { kind: typedKindInput, ...typedPayload },
+            canonical_refs: canonicalRefs,
+          };
+        }
 
         const res = await fetch('/api/messages', {
           method: 'POST',
@@ -815,6 +1028,13 @@
         document.getElementById('content').value = '';
         document.getElementById('composer-action-id').value = '';
         document.getElementById('composer-approval-id').value = '';
+        typedMessageKeyInput.value = '';
+        document.getElementById('composer-correlation-id').value = '';
+        document.getElementById('composer-reply-to-id').value = '';
+        document.getElementById('composer-typed-payload').value = '';
+        document.getElementById('composer-canonical-refs').value = '';
+        document.getElementById('composer-expects-reply').checked = false;
+        document.getElementById('composer-typed-kind').value = '';
         refreshStatus();
       } catch (e) {
         alert('Network error');
@@ -941,6 +1161,14 @@
     });
     document.getElementById('approval-filter').addEventListener('input', (e) => {
       currentApprovalFilter = e.target.value.trim().toLowerCase();
+      applyFilters();
+    });
+    document.getElementById('typed-kind-filter').addEventListener('change', (e) => {
+      currentTypedKindFilter = e.target.value;
+      applyFilters();
+    });
+    document.getElementById('correlation-filter').addEventListener('input', (e) => {
+      currentCorrelationFilter = e.target.value.trim().toLowerCase();
       applyFilters();
     });
 
