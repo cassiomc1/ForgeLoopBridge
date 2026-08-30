@@ -227,11 +227,17 @@ external attestation.
   explicit `typed.kind`, preserve `correlation_id`, reply with `reply_to_id`,
   and generate a stable `message_key` before submission. Retry an uncertain
   POST with the same key; never reuse it for a different payload.
-- Typed `DECISION_RESPONSE` is a project decision, not canonical ForgeLoop
-  approval. Typed `CONTROL_NOTICE`, `VERIFICATION_REPORT`, and
+- Typed `DECISION_RESPONSE` and `DECISION_NOTICE` are project decisions, not
+  canonical ForgeLoop approval. `DECISION_NOTICE` is unilateral and does not
+  expect a reply. Typed `CONTROL_NOTICE`, `VERIFICATION_REPORT`, and
   `ATTESTATION_REPORT` are copied projections that require canonical
   verification before acting. Typed task/request status is Bridge coordination
   status, not ForgeLoop lifecycle state.
+- A persisted typed message marked `typed_integrity: INVALID` is a hard stop:
+  keep its Markdown visible for diagnosis, do not parse it as a command, and
+  do not advance the Worker cursor. Typed outbox retries preserve the exact
+  request and key, keep authentication only in the delivery header, and
+  quarantine permanent failures.
 - Never end your turn with a question addressed to a human.
 - Never output "please run X" or "the user should Y". Either do it yourself or
   negotiate it with the other agent on the board.

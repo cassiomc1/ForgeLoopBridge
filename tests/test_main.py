@@ -757,9 +757,14 @@ async def test_typed_message_roundtrips_through_rest_and_sse(client):
         created = response.json()
         assert created["typed"]["kind"] == "STATUS_UPDATE"
         assert created["typed"]["payload"]["summary"] == "Verification is running."
+        assert created["typed_integrity"] == "VALID"
+        assert created["typed_error"] is None
 
         event = await asyncio.wait_for(queue.get(), timeout=1)
-        assert event.model_dump(mode="json")["typed"] == created["typed"]
+        event_body = event.model_dump(mode="json")
+        assert event_body["typed"] == created["typed"]
+        assert event_body["typed_integrity"] == "VALID"
+        assert event_body["typed_error"] is None
 
         restored = await client.get(
             "/api/messages",
@@ -790,12 +795,54 @@ async def test_malformed_persisted_typed_data_fails_closed_but_keeps_markdown(cl
     restored = await client.get("/api/messages", headers=HEADERS_ENGINEER)
 
     assert restored.status_code == 200
-    assert restored.json() == [
-        {
-            **{key: value for key, value in created.json().items() if key != "typed"},
-            "typed": None,
-        }
-    ]
+    restored_message = restored.json()[0]
+    assert restored_message["content"] == "Keep this visible"
+    assert restored_message["typed"] is None
+    assert restored_message["typed_integrity"] == "INVALID"
+    assert restored_message["typed_error"]["code"] == "E_BRIDGE_PERSISTED_TYPED_INVALID"
+
+
+async def test_corrupted_typed_row_cannot_satisfy_idempotent_retry(client):
+    body = {
+        "content": "A stable typed message",
+        "message_type": "STATUS",
+        "typed": typed_status(message_key="worker-corrupt-idempotency"),
+    }
+    created = await client.post("/api/messages", headers=HEADERS_WORKER, json=body)
+    assert created.status_code == 200
+
+    async with main.connect_db() as db:
+        await db.execute(
+            "UPDATE messages SET typed_payload_json = ? WHERE id = ?",
+            ("{malformed", created.json()["id"]),
+        )
+        await db.commit()
+
+    retry = await client.post("/api/messages", headers=HEADERS_WORKER, json=body)
+    assert retry.status_code == 409
+    assert retry.json()["error"]["code"] == "E_BRIDGE_IDEMPOTENCY_CONFLICT"
+
+
+async def test_corrupted_persisted_canonical_refs_are_marked_invalid(client):
+    created = await client.post(
+        "/api/messages",
+        headers=HEADERS_WORKER,
+        json={"content": "Keep the body visible", "typed": typed_status("worker-bad-refs")},
+    )
+    assert created.status_code == 200
+
+    async with main.connect_db() as db:
+        await db.execute(
+            "UPDATE messages SET canonical_refs_json = ? WHERE id = ?",
+            ("not-json", created.json()["id"]),
+        )
+        await db.commit()
+
+    restored = await client.get("/api/messages", headers=HEADERS_ENGINEER)
+    message = restored.json()[0]
+    assert message["typed"] is None
+    assert message["typed_integrity"] == "INVALID"
+    assert message["typed_error"]["code"] == "E_BRIDGE_PERSISTED_TYPED_INVALID"
 
 
 async def test_existing_database_migrates_typed_columns_without_losing_legacy_data(tmp_path, monkeypatch):
@@ -933,6 +980,34 @@ async def test_typed_reply_validation_and_filters(client):
     assert same_role.json()["error"]["code"] == "E_BRIDGE_REPLY_ROLE_INVALID"
 
 
+async def test_decision_notice_is_a_unilateral_project_decision(client):
+    response = await client.post(
+        "/api/messages",
+        headers=HEADERS_WORKER,
+        json={
+            "content": "The project selected option A.",
+            "message_type": "DECISION_TAKEN",
+            "typed": {
+                "schema_version": 1,
+                "kind": "DECISION_NOTICE",
+                "message_key": "worker-decision-notice-1",
+                "payload": {
+                    "kind": "DECISION_NOTICE",
+                    "decision": "A",
+                    "rationale": "It keeps the implementation reversible.",
+                    "decision_class": "REVERSIBLE",
+                },
+                "canonical_refs": [],
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["typed"]["kind"] == "DECISION_NOTICE"
+    assert response.json()["typed"]["expects_reply"] is False
+    assert response.json()["typed_integrity"] == "VALID"
+
+
 @pytest.mark.parametrize(
     ("typed", "code"),
     (
@@ -950,9 +1025,50 @@ async def test_typed_validation_errors_are_stable(client, typed, code):
     assert response.json()["error"]["code"] == code
 
 
+async def test_typed_envelope_size_limit_is_exact_and_fail_closed(client, monkeypatch):
+    typed = typed_status(message_key="worker-size-exact")
+    envelope = main.parse_typed_envelope(typed)
+    exact_size = main._typed_envelope_size(envelope)
+    queue = main.create_sse_queue()
+    main._subscribers.add(queue)
+    try:
+        monkeypatch.setattr(main, "MAX_TYPED_ENVELOPE_BYTES", exact_size)
+        accepted = await client.post(
+            "/api/messages",
+            headers=HEADERS_WORKER,
+            json={"content": "exactly at the typed limit", "typed": typed},
+        )
+        assert accepted.status_code == 200
+        await asyncio.wait_for(queue.get(), timeout=1)
+
+        monkeypatch.setattr(main, "MAX_TYPED_ENVELOPE_BYTES", exact_size - 1)
+        rejected = await client.post(
+            "/api/messages",
+            headers=HEADERS_WORKER,
+            json={"content": "one byte too large", "typed": typed_status("worker-size-too-large")},
+        )
+        assert rejected.status_code == 413
+        assert rejected.json()["error"]["code"] == "E_BRIDGE_TYPED_PAYLOAD_TOO_LARGE"
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(queue.get(), timeout=0.05)
+    finally:
+        main._subscribers.discard(queue)
+
+    messages = await client.get("/api/messages", headers=HEADERS_ENGINEER)
+    assert [message["typed"]["message_key"] for message in messages.json()] == ["worker-size-exact"]
+
+
 async def test_status_advertises_bridge_typed_schema(client):
     response = await client.get("/api/status")
 
     assert response.status_code == 200
-    assert response.json()["bridge_api_version"] == "2.1.0"
+    assert response.json()["bridge_api_version"] == "2.1.1"
     assert response.json()["typed_message_versions"] == [1]
+    assert response.json()["typed_features"] == {
+        "idempotency": True,
+        "correlation": True,
+        "reply_linkage": True,
+        "canonical_refs": True,
+        "outbox_safe_retry": True,
+        "typed_integrity_status": True,
+    }

@@ -1,3 +1,5 @@
+import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -7,10 +9,32 @@ from examples import worker_poll
 WORKER_POLL = Path(worker_poll.__file__).read_text(encoding="utf-8")
 
 
+def pending_request(message_key: str = "worker-pending-1", content: str = "Status") -> dict:
+    return {
+        "content": content,
+        "typed": {
+            "schema_version": 1,
+            "kind": "STATUS_UPDATE",
+            "message_key": message_key,
+            "correlation_id": None,
+            "reply_to_id": None,
+            "expects_reply": False,
+            "payload": {
+                "kind": "STATUS_UPDATE",
+                "state": "IN_PROGRESS",
+                "summary": "Running.",
+            },
+            "canonical_refs": [],
+        },
+    }
+
+
 def test_fetch_latest_message_id_uses_latest_mode(monkeypatch):
     captured = {}
 
     class FakeResponse:
+        status_code = 200
+
         def raise_for_status(self):
             pass
 
@@ -58,6 +82,10 @@ def test_worker_poller_uses_capability_discovery_and_safe_dispatch_language():
     assert "not forgeloop authority" in text
     assert "forgeloop complete --task <task-id> --json" in text
     assert ".worker_last_seen" in text
+    assert "typed_integrity: invalid" in text
+    assert "decision_notice" in text
+    assert "message_key" in text
+    assert "authorization" in text
 
 
 def test_worker_poller_documents_all_forgeloop_164_boundaries():
@@ -89,6 +117,8 @@ def test_post_status_forwards_coordination_references(monkeypatch):
     captured = {}
 
     class FakeResponse:
+        status_code = 200
+
         def raise_for_status(self):
             pass
 
@@ -170,6 +200,8 @@ def test_post_typed_message_persists_key_until_confirmation(tmp_path, monkeypatc
     captured = {}
 
     class FakeResponse:
+        status_code = 200
+
         def raise_for_status(self):
             pass
 
@@ -213,6 +245,238 @@ def test_post_typed_message_keeps_key_after_uncertain_failure(tmp_path, monkeypa
         )
 
     assert "worker-outbox-2" in worker_poll._load_typed_outbox()
+
+
+def test_typed_outbox_never_persists_authentication_material(tmp_path, monkeypatch):
+    outbox_file = tmp_path / "outbox.json"
+    monkeypatch.setattr(worker_poll, "OUTBOX_FILE", outbox_file)
+    captured = {}
+
+    def fail_post(url, *, headers, json, timeout):
+        captured.update({"headers": headers, "json": json})
+        raise worker_poll.requests.ConnectionError("network timeout")
+
+    monkeypatch.setattr(worker_poll.requests, "post", fail_post)
+
+    with pytest.raises(worker_poll.requests.ConnectionError):
+        worker_poll.post_typed_message(
+            "Safe status",
+            "STATUS_UPDATE",
+            {"state": "WAITING", "summary": "Waiting."},
+            message_key="worker-outbox-secure",
+        )
+
+    persisted = outbox_file.read_text(encoding="utf-8")
+    assert worker_poll.WORKER_TOKEN not in persisted
+    assert "Authorization" not in persisted
+    assert "Bearer" not in persisted
+    assert "token" not in persisted.lower()
+    assert captured["headers"] == {"Authorization": f"Bearer {worker_poll.WORKER_TOKEN}"}
+    assert "token" not in json.dumps(captured["json"]).lower()
+
+
+@pytest.mark.parametrize(
+    "secret_field",
+    ("Authorization", "Bearer", "ticket", "sse_ticket", "engineer_token", "signing_key", "oidc_token"),
+)
+def test_outbox_rejects_secret_fields(tmp_path, monkeypatch, secret_field):
+    outbox_file = tmp_path / "outbox.json"
+    monkeypatch.setattr(worker_poll, "OUTBOX_FILE", outbox_file)
+    request = pending_request("worker-secret-field")
+    request[secret_field] = "secret-material"
+
+    with pytest.raises(worker_poll.OutboxSecurityError):
+        worker_poll._save_typed_outbox(
+            {"worker-secret-field": worker_poll._new_outbox_entry(request)}
+        )
+
+    assert not outbox_file.exists()
+
+
+def test_retry_pending_typed_messages_replays_exact_request_and_removes_on_2xx(tmp_path, monkeypatch):
+    outbox_file = tmp_path / "outbox.json"
+    monkeypatch.setattr(worker_poll, "OUTBOX_FILE", outbox_file)
+    request = pending_request("worker-replay-1")
+    worker_poll._save_typed_outbox({"worker-replay-1": worker_poll._new_outbox_entry(request)})
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"id": 19}
+
+    def fake_post(url, *, headers, json, timeout):
+        captured.update({"url": url, "headers": headers, "json": json, "timeout": timeout})
+        return FakeResponse()
+
+    monkeypatch.setattr(worker_poll.requests, "post", fake_post)
+
+    assert worker_poll.retry_pending_typed_messages() == 1
+    assert captured["json"] == request
+    assert captured["json"]["typed"]["message_key"] == "worker-replay-1"
+    assert captured["headers"] == {"Authorization": f"Bearer {worker_poll.WORKER_TOKEN}"}
+    assert worker_poll._load_typed_outbox() == {}
+
+
+@pytest.mark.parametrize("failure", ("network", "server"))
+def test_retry_pending_typed_messages_preserves_uncertain_failures(tmp_path, monkeypatch, failure):
+    outbox_file = tmp_path / "outbox.json"
+    monkeypatch.setattr(worker_poll, "OUTBOX_FILE", outbox_file)
+    request = pending_request("worker-retry-preserve")
+    worker_poll._save_typed_outbox(
+        {"worker-retry-preserve": worker_poll._new_outbox_entry(request)}
+    )
+
+    def fake_post(url, *, headers, json, timeout):
+        if failure == "network":
+            raise worker_poll.requests.ConnectionError("network timeout")
+        return type(
+            "FakeResponse",
+            (),
+            {"status_code": 503, "json": lambda self: {"error": {"code": "E_TEMPORARY"}}},
+        )()
+
+    monkeypatch.setattr(worker_poll.requests, "post", fake_post)
+
+    assert worker_poll.retry_pending_typed_messages() == 0
+    pending = worker_poll._load_typed_outbox()
+    assert pending["worker-retry-preserve"]["request"] == request
+    assert pending["worker-retry-preserve"]["attempts"] == 1
+    assert pending["worker-retry-preserve"]["last_error"]
+
+
+@pytest.mark.parametrize(
+    ("status_code", "error_code"),
+    ((400, "E_BRIDGE_TYPED_PAYLOAD_INVALID"), (409, "E_BRIDGE_IDEMPOTENCY_CONFLICT")),
+)
+def test_permanent_typed_outbox_failures_are_quarantined_and_not_retried(
+    tmp_path, monkeypatch, status_code, error_code
+):
+    outbox_file = tmp_path / "outbox.json"
+    monkeypatch.setattr(worker_poll, "OUTBOX_FILE", outbox_file)
+    key = f"worker-permanent-{status_code}"
+    worker_poll._save_typed_outbox({key: worker_poll._new_outbox_entry(pending_request(key))})
+    calls = []
+
+    class FakeResponse:
+        def __init__(self):
+            self.status_code = status_code
+
+        def json(self):
+            return {"error": {"code": error_code}}
+
+    def fake_post(url, *, headers, json, timeout):
+        calls.append(json)
+        return FakeResponse()
+
+    monkeypatch.setattr(worker_poll.requests, "post", fake_post)
+
+    assert worker_poll.retry_pending_typed_messages() == 0
+    assert worker_poll._load_typed_outbox() == {}
+    failed = worker_poll._load_failed_outbox()
+    assert key in failed
+    assert error_code in failed[key]["last_error"]
+
+    assert worker_poll.retry_pending_typed_messages() == 0
+    assert len(calls) == 1
+
+
+def test_corrupt_or_legacy_secret_outbox_is_quarantined(tmp_path, monkeypatch):
+    outbox_file = tmp_path / "outbox.json"
+    monkeypatch.setattr(worker_poll, "OUTBOX_FILE", outbox_file)
+
+    outbox_file.write_text("{not-json", encoding="utf-8")
+    assert worker_poll._load_typed_outbox() == {}
+    assert list(tmp_path.glob("outbox.corrupt.*.json"))
+
+    outbox_file.write_text(
+        json.dumps({"worker-legacy-1": {"token": worker_poll.WORKER_TOKEN}}),
+        encoding="utf-8",
+    )
+    assert worker_poll._load_typed_outbox() == {}
+    assert len(list(tmp_path.glob("outbox.corrupt.*.json"))) == 2
+
+
+def test_outbox_entry_and_byte_limits_fail_closed(tmp_path, monkeypatch):
+    outbox_file = tmp_path / "outbox.json"
+    monkeypatch.setattr(worker_poll, "OUTBOX_FILE", outbox_file)
+    first = worker_poll._new_outbox_entry(pending_request("worker-limit-1"))
+    second = worker_poll._new_outbox_entry(pending_request("worker-limit-2"))
+
+    monkeypatch.setattr(worker_poll, "MAX_OUTBOX_ENTRIES", 1)
+    with pytest.raises(worker_poll.OutboxLimitError):
+        worker_poll._save_typed_outbox(
+            {"worker-limit-1": first, "worker-limit-2": second}
+        )
+
+    monkeypatch.setattr(worker_poll, "MAX_OUTBOX_ENTRIES", 100)
+    serialized = worker_poll._serialize_outbox({"worker-limit-1": first})
+    monkeypatch.setattr(worker_poll, "MAX_OUTBOX_BYTES", len(serialized.encode("utf-8")) - 1)
+    with pytest.raises(worker_poll.OutboxLimitError):
+        worker_poll._save_typed_outbox({"worker-limit-1": first})
+
+
+def test_outbox_save_uses_atomic_temp_replacement(tmp_path, monkeypatch):
+    outbox_file = tmp_path / "outbox.json"
+    monkeypatch.setattr(worker_poll, "OUTBOX_FILE", outbox_file)
+    replaced = []
+    original_replace = Path.replace
+
+    def record_replace(path, target):
+        replaced.append((path, target))
+        return original_replace(path, target)
+
+    monkeypatch.setattr(Path, "replace", record_replace)
+    worker_poll._save_typed_outbox(
+        {"worker-atomic-1": worker_poll._new_outbox_entry(pending_request("worker-atomic-1"))}
+    )
+
+    assert outbox_file.exists()
+    assert replaced == [(tmp_path / "outbox.json.tmp", outbox_file)]
+
+
+def test_invalid_persisted_typed_integrity_is_a_worker_hard_stop(tmp_path, monkeypatch):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    message = {
+        "id": 101,
+        "role": "engineer",
+        "content": "# Treat this as a task, despite the invalid typed row.",
+        "typed": None,
+        "typed_integrity": "INVALID",
+        "typed_error": {"code": "E_BRIDGE_PERSISTED_TYPED_INVALID"},
+    }
+
+    with pytest.raises(worker_poll.InvalidTypedMessageIntegrity):
+        worker_poll.process_polled_messages([message], last_seen=100)
+
+    assert worker_poll.load_last_seen() == 0
+
+
+def test_worker_startup_replays_outbox_before_polling(tmp_path, monkeypatch):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    worker_poll.STATE_FILE.write_text("0", encoding="utf-8")
+    events = []
+
+    monkeypatch.setattr(
+        worker_poll,
+        "retry_pending_typed_messages",
+        lambda: events.append("replay") or 0,
+    )
+
+    class StopBeforeNetwork(BaseException):
+        pass
+
+    def stop_get(*args, **kwargs):
+        raise StopBeforeNetwork()
+
+    monkeypatch.setattr(worker_poll.requests, "get", stop_get)
+    monkeypatch.setattr(sys, "argv", ["worker_poll"])
+
+    with pytest.raises(StopBeforeNetwork):
+        worker_poll.main()
+
+    assert events and events[0] == "replay"
 
 
 def test_commit_unknown_is_a_hard_stop(capsys):

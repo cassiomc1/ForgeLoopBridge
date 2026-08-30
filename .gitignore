@@ -15,6 +15,11 @@ data/*.db-wal
 data/*.db-shm
 .worker_last_seen
 .worker_typed_outbox.json
+.worker_typed_outbox_failed.json
+.worker_typed_outbox*.json
+.worker_typed_outbox*.corrupt*.json
+.worker_typed_outbox_failed*.corrupt*.json
+.worker_typed_outbox*.tmp
 .worktrees/
 .DS_Store
 *.log

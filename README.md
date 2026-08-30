@@ -301,17 +301,46 @@ opaque `canonical_refs`. The authenticated token remains the only source of
 sender role; a payload field such as `sender_role` cannot override it.
 
 The initial typed kinds are `TASK_REQUEST`, `STATUS_UPDATE`,
-`DECISION_REQUEST`, `DECISION_RESPONSE`, `BLOCKER`, `REVIEW_RESULT`,
-`CONTROL_NOTICE`, `HANDOFF_NOTICE`, `VERIFICATION_REPORT`, and
-`ATTESTATION_REPORT`. Typed decisions are project coordination only. A typed
-control, verification, or attestation report is a copied projection until the
-consuming host independently checks canonical ForgeLoop state.
+`DECISION_REQUEST`, `DECISION_RESPONSE`, `DECISION_NOTICE`, `BLOCKER`,
+`REVIEW_RESULT`, `CONTROL_NOTICE`, `HANDOFF_NOTICE`, `VERIFICATION_REPORT`,
+and `ATTESTATION_REPORT`. `DECISION_NOTICE` records a unilateral project
+decision; it is not a reply and is never ForgeLoop approval. Typed decisions
+are project coordination only. A typed control, verification, or attestation
+report is a copied projection until the consuming host independently checks
+canonical ForgeLoop state.
+
+`DECISION_REQUEST` always expects a reply. `DECISION_RESPONSE` and
+`DECISION_NOTICE` never expect a reply. Decision option IDs must be unique, and
+`recommended_option` must name one of the declared options. For
+`VERIFICATION_REPORT`, the deprecated v1 `scope_mode` remains accepted for
+compatibility; new clients should use `requested_scope_mode` (`AUTO`,
+`CHANGED`, `CLAIMED`, or `FULL`) and `resolved_scope_mode` (`CHANGED`,
+`CLAIMED`, `FULL`, or `UNRESOLVED`). `AUTO` is never a resolved mode.
 
 Bridge message idempotency (`UNIQUE(role, message_key)`) is transport delivery
 behavior. It is not ForgeLoop durable-action idempotency or side-effect safety.
 Exact retries return the original message; conflicting reuse returns
 `E_BRIDGE_IDEMPOTENCY_CONFLICT` with HTTP 409. Bridge validation errors use the
 separate `E_BRIDGE_*` namespace and never reuse ForgeLoop `E_*` protocol errors.
+
+The Worker example persists typed POSTs in a bounded local outbox. The stored
+request contains only the exact message body and original `message_key`; the
+Worker constructs `Authorization: Bearer ...` only for delivery. The outbox
+uses atomic replacement and best-effort owner-only permissions, accepts at
+most 100 entries and 1 MiB, removes an entry only after a confirmed 2xx
+response, retains it after network/5xx failures, and moves permanent 4xx
+failures (including `E_BRIDGE_IDEMPOTENCY_CONFLICT`) to a failed quarantine.
+Malformed or secret-bearing outbox files are quarantined rather than silently
+overwritten.
+
+Every REST and SSE `MessageOut` includes `typed_integrity`: `VALID`,
+`NOT_APPLICABLE`, or `INVALID`. A malformed persisted typed row keeps its
+Markdown content visible but returns `typed: null` and
+`typed_error.code: E_BRIDGE_PERSISTED_TYPED_INVALID`; Workers must stop and
+must not interpret that Markdown as a fallback command. Typed envelopes are
+limited to 65,536 normalized UTF-8 JSON bytes; the exact limit is accepted and
+larger submissions return HTTP 413 with
+`E_BRIDGE_TYPED_PAYLOAD_TOO_LARGE` without creating a database or SSE event.
 
 ---
 
@@ -554,7 +583,7 @@ Mandatory workflow for every instruction from the Engineer:
    as task commands.
 
    Use `TASK_REQUEST`, `STATUS_UPDATE`, `DECISION_REQUEST`,
-   `DECISION_RESPONSE`, `BLOCKER`, `REVIEW_RESULT`, `CONTROL_NOTICE`,
+   `DECISION_RESPONSE`, `DECISION_NOTICE`, `BLOCKER`, `REVIEW_RESULT`, `CONTROL_NOTICE`,
    `HANDOFF_NOTICE`, `VERIFICATION_REPORT`, and `ATTESTATION_REPORT` as
    coordination semantics only. Bridge message idempotency is separate from
    ForgeLoop durable-action idempotency. Typed control, verification, and
@@ -875,7 +904,13 @@ existing opposite-role message, and `DECISION_RESPONSE` must reply to a
 `DECISION_REQUEST` with matching correlation. Exact retries with the same
 role-scoped `message_key` return the original message; different content with
 that key returns HTTP 409 and `E_BRIDGE_IDEMPOTENCY_CONFLICT`. Invalid typed
-contracts return HTTP 422 with a stable `E_BRIDGE_*` error body.
+contracts return HTTP 422 with a stable `E_BRIDGE_*` error body. Typed envelope
+JSON is measured after normalization and is limited to 65,536 UTF-8 bytes;
+larger requests return HTTP 413 with `E_BRIDGE_TYPED_PAYLOAD_TOO_LARGE` before
+database insertion or SSE broadcast. A persisted typed representation that
+fails validation is returned as `typed_integrity: INVALID` with
+`E_BRIDGE_PERSISTED_TYPED_INVALID`; its Markdown remains displayable but is
+not a safe dispatch fallback.
 
 ### `DELETE /api/messages/{id}`
 
@@ -925,8 +960,16 @@ also advertises the Bridge transport contract:
 
 ```json
 {
-  "bridge_api_version": "2.1.0",
-  "typed_message_versions": [1]
+  "bridge_api_version": "2.1.1",
+  "typed_message_versions": [1],
+  "typed_features": {
+    "idempotency": true,
+    "correlation": true,
+    "reply_linkage": true,
+    "canonical_refs": true,
+    "outbox_safe_retry": true,
+    "typed_integrity_status": true
+  }
 }
 ```
 
@@ -968,7 +1011,7 @@ while True:
     time.sleep(10)
 ```
 
-A production-ready polling script is available at [`examples/worker_poll.py`](examples/worker_poll.py) (persists an integer cursor across restarts, dispatches typed envelopes when present, and supports `--auto-ack` plus explicit first-start modes). Its `post_typed_message(...)` helper writes a stable outbound key to a local outbox until the server confirms receipt, making uncertain retries safe at the Bridge transport layer.
+A production-ready polling script is available at [`examples/worker_poll.py`](examples/worker_poll.py) (persists an integer cursor across restarts, dispatches typed envelopes when present, and supports `--auto-ack` plus explicit first-start modes). Its `post_typed_message(...)` helper writes a stable outbound key to a local outbox until the server confirms receipt, making uncertain retries safe at the Bridge transport layer. The outbox is replayed before the first poll and before later polls; only the exact stored request is replayed, with the current token supplied in the Authorization header at send time.
 
 On first start, when `.worker_last_seen` does not exist, the default
 `--start-mode pending` hands off the latest existing Engineer instruction before

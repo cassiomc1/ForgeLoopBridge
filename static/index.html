@@ -78,6 +78,7 @@
     .badge.next { color: #79c0ff; border-color: #79c0ff; font-family: ui-monospace, monospace; text-transform: none; }
     .badge.reason { color: #ff7b72; border-color: #ff7b72; font-family: ui-monospace, monospace; text-transform: none; }
     .badge.typed { color: #a5d6ff; border-color: #a5d6ff; }
+    .badge.integrity-invalid { color: #ff7b72; border-color: #ff7b72; font-family: ui-monospace, monospace; text-transform: none; }
     .badge.correlation { color: #d2a8ff; border-color: #d2a8ff; font-family: ui-monospace, monospace; text-transform: none; }
     .badge.reply { color: #ffa657; border-color: #ffa657; font-family: ui-monospace, monospace; text-transform: none; }
     .hidden { display: none !important; }
@@ -467,6 +468,7 @@
         <option value="STATUS_UPDATE">STATUS_UPDATE</option>
         <option value="DECISION_REQUEST">DECISION_REQUEST</option>
         <option value="DECISION_RESPONSE">DECISION_RESPONSE</option>
+        <option value="DECISION_NOTICE">DECISION_NOTICE</option>
         <option value="BLOCKER">BLOCKER</option>
         <option value="REVIEW_RESULT">REVIEW_RESULT</option>
         <option value="CONTROL_NOTICE">CONTROL_NOTICE</option>
@@ -524,6 +526,7 @@
               <option value="STATUS_UPDATE">STATUS_UPDATE</option>
               <option value="DECISION_REQUEST">DECISION_REQUEST</option>
               <option value="DECISION_RESPONSE">DECISION_RESPONSE</option>
+              <option value="DECISION_NOTICE">DECISION_NOTICE</option>
               <option value="BLOCKER">BLOCKER</option>
               <option value="REVIEW_RESULT">REVIEW_RESULT</option>
               <option value="CONTROL_NOTICE">CONTROL_NOTICE</option>
@@ -671,6 +674,24 @@
       return details;
     }
 
+    function buildTypedIntegrityDetails(msg) {
+      if (msg.typed_integrity !== 'INVALID') return null;
+
+      const details = document.createElement('details');
+      details.className = 'typed-details';
+      const summary = document.createElement('summary');
+      summary.textContent = 'Typed coordination: INVALID';
+      details.appendChild(summary);
+
+      const fields = document.createElement('div');
+      fields.className = 'typed-fields';
+      appendTypedField(fields, 'Integrity', msg.typed_integrity);
+      appendTypedField(fields, 'Error code', msg.typed_error?.code || 'unknown');
+      appendTypedField(fields, 'Dispatch', 'blocked; Markdown is informational only');
+      details.appendChild(fields);
+      return details;
+    }
+
     function buildMessageElement(msg) {
       if (knownIds.has(msg.id)) return null;
       knownIds.add(msg.id);
@@ -693,6 +714,7 @@
       div.dataset.reasonCode = msg.reason_code || '';
       div.dataset.typedKind = msg.typed?.kind || '';
       div.dataset.correlationId = msg.typed?.correlation_id || '';
+      div.dataset.typedIntegrity = msg.typed_integrity || 'NOT_APPLICABLE';
 
       const header = document.createElement('div');
       header.className = 'message-header';
@@ -732,6 +754,19 @@
       body.className = 'message-body';
       body.innerHTML = renderMarkdown(msg.content);
       div.appendChild(body);
+
+      if (msg.typed_integrity === 'INVALID') {
+        left.insertBefore(
+          createBadge(
+            'integrity-invalid',
+            'typed: INVALID',
+            'Persisted typed data failed validation; do not dispatch Markdown as a substitute.'
+          ),
+          time
+        );
+        const integrityDetails = buildTypedIntegrityDetails(msg);
+        if (integrityDetails) div.appendChild(integrityDetails);
+      }
 
       if (msg.typed) {
         left.insertBefore(createBadge('typed', `typed: ${msg.typed.kind || 'unknown'}`, reportedMetadataTitle), time);
@@ -942,13 +977,14 @@
       const typedCorrelationIdInput = document.getElementById('composer-correlation-id').value.trim();
       const typedReplyToInput = document.getElementById('composer-reply-to-id').value.trim();
       const typedRefsInput = document.getElementById('composer-canonical-refs').value.trim();
-      const typedExpectsReply = document.getElementById('composer-expects-reply').checked;
+      const typedExpectsReply = document.getElementById('composer-expects-reply').checked ||
+        typedKindInput === 'DECISION_REQUEST';
 
       const btn = document.getElementById('post-btn');
       btn.disabled = true;
 
       try {
-        const payload = { token, content };
+        const payload = { content };
         if (taskIdInput) payload.task_id = taskIdInput;
         if (typeInput) payload.message_type = typeInput;
         if (actionIdInput) payload.action_id = actionIdInput;
@@ -1018,7 +1054,10 @@
 
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          alert(err.detail || 'Failed to post');
+          const protocolError = err.error && err.error.code
+            ? err.error.code + ': ' + (err.error.message || '')
+            : null;
+          alert(protocolError || err.detail || 'Failed to post');
           return;
         }
 

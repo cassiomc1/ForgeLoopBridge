@@ -299,6 +299,7 @@ def test_env_example_exists_and_covers_required_tokens():
     assert "WORKER_TOKEN=" in content
     assert "PORT=" in content
     assert "SSE_QUEUE_SIZE=" in content
+    assert "MAX_TYPED_ENVELOPE_BYTES=" in content
 
 
 def test_readme_documents_architecture_correct_banner_and_reported_metadata():
@@ -313,7 +314,9 @@ def test_readme_documents_architecture_correct_banner_and_reported_metadata():
 
 def test_pyproject_version_matches_app_version():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'version = "2.1.0"' in pyproject
+    assert 'version = "2.1.1"' in pyproject
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "## 2.1.1 - 2026-08-30" in changelog
 
 
 def test_current_sync_record_documents_stream_close_before_rest_recovery():
@@ -322,6 +325,7 @@ def test_current_sync_record_documents_stream_close_before_rest_recovery():
     )
     assert "explicitly closes the affected stream" in current
     assert "fresh SSE ticket" in current
+    assert "bridge_api_version: 2.1.1" in current
 
 
 def test_readme_documents_realtime_topology_and_worker_start_policy():
@@ -342,5 +346,13 @@ def test_readme_documents_typed_bridge_protocol_contract():
     assert "correlation_id" in text
     assert "reply_to_id" in text
     assert "e_bridge_idempotency_conflict" in text
+    assert "decision_notice" in text
+    assert "requested_scope_mode" in text
+    assert "resolved_scope_mode" in text
+    assert "typed_integrity" in text
+    assert "e_bridge_persisted_typed_invalid" in text
+    assert "e_bridge_typed_payload_too_large" in text
+    assert "permanent 4xx" in text
+    assert "atomic replacement" in text
     assert "transport delivery" in text
     assert "durable-action idempotency" in text
