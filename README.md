@@ -15,6 +15,9 @@
 
 Designed to coordinate alongside [ForgeLoop](https://github.com/cassiomc1/ForgeLoop) — a portable engineering protocol for AI coding agents.
 
+Current Bridge release: **2.1.2**. The typed message schema remains v1, and
+ForgeLoop compatibility remains Protocol v1 / Integration API v1.
+
 - **Engineer** (e.g. Grok / LLM) → defines intent, acceptance criteria, reviews PRs, and performs read-only canonical verification.
 - **Worker** (e.g. OpenCode / Cursor / local agent) → discovers tasks, executes implementation following the ForgeLoop protocol, opens PRs, and reports status.
 
@@ -232,13 +235,14 @@ Open: [http://localhost:8000](http://localhost:8000)
 | `HOST`              | `0.0.0.0`             | Host                                               |
 | `PORT`              | `8000`                | Port                                               |
 | `RELOAD`            | `0`                   | Hot reload (dev only)                              |
-| `RATE_LIMIT_POSTS`  | `30`                  | Max posts per window per role                      |
-| `RATE_LIMIT_WINDOW` | `60`                  | Rate limit window in seconds                       |
-| `SSE_TICKET_RATE_LIMIT` | `30`              | Max stream tickets per window per role             |
-| `SSE_TICKET_RATE_WINDOW` | `60`            | Stream-ticket rate limit window in seconds         |
+| `RATE_LIMIT_POSTS`  | `30`                  | Max posts per window per role; 429 includes `Retry-After` |
+| `RATE_LIMIT_WINDOW` | `60`                  | Posting rate-limit window in seconds               |
+| `SSE_TICKET_RATE_LIMIT` | `30`              | Max stream tickets per window per role; 429 includes `Retry-After` |
+| `SSE_TICKET_RATE_WINDOW` | `60`            | Stream-ticket rate-limit window in seconds         |
 | `DEFAULT_PAGE_SIZE` | `200`                 | Default page size for `GET /api/messages`          |
 | `SSE_QUEUE_SIZE`    | `256`                 | Maximum buffered events per SSE subscriber         |
 | `SSE_TICKET_TTL`    | `30`                  | Browser SSE ticket lifetime, minimum 1 second      |
+| `MAX_TYPED_ENVELOPE_BYTES` | `65536`         | Maximum normalized typed JSON size in UTF-8 bytes  |
 | `LOG_LEVEL`         | `INFO`                | Logging level                                      |
 
 Generate strong tokens with:
@@ -257,7 +261,7 @@ The server refuses to start without both tokens set.
 - **All message endpoints require authentication** via the preferred `Authorization: Bearer <token>` header. The `?token=` query parameter remains legacy/deprecated compatibility for non-browser clients and should be removed from proxy access logs.
 - Browser SSE connections exchange the Bearer token for a short-lived ticket through `POST /api/stream-ticket`; the long-lived EventSource URL does not contain the real token.
 - Token comparisons are **timing-safe** (`secrets.compare_digest`).
-- **Rate limiting** on posting (default 30 posts/minute per role) and on SSE-ticket issuance (default 30 tickets/minute per role), with independent budgets.
+- **Rate limiting** on posting (default 30 posts/minute per role) and on SSE-ticket issuance (default 30 tickets/minute per role), with independent budgets. Server-generated `429` responses include bounded integer `Retry-After` guidance; reverse proxies may apply additional independent limits.
 - **Markdown is sanitized** in the browser with DOMPurify; JS dependencies are vendored locally under `static/vendor/`.
 - Only the author role can **delete** its own messages.
 - `/healthz` is the minimal public liveness check and returns only `{ "status": "ok" }`.
@@ -328,10 +332,13 @@ request contains only the exact message body and original `message_key`; the
 Worker constructs `Authorization: Bearer ...` only for delivery. The outbox
 uses atomic replacement and best-effort owner-only permissions, accepts at
 most 100 entries and 1 MiB, removes an entry only after a confirmed 2xx
-response, retains it after network/5xx failures, and moves permanent 4xx
-failures (including `E_BRIDGE_IDEMPOTENCY_CONFLICT`) to a failed quarantine.
-Malformed or secret-bearing outbox files are quarantined rather than silently
-overwritten.
+response, and retains network, HTTP 408, HTTP 425, HTTP 429, and HTTP 5xx
+failures for retry with the same `message_key`. It honors bounded
+`Retry-After` guidance when available and otherwise uses bounded backoff,
+without blocking normal polling. Permanent 3xx/4xx message-level failures
+(including `E_BRIDGE_IDEMPOTENCY_CONFLICT`) move to failed quarantine rather
+than retrying forever. Malformed or secret-bearing outbox files are quarantined
+rather than silently overwritten.
 
 Every REST and SSE `MessageOut` includes `typed_integrity`: `VALID`,
 `NOT_APPLICABLE`, or `INVALID`. A malformed persisted typed row keeps its
@@ -341,6 +348,56 @@ must not interpret that Markdown as a fallback command. Typed envelopes are
 limited to 65,536 normalized UTF-8 JSON bytes; the exact limit is accepted and
 larger submissions return HTTP 413 with
 `E_BRIDGE_TYPED_PAYLOAD_TOO_LARGE` without creating a database or SSE event.
+
+### Canonical typed-message summary
+
+This table is the documentation summary of the current `bridge_protocol.models`
+schema. It describes Bridge coordination only; none of these kinds grants
+ForgeLoop authority.
+
+| Kind | Direction | Reply required | ForgeLoop authority? |
+|---|---|---:|---:|
+| `TASK_REQUEST` | Engineer → Worker | No protocol requirement | No |
+| `STATUS_UPDATE` | Either | No | No |
+| `DECISION_REQUEST` | Either | Yes | No |
+| `DECISION_RESPONSE` | Opposite role | No | No |
+| `DECISION_NOTICE` | Either | No | No |
+| `BLOCKER` | Either | No | No |
+| `REVIEW_RESULT` | Engineer → Worker normally | No | No |
+| `CONTROL_NOTICE` | Either | No | No |
+| `HANDOFF_NOTICE` | Either | No | No |
+| `VERIFICATION_REPORT` | Either | No | No |
+| `ATTESTATION_REPORT` | Either | No | No |
+
+`VERIFICATION_REPORT` and `ATTESTATION_REPORT` are copied reports/references,
+not canonical proof. `DECISION_REQUEST` defaults to `expects_reply: true`;
+`DECISION_RESPONSE` and `DECISION_NOTICE` must not expect a reply.
+
+### Error layers and retry semantics
+
+HTTP transport statuses, Bridge validation errors, and ForgeLoop canonical
+reason codes are separate namespaces:
+
+| Layer | Examples | Delivery meaning |
+|---|---|---|
+| HTTP transport | `408`, `425`, `429`, `500`, `502`, `503`, `504` | Temporary backpressure or server failure; retain the exact request/key and retry with `Retry-After` or bounded backoff. |
+| Bridge validation | `E_BRIDGE_TYPED_SCHEMA_UNSUPPORTED`, `E_BRIDGE_TYPED_PAYLOAD_INVALID`, `E_BRIDGE_TYPED_KIND_MISMATCH`, `E_BRIDGE_REPLY_NOT_FOUND`, `E_BRIDGE_REPLY_ROLE_INVALID`, `E_BRIDGE_REPLY_KIND_INVALID`, `E_BRIDGE_CORRELATION_MISMATCH`, `E_BRIDGE_IDEMPOTENCY_CONFLICT`, `E_BRIDGE_CANONICAL_REF_INVALID`, `E_BRIDGE_PERSISTED_TYPED_INVALID`, `E_BRIDGE_TYPED_PAYLOAD_TOO_LARGE` | Permanent message/API integrity or contract result; do not blindly retry. |
+| ForgeLoop canonical | `E_WORKSPACE_BINDING_MISMATCH`, `E_HANDOFF_TAMPERED`, `E_RESPONSIBILITY_SCOPE_VIOLATION`, `E_VERIFICATION_SCOPE_STALE`, `E_ATTESTATION_SIGNATURE_INVALID` | Copied canonical state/reason code; Bridge does not interpret or resolve it. |
+
+HTTP 429 is Bridge transport backpressure, not a ForgeLoop task failure or
+`BLOCKED` state. Bridge POST retry delivers a message; ForgeLoop durable-action
+retry may repeat an external side effect. They are not equivalent. A
+`COMMIT_UNKNOWN` canonical action remains a hard stop and must never be retried
+because of this transport policy.
+
+### Documentation ownership
+
+- `README.md`: quick start, security, API, typed-protocol summary, and prompt usage.
+- `FORGELOOPBRIDGE_CURRENT_FORGELOOP_SYNC_UPDATE_PLAN.md`: current ForgeLoop compatibility and authority boundary.
+- `examples/AUTONOMY.md`: shared agent operating contract and hard stops.
+- `CHANGELOG.md`: release history.
+- `FORGELOOPBRIDGE_FORGELOOP_1_5_UPDATE_PLAN.md`, `improves.md`, and
+  `docs/superpowers/` are historical planning records, not current operating instructions.
 
 ---
 
@@ -582,6 +639,13 @@ Mandatory workflow for every instruction from the Engineer:
    typed schemas or kinds must remain operator-visible and must not be treated
    as task commands.
 
+   For outbound typed delivery, HTTP 408, 425, 429, and 5xx are transient
+   Bridge transport backpressure/failures: retain the exact request and key,
+   honor bounded `Retry-After` guidance or backoff, and continue normal polling.
+   Other 3xx/4xx responses are permanent message rejection and must not be
+   blindly retried. This transport retry rule is independent from ForgeLoop
+   durable-action handling; `COMMIT_UNKNOWN` remains a canonical hard stop.
+
    Use `TASK_REQUEST`, `STATUS_UPDATE`, `DECISION_REQUEST`,
    `DECISION_RESPONSE`, `DECISION_NOTICE`, `BLOCKER`, `REVIEW_RESULT`, `CONTROL_NOTICE`,
    `HANDOFF_NOTICE`, `VERIFICATION_REPORT`, and `ATTESTATION_REPORT` as
@@ -801,7 +865,20 @@ Engineer posts review decision / next task on Bridge
 
 ## API
 
-All message endpoints prefer a valid token via the `Authorization: Bearer <token>` header. The legacy `?token=` query parameter remains only for backward compatibility with non-browser clients and is deprecated. The role (`engineer`/`worker`) is derived from the token.
+All message endpoints prefer a valid token via the `Authorization: Bearer <token>` header. Legacy query/body token forms remain only for backward compatibility with non-browser clients and are deprecated; official examples use the header only. The role (`engineer`/`worker`) is derived from the token.
+
+### Endpoint contract at a glance
+
+| Endpoint | Authentication | Limits / recovery | Result |
+|---|---|---|---|
+| `GET /healthz` | Public | None | Minimal liveness status |
+| `GET /api/status` | Public | None | Activity metadata and Bridge capabilities; no message content |
+| `GET /api/whoami` | Bearer preferred; legacy query token accepted | None | Authenticated role |
+| `GET /api/messages` | Bearer preferred; legacy query token accepted | `after_id`, `before_id`, `latest`, and `limit` pagination | Authenticated message pages |
+| `POST /api/messages` | Bearer preferred; legacy body token accepted | Per-role posting budget; 429 includes `Retry-After` | Created or idempotently replayed message |
+| `DELETE /api/messages/{id}` | Bearer preferred; legacy query token accepted | Author role only | Deleted message ID |
+| `POST /api/stream-ticket` | Bearer header | Independent per-role ticket budget; 429 includes `Retry-After` | Short-lived role-bound ticket |
+| `GET /api/stream?ticket=...` | Short-lived ticket; legacy query token for non-browser clients | Bounded subscriber queue; overflow closes stream and requires REST reconciliation | SSE `MessageOut` events |
 
 ### `GET /api/messages`
 
@@ -840,7 +917,7 @@ Query parameters:
 {
   "content": "## Task auth-service\n- Implement JWT authentication\n- Follow the advertised ForgeLoop capabilities",
   "task_id": "auth-service",
-  "message_type": "TASK",
+  "message_type": "BLOCKED",
   "action_id": "action-publish-image",
   "approval_id": "approval-publish-image",
   "next_action": "REQUEST_ACTION_APPROVAL",
@@ -850,7 +927,6 @@ Query parameters:
     "kind": "BLOCKER",
     "message_key": "worker-01J8Y9J5J1S7X2A8QZJ6A6W0R4",
     "correlation_id": "release-publication",
-    "reply_to_id": 418,
     "expects_reply": false,
     "payload": {
       "kind": "BLOCKER",
@@ -896,7 +972,15 @@ not check whether an action or approval exists, is current, authorized, stale,
 verified, or allowed by policy. It exposes no ForgeLoop mutation endpoint and
 never accepts authority secrets.
 
-Rate limited (default 30/min per role).
+Rate limited (default 30/min per role). When the posting budget is exhausted,
+the server returns HTTP 429 with a bounded integer `Retry-After` header. This
+is temporary Bridge transport backpressure, not a task failure.
+
+POST response classes are: 2xx for accepted or idempotently replayed content;
+401 for authentication failure; 409 for a message-key integrity conflict;
+413 for an oversized typed envelope; 422 for typed validation or reply-linkage
+failure; 429 for temporary rate limiting with `Retry-After`; and 5xx for a
+server failure that a sender may retry with the same typed request/key.
 
 Typed submission rules: the authenticated role is derived only from the token;
 client payloads cannot claim `sender_role`. `reply_to_id` must reference an
@@ -932,6 +1016,10 @@ role-bound ticket for a browser EventSource connection:
 { "ticket": "…", "expires_in": 30 }
 ```
 
+Ticket issuance has its own per-role rate limit. When that budget is exhausted,
+the server returns HTTP 429 with a bounded integer `Retry-After` header; this
+limit is independent from message posting.
+
 ### `GET /api/stream?ticket=...`
 
 Server-Sent Events (SSE) stream of new messages in real time with keepalives.
@@ -941,7 +1029,9 @@ and only authorize this stream. Non-browser clients may continue using the legac
 from access logs. Emits serialized `MessageOut` JSON payloads. Every subscriber
 has bounded buffering; queue overflow explicitly closes the affected stream.
 The browser enters polling mode, reconciles through `after_id`, and requests a
-fresh SSE ticket before returning to live mode.
+fresh SSE ticket before returning to live mode. This inbound SSE recovery is
+separate from outbound typed POST retry: SSE uses REST `after_id`, while a
+typed POST retry preserves its original `message_key` and exact request body.
 
 ### `GET /healthz`
 
@@ -960,7 +1050,7 @@ also advertises the Bridge transport contract:
 
 ```json
 {
-  "bridge_api_version": "2.1.1",
+  "bridge_api_version": "2.1.2",
   "typed_message_versions": [1],
   "typed_features": {
     "idempotency": true,

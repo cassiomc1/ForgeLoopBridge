@@ -4,7 +4,10 @@ Minimal example of how the Worker can monitor ForgeLoopBridge.
 This script is a transport adapter. When an instruction is received, invoke
 your Worker agent/harness (e.g. OpenCode, Cursor, or local agent). Typed
 outbound messages are persisted without authentication material, replayed
-before normal polling, and quarantined when delivery is permanently rejected.
+before normal polling, and quarantined only when delivery is permanently
+rejected. HTTP 408, 425, 429, and 5xx responses remain pending with bounded
+backoff or `Retry-After` scheduling, so temporary Bridge backpressure is not a
+project failure.
 
 The Worker agent MUST use the current advertised ForgeLoop protocol/capability
 workflow:
@@ -38,6 +41,7 @@ cursor zero.
 
 import argparse
 import json
+import math
 import os
 import secrets
 import time
@@ -52,6 +56,14 @@ STATE_FILE = Path(__file__).parent / ".worker_last_seen"  # survives restarts
 OUTBOX_FILE = Path(__file__).parent / ".worker_typed_outbox.json"  # survives uncertain POSTs
 MAX_OUTBOX_ENTRIES = 100
 MAX_OUTBOX_BYTES = 1024 * 1024
+TRANSIENT_HTTP_STATUSES = frozenset({
+    408,  # Request Timeout
+    425,  # Too Early
+    429,  # Too Many Requests
+})
+MAX_RETRY_AFTER_SECONDS = 300.0
+MAX_RETRY_BACKOFF_SECONDS = 60.0
+MIN_RETRY_DELAY_SECONDS = 1.0
 OUTBOX_FORBIDDEN_KEYS = frozenset(
     {
         "accesstoken",
@@ -367,6 +379,43 @@ def _contains_forbidden_outbox_data(value) -> bool:
     return _contains_forbidden_outbox_key(value) or _contains_forbidden_outbox_value(value)
 
 
+def classify_delivery_status(status_code: int) -> str:
+    """Classify an HTTP delivery result without collapsing transient 4xx responses."""
+    if status_code in TRANSIENT_HTTP_STATUSES or 500 <= status_code <= 599:
+        return "TRANSIENT"
+    if 300 <= status_code <= 499:
+        return "PERMANENT"
+    return "UNKNOWN"
+
+
+def parse_retry_after(response) -> float | None:
+    """Parse a bounded delta-seconds Retry-After response header."""
+    headers = getattr(response, "headers", {}) or {}
+    raw = headers.get("Retry-After")
+    if raw is None:
+        raw = headers.get("retry-after")
+    if raw is None:
+        return None
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(seconds) or seconds < 0:
+        return None
+    return min(seconds, MAX_RETRY_AFTER_SECONDS)
+
+
+def _retry_delay(response, attempts: int) -> float:
+    retry_after = parse_retry_after(response)
+    if retry_after is not None:
+        # A zero header is valid, but keep the polling loop from becoming a hot retry loop.
+        return max(MIN_RETRY_DELAY_SECONDS, retry_after)
+    return min(
+        MAX_RETRY_BACKOFF_SECONDS,
+        max(MIN_RETRY_DELAY_SECONDS, float(2 ** min(max(attempts, 0), 6))),
+    )
+
+
 def _validate_outbox_entries(raw: dict) -> bool:
     for message_key, entry in raw.items():
         if not isinstance(message_key, str) or not isinstance(entry, dict):
@@ -379,6 +428,14 @@ def _validate_outbox_entries(raw: dict) -> bool:
             return False
         attempts = entry.get("attempts", 0)
         if isinstance(attempts, bool) or not isinstance(attempts, int) or attempts < 0:
+            return False
+        next_attempt_at = entry.get("next_attempt_at")
+        if next_attempt_at is not None and (
+            isinstance(next_attempt_at, bool)
+            or not isinstance(next_attempt_at, (int, float))
+            or not math.isfinite(next_attempt_at)
+            or next_attempt_at < 0
+        ):
             return False
         if _contains_forbidden_outbox_data(entry):
             return False
@@ -462,6 +519,7 @@ def _new_outbox_entry(request: dict) -> dict:
         "attempts": 0,
         "created_at": time.time(),
         "last_attempt_at": None,
+        "next_attempt_at": 0.0,
         "last_error": None,
     }
 
@@ -480,10 +538,29 @@ def _quarantine_outbox_entry(
     print(f"[outbox] permanently failed key {message_key}: {reason}")
 
 
-def _record_outbox_error(outbox: dict[str, dict], message_key: str, error: str) -> None:
+def _record_outbox_error(
+    outbox: dict[str, dict], message_key: str, error: str, *, next_attempt_at: float | None = None
+) -> None:
     entry = outbox[message_key]
     entry["last_error"] = error
+    if next_attempt_at is not None:
+        entry["next_attempt_at"] = next_attempt_at
     _save_typed_outbox(outbox)
+
+
+def _schedule_transient_retry(
+    outbox: dict[str, dict], message_key: str, error: str, response=None
+) -> float:
+    entry = outbox[message_key]
+    delay = _retry_delay(response, int(entry.get("attempts", 0)))
+    next_attempt_at = time.time() + delay
+    _record_outbox_error(
+        outbox,
+        message_key,
+        error,
+        next_attempt_at=next_attempt_at,
+    )
+    return next_attempt_at
 
 
 def _deliver_outbox_entry(message_key: str, outbox: dict[str, dict]) -> dict:
@@ -491,6 +568,7 @@ def _deliver_outbox_entry(message_key: str, outbox: dict[str, dict]) -> dict:
     request = entry["request"]
     entry["attempts"] = int(entry.get("attempts", 0)) + 1
     entry["last_attempt_at"] = time.time()
+    entry["next_attempt_at"] = None
     entry["last_error"] = None
     _save_typed_outbox(outbox)
 
@@ -502,7 +580,11 @@ def _deliver_outbox_entry(message_key: str, outbox: dict[str, dict]) -> dict:
             timeout=15,
         )
     except requests.RequestException as exc:
-        _record_outbox_error(outbox, message_key, f"network failure: {exc.__class__.__name__}")
+        _schedule_transient_retry(
+            outbox,
+            message_key,
+            f"network failure: {exc.__class__.__name__}",
+        )
         raise
 
     status_code = response.status_code
@@ -510,10 +592,20 @@ def _deliver_outbox_entry(message_key: str, outbox: dict[str, dict]) -> dict:
         try:
             result = response.json()
         except (ValueError, requests.RequestException) as exc:
-            _record_outbox_error(outbox, message_key, f"invalid success response: {exc.__class__.__name__}")
+            _schedule_transient_retry(
+                outbox,
+                message_key,
+                f"invalid success response: {exc.__class__.__name__}",
+                response,
+            )
             raise
         if not isinstance(result, dict):
-            _record_outbox_error(outbox, message_key, "invalid success response: object expected")
+            _schedule_transient_retry(
+                outbox,
+                message_key,
+                "invalid success response: object expected",
+                response,
+            )
             raise ValueError("typed outbox success response must be a JSON object")
         outbox.pop(message_key, None)
         _save_typed_outbox(outbox)
@@ -531,12 +623,14 @@ def _deliver_outbox_entry(message_key: str, outbox: dict[str, dict]) -> dict:
     )
     if response_code:
         error = f"{error}: {response_code}"
-    if 300 <= status_code < 500:
+    classification = classify_delivery_status(status_code)
+    if classification == "PERMANENT":
         _quarantine_outbox_entry(outbox, message_key, entry, error)
         raise requests.HTTPError(f"Permanent typed outbox delivery failure: {error}", response=response)
 
-    _record_outbox_error(outbox, message_key, error)
-    raise requests.HTTPError(f"Transient typed outbox delivery failure: {error}", response=response)
+    _schedule_transient_retry(outbox, message_key, error, response)
+    failure_class = "Transient" if classification == "TRANSIENT" else "Unknown"
+    raise requests.HTTPError(f"{failure_class} typed outbox delivery failure: {error}", response=response)
 
 
 def retry_pending_typed_messages() -> int:
@@ -544,6 +638,9 @@ def retry_pending_typed_messages() -> int:
     outbox = _load_typed_outbox()
     delivered = 0
     for message_key in list(outbox):
+        next_attempt_at = outbox[message_key].get("next_attempt_at")
+        if next_attempt_at is not None and next_attempt_at > time.time():
+            continue
         try:
             _deliver_outbox_entry(message_key, outbox)
         except (requests.RequestException, OutboxLimitError, ValueError) as exc:
@@ -621,7 +718,6 @@ def post_status(
     reason_code: str | None = None,
 ):
     payload: dict = {
-        "token": WORKER_TOKEN,
         "content": content,
         "message_type": message_type,
     }

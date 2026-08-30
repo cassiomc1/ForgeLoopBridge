@@ -1,5 +1,11 @@
 # Post-PR #12 Final Reliability Corrections Implementation Plan
 
+> **HISTORICAL / COMPLETED IMPLEMENTATION RECORD.** This document records the
+> earlier post-PR #12 reliability work and is not the current operating
+> instruction or compatibility source of truth. See
+> `FORGELOOPBRIDGE_CURRENT_FORGELOOP_SYNC_UPDATE_PLAN.md` for current Bridge
+> behavior.
+
 > For agentic workers: use the executing-plans workflow to implement this plan task-by-task. Steps use checkbox syntax for tracking.
 
 Goal: Close the remaining SSE delivery and first-run Worker reliability gaps, add the requested small security hardening, and document actual ForgeLoopBridge behavior.

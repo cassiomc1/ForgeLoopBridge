@@ -46,6 +46,19 @@ Rules:
 - Reversible decisions may be taken unilaterally, but must be documented on the board
   afterwards (`### DECISION TAKEN – ...`).
 
+The human-readable decision headings map to typed coordination kinds when a
+typed envelope is used:
+
+```text
+DECISION NEEDED   -> DECISION_REQUEST
+DECISION RESOLVED -> DECISION_RESPONSE
+DECISION TAKEN    -> DECISION_NOTICE
+```
+
+The Markdown remains mandatory and readable, but headings are not machine
+authority when a typed envelope is present. `DECISION_NOTICE` records a
+unilateral project decision and does not expect a reply.
+
 ## ForgeLoop authority boundary
 
 Engineer and Worker may negotiate project decisions through the board, but
@@ -237,7 +250,23 @@ external attestation.
   keep its Markdown visible for diagnosis, do not parse it as a command, and
   do not advance the Worker cursor. Typed outbox retries preserve the exact
   request and key, keep authentication only in the delivery header, and
-  quarantine permanent failures.
+  quarantine permanent failures. HTTP 408, 425, 429, and 5xx delivery results
+  are transient Bridge transport backpressure/failures: retain the exact
+  request and `message_key`, honor bounded `Retry-After` or backoff, and do not
+  block normal polling. Other 3xx/4xx message rejections are permanent.
+
+### Bridge delivery retry is not ForgeLoop action retry
+
+Bridge POST retry only re-delivers the same coordination message with the same
+`message_key` and exact request body. It does not repeat a ForgeLoop mutation.
+ForgeLoop durable-action retry is a separate canonical decision that may repeat
+an external side effect. A temporary Bridge `429` is not a ForgeLoop blocker,
+while `COMMIT_UNKNOWN` remains a canonical hard stop and must never be retried.
+
+The example Worker authenticates delivery with the `Authorization: Bearer`
+header. It does not embed or persist the token in the status body or typed
+outbox request; the outbox may still contain sensitive project coordination and
+must be locally protected.
 - Never end your turn with a question addressed to a human.
 - Never output "please run X" or "the user should Y". Either do it yourself or
   negotiate it with the other agent on the board.

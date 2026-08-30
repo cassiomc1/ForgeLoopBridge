@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.1.2 - 2026-08-30
+
+- Treat HTTP 408, 425, 429, and 5xx typed-message delivery failures as
+  transient instead of quarantining them.
+- Honor bounded `Retry-After` guidance and defer pending outbox retries without
+  blocking normal Worker polling.
+- Add `Retry-After` to server-generated posting and SSE-ticket rate-limit
+  responses.
+- Remove redundant Worker token fields from official status POST bodies; Bearer
+  authentication remains the preferred delivery mechanism.
+- Refresh documentation to distinguish Bridge transport backpressure, Bridge
+  protocol errors, and canonical ForgeLoop blockers.
+
 ## 2.1.1 - 2026-08-30
 
 - Hardened typed Worker outbox delivery: no credentials in persisted requests,

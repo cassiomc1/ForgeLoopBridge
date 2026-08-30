@@ -207,6 +207,7 @@ async def test_stream_ticket_rate_limit_is_independent_from_post_limit(client, m
 
     assert first_ticket.status_code == 200
     assert second_ticket.status_code == 429
+    assert 1 <= int(second_ticket.headers["Retry-After"]) <= int(main.SSE_TICKET_RATE_WINDOW)
     assert first_post.status_code == 200
 
 
@@ -236,6 +237,28 @@ async def test_rate_limit(client, monkeypatch):
         codes.append(r.status_code)
     assert codes[:3] == [200, 200, 200]
     assert codes[3:] == [429, 429]
+
+
+async def test_post_rate_limit_reports_bounded_retry_after(client, monkeypatch):
+    monkeypatch.setattr(main, "RATE_LIMIT_POSTS", 1)
+    monkeypatch.setattr(main, "RATE_LIMIT_WINDOW", 60)
+
+    assert (await post(client, "first", HEADERS_WORKER)).status_code == 200
+    response = await post(client, "second", HEADERS_WORKER)
+
+    assert response.status_code == 429
+    assert 1 <= int(response.headers["Retry-After"]) <= 60
+
+
+async def test_sse_ticket_rate_limit_reports_bounded_retry_after(client, monkeypatch):
+    monkeypatch.setattr(main, "SSE_TICKET_RATE_LIMIT", 1)
+    monkeypatch.setattr(main, "SSE_TICKET_RATE_WINDOW", 60)
+
+    assert (await client.post("/api/stream-ticket", headers=HEADERS_WORKER)).status_code == 200
+    response = await client.post("/api/stream-ticket", headers=HEADERS_WORKER)
+
+    assert response.status_code == 429
+    assert 1 <= int(response.headers["Retry-After"]) <= 60
 
 
 # ─── Frontend ─────────────────────────────────────────────────────────────────
@@ -1062,7 +1085,7 @@ async def test_status_advertises_bridge_typed_schema(client):
     response = await client.get("/api/status")
 
     assert response.status_code == 200
-    assert response.json()["bridge_api_version"] == "2.1.1"
+    assert response.json()["bridge_api_version"] == "2.1.2"
     assert response.json()["typed_message_versions"] == [1]
     assert response.json()["typed_features"] == {
         "idempotency": True,

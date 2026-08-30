@@ -1,4 +1,8 @@
+import json
 from pathlib import Path
+
+from bridge_protocol.models import TYPED_MESSAGE_KINDS
+from bridge_protocol.validation import parse_typed_envelope
 
 ROOT = Path(__file__).resolve().parents[1]
 README = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -199,7 +203,7 @@ def test_historical_plan_is_marked_superseded():
     historical = (ROOT / "FORGELOOPBRIDGE_FORGELOOP_1_5_UPDATE_PLAN.md").read_text(
         encoding="utf-8"
     )
-    assert "Historical plan" in historical
+    assert "HISTORICAL / SUPERSEDED" in historical
     assert "FORGELOOPBRIDGE_CURRENT_FORGELOOP_SYNC_UPDATE_PLAN.md" in historical
 
 
@@ -314,8 +318,9 @@ def test_readme_documents_architecture_correct_banner_and_reported_metadata():
 
 def test_pyproject_version_matches_app_version():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'version = "2.1.1"' in pyproject
+    assert 'version = "2.1.2"' in pyproject
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "## 2.1.2 - 2026-08-30" in changelog
     assert "## 2.1.1 - 2026-08-30" in changelog
 
 
@@ -325,7 +330,7 @@ def test_current_sync_record_documents_stream_close_before_rest_recovery():
     )
     assert "explicitly closes the affected stream" in current
     assert "fresh SSE ticket" in current
-    assert "bridge_api_version: 2.1.1" in current
+    assert "bridge_api_version: 2.1.2" in current
 
 
 def test_readme_documents_realtime_topology_and_worker_start_policy():
@@ -352,7 +357,71 @@ def test_readme_documents_typed_bridge_protocol_contract():
     assert "typed_integrity" in text
     assert "e_bridge_persisted_typed_invalid" in text
     assert "e_bridge_typed_payload_too_large" in text
-    assert "permanent 4xx" in text
+    assert "permanent 3xx/4xx" in text
     assert "atomic replacement" in text
     assert "transport delivery" in text
     assert "durable-action idempotency" in text
+
+
+def test_current_docs_document_every_typed_kind_from_schema():
+    for kind in TYPED_MESSAGE_KINDS:
+        assert f"`{kind}`" in README
+
+
+def test_current_docs_distinguish_transient_transport_from_permanent_rejection():
+    text = f"{README}\n{AUTONOMY}".lower()
+    for required in (
+        "408",
+        "425",
+        "429",
+        "retry-after",
+        "same `message_key`",
+        "transient",
+        "permanent",
+        "bridge transport backpressure",
+        "not a forgeloop task failure",
+        "e_bridge_idempotency_conflict",
+    ):
+        assert required in text
+    assert "all 4xx" not in text
+
+
+def test_current_docs_separate_bridge_and_forgeloop_retry_semantics():
+    text = f"{README}\n{AUTONOMY}".lower()
+    assert "bridge post retry" in text
+    assert "forgeloop durable-action retry" in text
+    assert "they are not equivalent" in text
+    assert "commit_unknown" in text
+    assert "must never be retried" in text
+
+
+def test_worker_status_example_uses_bearer_without_body_token():
+    status_section = WORKER_POLL.split("def post_status", 1)[1].split(
+        "def fetch_messages_page", 1
+    )[0]
+    assert '"token": WORKER_TOKEN' not in status_section
+    assert '"Authorization": f"Bearer {WORKER_TOKEN}"' in status_section
+
+
+def test_readme_post_example_matches_typed_schema():
+    api_section = README.split("### `POST /api/messages`", 1)[1].split(
+        "### `DELETE /api/messages/{id}`", 1
+    )[0]
+    example = json.loads(api_section.split("```json", 1)[1].split("```", 1)[0])
+    envelope = parse_typed_envelope(example["typed"])
+    assert example["message_type"] == "BLOCKED"
+    assert envelope.kind == "BLOCKER"
+    assert "token" not in example
+
+
+def test_historical_and_planning_documents_are_not_current_instructions():
+    historical_plan = (ROOT / "FORGELOOPBRIDGE_FORGELOOP_1_5_UPDATE_PLAN.md").read_text(
+        encoding="utf-8"
+    )
+    improvements = (ROOT / "improves.md").read_text(encoding="utf-8")
+    implementation_record = (
+        ROOT / "docs/superpowers/plans/2026-08-26-post-pr12-final-reliability-corrections.md"
+    ).read_text(encoding="utf-8")
+    assert "HISTORICAL / SUPERSEDED" in historical_plan
+    assert "ARCHIVE / HISTORICAL RECORD" in improvements
+    assert "HISTORICAL / COMPLETED IMPLEMENTATION RECORD" in implementation_record

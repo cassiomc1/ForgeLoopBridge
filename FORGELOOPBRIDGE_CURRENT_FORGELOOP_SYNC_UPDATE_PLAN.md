@@ -131,7 +131,7 @@ artifacts, or treat Bridge agreement as trusted adapter evidence.
 
 ForgeLoopBridge additionally exposes **Bridge Typed Message Schema v1**. This
 is separate from ForgeLoop Protocol v1 and is advertised as
-`bridge_api_version: 2.1.1` with `typed_message_versions: [1]` and the
+`bridge_api_version: 2.1.2` with `typed_message_versions: [1]` and the
 `typed_features` capability map in the public status response. Typed messages
 retain mandatory Markdown content and carry typed coordination intent,
 correlation/reply metadata, idempotency keys, and opaque canonical references.
@@ -156,8 +156,9 @@ normalized UTF-8 JSON bytes before database insertion or SSE broadcast.
 The example Worker's typed outbox stores only the exact request and stable
 message key, never authentication, cookie, SSE-ticket, signing, or OIDC
 material. It atomically replaces a bounded file, replays it before polling,
-retains network/5xx failures, and quarantines permanent 4xx failures and
-corrupt outbox files.
+retains network, 408, 425, 429, and 5xx failures, honors bounded
+`Retry-After`/backoff without blocking normal polling, and quarantines only
+permanent transport/protocol rejection and corrupt outbox files.
 
 ## Current coordination surfaces
 
@@ -179,6 +180,10 @@ corrupt outbox files.
 - The public status response advertises `idempotency`, `correlation`,
   `reply_linkage`, `canonical_refs`, `outbox_safe_retry`, and
   `typed_integrity_status` as Bridge transport features.
+- Posting and SSE-ticket rate-limit responses use HTTP 429 with a bounded
+  integer `Retry-After` value. A 429 is Bridge transport backpressure, not a
+  ForgeLoop task failure or canonical blocker; clients retain the original
+  typed `message_key` when retrying delivery.
 
 ## Verification expectation
 
