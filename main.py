@@ -58,7 +58,7 @@ if len(ENGINEER_TOKEN) < 16 or len(WORKER_TOKEN) < 16:
     )
 
 MAX_PAGE_SIZE = 1000
-BRIDGE_API_VERSION = "2.1.1"
+BRIDGE_API_VERSION = "2.1.2"
 TYPED_MESSAGE_VERSIONS = [1]
 TYPED_FEATURES = {
     "idempotency": True,
@@ -126,6 +126,16 @@ _sse_ticket_timestamps: dict[str, deque[float]] = defaultdict(deque)
 _sse_ticket_rl_lock = asyncio.Lock()
 
 
+def _retry_after_seconds(window: deque[float], now: float, window_seconds: float) -> int:
+    """Return bounded integer delta-seconds for a full sliding-window budget."""
+    if not window:
+        return 1
+    elapsed = max(0.0, now - window[0])
+    remaining = max(0.0, window_seconds - elapsed)
+    ceiling = max(1, math.ceil(window_seconds))
+    return min(ceiling, max(1, math.ceil(remaining)))
+
+
 async def check_rate_limit(key: str) -> None:
     now = time.time()
     async with _rl_lock:
@@ -133,7 +143,13 @@ async def check_rate_limit(key: str) -> None:
         while window and now - window[0] > RATE_LIMIT_WINDOW:
             window.popleft()
         if len(window) >= RATE_LIMIT_POSTS:
-            raise HTTPException(status_code=429, detail="Rate limit exceeded, slow down")
+            raise HTTPException(
+                status_code=429,
+                detail="Rate limit exceeded, slow down",
+                headers={
+                    "Retry-After": str(_retry_after_seconds(window, now, RATE_LIMIT_WINDOW))
+                },
+            )
         window.append(now)
 
 
@@ -144,7 +160,15 @@ async def check_sse_ticket_rate_limit(role: str) -> None:
         while window and now - window[0] > SSE_TICKET_RATE_WINDOW:
             window.popleft()
         if len(window) >= SSE_TICKET_RATE_LIMIT:
-            raise HTTPException(status_code=429, detail="Rate limit exceeded, slow down")
+            raise HTTPException(
+                status_code=429,
+                detail="Rate limit exceeded, slow down",
+                headers={
+                    "Retry-After": str(
+                        _retry_after_seconds(window, now, SSE_TICKET_RATE_WINDOW)
+                    )
+                },
+            )
         window.append(now)
 
 

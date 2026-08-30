@@ -1,6 +1,6 @@
 [project]
 name = "forgeloopbridge"
-version = "2.1.1"
+version = "2.1.2"
 description = "Minimalist Markdown communication board between Engineer and Worker agents"
 readme = "README.md"
 requires-python = ">=3.12"

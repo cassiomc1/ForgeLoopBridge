@@ -1,6 +1,10 @@
 # ForgeLoopBridge — ForgeLoop 1.5 Integration Update Plan
 
-> Historical plan: implemented for ForgeLoop 1.5-era synchronization.
+> **HISTORICAL / SUPERSEDED.** This plan records an earlier ForgeLoop 1.5-era
+> synchronization stage and is not a current operating instruction.
+> Implemented planning material remains useful for project history, but current
+> compatibility guidance belongs to
+> `FORGELOOPBRIDGE_CURRENT_FORGELOOP_SYNC_UPDATE_PLAN.md`.
 > Superseded for current ForgeLoop integration work by
 > `FORGELOOPBRIDGE_CURRENT_FORGELOOP_SYNC_UPDATE_PLAN.md`.
 

@@ -1,5 +1,6 @@
 import json
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -140,7 +141,6 @@ def test_post_status_forwards_coordination_references(monkeypatch):
     )
 
     assert captured["json"] == {
-        "token": worker_poll.WORKER_TOKEN,
         "content": "receipt",
         "message_type": "STATUS",
         "task_id": "task-a",
@@ -149,6 +149,38 @@ def test_post_status_forwards_coordination_references(monkeypatch):
         "next_action": "REQUEST_ACTION_APPROVAL",
         "reason_code": "E_ACTION_APPROVAL_REQUIRED",
     }
+    assert captured["headers"]["Authorization"] == f"Bearer {worker_poll.WORKER_TOKEN}"
+
+
+@pytest.mark.parametrize(
+    ("status_code", "classification"),
+    (
+        (408, "TRANSIENT"),
+        (425, "TRANSIENT"),
+        (429, "TRANSIENT"),
+        (500, "TRANSIENT"),
+        (503, "TRANSIENT"),
+        (300, "PERMANENT"),
+        (400, "PERMANENT"),
+        (401, "PERMANENT"),
+        (403, "PERMANENT"),
+        (409, "PERMANENT"),
+        (413, "PERMANENT"),
+        (422, "PERMANENT"),
+        (200, "UNKNOWN"),
+    ),
+)
+def test_delivery_status_classification_is_explicit(status_code, classification):
+    assert worker_poll.classify_delivery_status(status_code) == classification
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    (("45", 45.0), ("9999", 300.0), ("0", 0.0), ("bad", None), ("-1", None), ("nan", None)),
+)
+def test_parse_retry_after_is_finite_and_bounded(raw, expected):
+    response = type("FakeResponse", (), {"headers": {"Retry-After": raw}})()
+    assert worker_poll.parse_retry_after(response) == expected
 
 
 @pytest.mark.parametrize(
@@ -344,11 +376,97 @@ def test_retry_pending_typed_messages_preserves_uncertain_failures(tmp_path, mon
     assert pending["worker-retry-preserve"]["request"] == request
     assert pending["worker-retry-preserve"]["attempts"] == 1
     assert pending["worker-retry-preserve"]["last_error"]
+    assert pending["worker-retry-preserve"]["next_attempt_at"] > time.time()
+
+
+@pytest.mark.parametrize("status_code", (408, 425, 429))
+def test_transient_client_statuses_remain_pending(tmp_path, monkeypatch, status_code):
+    outbox_file = tmp_path / "outbox.json"
+    monkeypatch.setattr(worker_poll, "OUTBOX_FILE", outbox_file)
+    key = f"worker-transient-{status_code}"
+    request = pending_request(key)
+    worker_poll._save_typed_outbox({key: worker_poll._new_outbox_entry(request)})
+    now = 1_000.0
+    monkeypatch.setattr(worker_poll.time, "time", lambda: now)
+
+    response_type = type(
+        "FakeResponse",
+        (),
+        {
+            "status_code": status_code,
+            "headers": {"Retry-After": "45"} if status_code == 429 else {},
+            "json": lambda self: {"error": {"code": "E_TEMPORARY"}},
+        },
+    )
+    calls = []
+
+    def fake_post(url, *, headers, json, timeout):
+        calls.append(json)
+        return response_type()
+
+    monkeypatch.setattr(worker_poll.requests, "post", fake_post)
+
+    assert worker_poll.retry_pending_typed_messages() == 0
+    pending = worker_poll._load_typed_outbox()
+    assert pending[key]["request"] == request
+    assert pending[key]["next_attempt_at"] >= now + (45 if status_code == 429 else 1)
+    assert worker_poll._load_failed_outbox() == {}
+    assert calls == [request]
+
+
+def test_retry_pending_skips_future_next_attempt(tmp_path, monkeypatch):
+    outbox_file = tmp_path / "outbox.json"
+    monkeypatch.setattr(worker_poll, "OUTBOX_FILE", outbox_file)
+    key = "worker-future-retry"
+    entry = worker_poll._new_outbox_entry(pending_request(key))
+    entry["next_attempt_at"] = time.time() + 300
+    worker_poll._save_typed_outbox({key: entry})
+    calls = []
+    monkeypatch.setattr(worker_poll.requests, "post", lambda *args, **kwargs: calls.append(True))
+
+    assert worker_poll.retry_pending_typed_messages() == 0
+    assert calls == []
+    assert worker_poll._load_typed_outbox()[key]["attempts"] == 0
+
+
+def test_retry_pending_delivers_when_due(tmp_path, monkeypatch):
+    outbox_file = tmp_path / "outbox.json"
+    monkeypatch.setattr(worker_poll, "OUTBOX_FILE", outbox_file)
+    key = "worker-due-retry"
+    entry = worker_poll._new_outbox_entry(pending_request(key))
+    entry["next_attempt_at"] = time.time() - 1
+    worker_poll._save_typed_outbox({key: entry})
+
+    class FakeResponse:
+        status_code = 200
+        headers = {}
+
+        def json(self):
+            return {"id": 20}
+
+    calls = []
+
+    def fake_post(url, *, headers, json, timeout):
+        calls.append(json)
+        return FakeResponse()
+
+    monkeypatch.setattr(worker_poll.requests, "post", fake_post)
+
+    assert worker_poll.retry_pending_typed_messages() == 1
+    assert calls == [pending_request(key)]
+    assert worker_poll._load_typed_outbox() == {}
 
 
 @pytest.mark.parametrize(
     ("status_code", "error_code"),
-    ((400, "E_BRIDGE_TYPED_PAYLOAD_INVALID"), (409, "E_BRIDGE_IDEMPOTENCY_CONFLICT")),
+    (
+        (400, "E_BRIDGE_TYPED_PAYLOAD_INVALID"),
+        (401, "E_AUTHENTICATION_FAILED"),
+        (403, "E_FORBIDDEN"),
+        (409, "E_BRIDGE_IDEMPOTENCY_CONFLICT"),
+        (413, "E_BRIDGE_TYPED_PAYLOAD_TOO_LARGE"),
+        (422, "E_BRIDGE_TYPED_PAYLOAD_INVALID"),
+    ),
 )
 def test_permanent_typed_outbox_failures_are_quarantined_and_not_retried(
     tmp_path, monkeypatch, status_code, error_code
