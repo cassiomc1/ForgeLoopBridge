@@ -60,6 +60,31 @@ def test_worker_poller_uses_capability_discovery_and_safe_dispatch_language():
     assert ".worker_last_seen" in text
 
 
+def test_worker_poller_documents_all_forgeloop_164_boundaries():
+    text = WORKER_POLL.lower()
+    for capability in (
+        "workspacebinding",
+        "canonicalhandoffs",
+        "responsibilityconstraints",
+        "differentialverificationscope",
+        "codeattestation",
+        "trusted scoped checker",
+        "not_verified",
+        "verified",
+        "attested",
+    ):
+        assert capability in text
+    for name in (
+        "WORKSPACE_BOUNDARY_REASON_CODES",
+        "HANDOFF_REASON_CODES",
+        "RESPONSIBILITY_BOUNDARY_REASON_CODES",
+        "VERIFICATION_SCOPE_REASON_CODES",
+        "ATTESTATION_BOUNDARY_REASON_CODES",
+        "REVISION_PROVIDER_REASON_CODES",
+    ):
+        assert name in WORKER_POLL
+
+
 def test_post_status_forwards_coordination_references(monkeypatch):
     captured = {}
 
@@ -94,6 +119,100 @@ def test_post_status_forwards_coordination_references(monkeypatch):
         "next_action": "REQUEST_ACTION_APPROVAL",
         "reason_code": "E_ACTION_APPROVAL_REQUIRED",
     }
+
+
+@pytest.mark.parametrize(
+    ("reason_code", "category"),
+    (
+        ("E_WORKSPACE_BINDING_MISMATCH", "workspace"),
+        ("E_HANDOFF_TAMPERED", "handoff"),
+        ("E_RESPONSIBILITY_SCOPE_VIOLATION", "responsibility"),
+        ("E_VERIFICATION_SCOPE_STALE", "verification_scope"),
+        ("E_ATTESTATION_SIGNATURE_INVALID", "attestation"),
+        ("E_REVISION_PROVIDER_UNAVAILABLE", "revision_provider"),
+    ),
+)
+def test_boundary_classifier_uses_explicit_reason_code_only(reason_code, category):
+    assert worker_poll.classify_reason_code({"reason_code": reason_code}) == category
+    assert worker_poll.classify_reason_code({"content": reason_code}) is None
+
+
+def test_typed_dispatch_uses_kind_and_keeps_legacy_fallback(capsys):
+    typed = {
+        "typed": {
+            "schema_version": 1,
+            "kind": "CONTROL_NOTICE",
+            "payload": {"kind": "CONTROL_NOTICE"},
+        },
+        "content": "A heading that must not be parsed as a command.",
+    }
+
+    assert worker_poll.dispatch_typed_message(typed) == "CONTROL_NOTICE"
+    assert worker_poll.dispatch_typed_message({"content": "legacy"}) is None
+    assert "typed control_notice" in capsys.readouterr().out.lower()
+
+
+def test_typed_dispatch_rejects_unsupported_schema_without_fallback():
+    with pytest.raises(worker_poll.UnsupportedTypedMessageVersion):
+        worker_poll.dispatch_typed_message(
+            {
+                "typed": {
+                    "schema_version": 2,
+                    "kind": "STATUS_UPDATE",
+                    "payload": {"kind": "STATUS_UPDATE"},
+                }
+            }
+        )
+
+
+def test_post_typed_message_persists_key_until_confirmation(tmp_path, monkeypatch):
+    monkeypatch.setattr(worker_poll, "OUTBOX_FILE", tmp_path / "outbox.json")
+    captured = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"id": 17, "typed": captured["json"]["typed"]}
+
+    def fake_post(url, *, headers, json, timeout):
+        captured.update({"url": url, "headers": headers, "json": json, "timeout": timeout})
+        return FakeResponse()
+
+    monkeypatch.setattr(worker_poll.requests, "post", fake_post)
+
+    result = worker_poll.post_typed_message(
+        "Status",
+        "STATUS_UPDATE",
+        {"state": "IN_PROGRESS", "summary": "Running."},
+        message_key="worker-outbox-1",
+        correlation_id="cycle-1",
+    )
+
+    assert result["id"] == 17
+    assert captured["json"]["typed"]["message_key"] == "worker-outbox-1"
+    assert captured["json"]["typed"]["payload"]["kind"] == "STATUS_UPDATE"
+    assert worker_poll._load_typed_outbox() == {}
+
+
+def test_post_typed_message_keeps_key_after_uncertain_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(worker_poll, "OUTBOX_FILE", tmp_path / "outbox.json")
+
+    def fail_post(url, *, headers, json, timeout):
+        raise worker_poll.requests.ConnectionError("network timeout")
+
+    monkeypatch.setattr(worker_poll.requests, "post", fail_post)
+
+    with pytest.raises(worker_poll.requests.ConnectionError):
+        worker_poll.post_typed_message(
+            "Status",
+            "STATUS_UPDATE",
+            {"state": "WAITING", "summary": "Waiting."},
+            message_key="worker-outbox-2",
+        )
+
+    assert "worker-outbox-2" in worker_poll._load_typed_outbox()
 
 
 def test_commit_unknown_is_a_hard_stop(capsys):

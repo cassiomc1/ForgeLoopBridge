@@ -33,6 +33,52 @@ def test_readme_feature_detects_verification_execution_isolation():
     assert "observabilityStability" in README
 
 
+def test_readme_feature_detects_all_forgeloop_164_capabilities():
+    for capability in (
+        "workspaceBinding",
+        "canonicalHandoffs",
+        "responsibilityConstraints",
+        "differentialVerificationScope",
+        "codeAttestation",
+    ):
+        assert capability in README
+
+
+def test_readme_documents_optional_extension_trust_boundaries():
+    text = f"{README}\n{AUTONOMY}".lower()
+    for required in (
+        "not delegation",
+        "verification scope is not evidence",
+        "verification scope is not revision coverage",
+        "verified",
+        "attested",
+        "external signature",
+        "workspace mismatch",
+        "responsibility",
+        "trusted scoped checker",
+        "auto",
+        "full",
+        "changed",
+        "claimed",
+        "revision provider",
+    ):
+        assert required in text
+
+
+def test_readme_rejects_new_bridge_authority_claims():
+    text = f"{README}\n{AUTONOMY}".lower()
+    for forbidden in (
+        "bridge validates workspace binding",
+        "bridge validates handoff",
+        "bridge calculates verification scope",
+        "bridge can attest code",
+        "bridge approval creates attested status",
+        "engineer approval overrides responsibility scope",
+        "package 1.6.4 implies feature support",
+    ):
+        assert forbidden not in text
+
+
 def test_readme_documents_verification_isolation_fail_closed():
     text = README.lower()
     assert "e_verification_isolation_unavailable" in text
@@ -178,6 +224,26 @@ def test_current_sync_record_documents_verification_isolation():
     assert "execution cwd" in text
 
 
+def test_current_sync_record_is_current_for_forgeloop_164():
+    current = (ROOT / "FORGELOOPBRIDGE_CURRENT_FORGELOOP_SYNC_UPDATE_PLAN.md").read_text(
+        encoding="utf-8"
+    )
+    for capability in (
+        "workspaceBinding",
+        "canonicalHandoffs",
+        "responsibilityConstraints",
+        "differentialVerificationScope",
+        "codeAttestation",
+    ):
+        assert capability in current
+    assert "Observed synchronization baseline: ForgeLoop package 1.6.4" in current
+    assert "package version" in current.lower()
+    assert "does not implement, validate, infer, or attest" in current
+    assert "trusted scoped checker" in current.lower()
+    assert "VERIFIED" in current
+    assert "ATTESTED" in current
+
+
 WORKER_POLL = (ROOT / "examples" / "worker_poll.py").read_text(encoding="utf-8")
 
 
@@ -247,7 +313,7 @@ def test_readme_documents_architecture_correct_banner_and_reported_metadata():
 
 def test_pyproject_version_matches_app_version():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'version = "2.0.0"' in pyproject
+    assert 'version = "2.1.0"' in pyproject
 
 
 def test_current_sync_record_documents_stream_close_before_rest_recovery():
@@ -267,3 +333,14 @@ def test_readme_documents_realtime_topology_and_worker_start_policy():
     assert ".worker_last_seen" in text
     assert "--start-mode now" in text
     assert "sse_ticket_rate_limit" in text
+
+
+def test_readme_documents_typed_bridge_protocol_contract():
+    text = README.lower()
+    assert "bridge typed message schema v1" in text
+    assert "typed_message_versions" in text
+    assert "correlation_id" in text
+    assert "reply_to_id" in text
+    assert "e_bridge_idempotency_conflict" in text
+    assert "transport delivery" in text
+    assert "durable-action idempotency" in text

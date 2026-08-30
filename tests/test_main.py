@@ -718,3 +718,241 @@ async def test_task_id_is_trimmed(client):
     )
     assert r.status_code == 200
     assert r.json()["task_id"] == "auth-feature"
+
+
+def typed_status(
+    message_key: str = "worker-status-1",
+    *,
+    correlation_id: str | None = None,
+    reply_to_id: int | None = None,
+    state: str = "IN_PROGRESS",
+) -> dict:
+    return {
+        "schema_version": 1,
+        "kind": "STATUS_UPDATE",
+        "message_key": message_key,
+        "correlation_id": correlation_id,
+        "reply_to_id": reply_to_id,
+        "expects_reply": False,
+        "payload": {"kind": "STATUS_UPDATE", "state": state, "summary": "Verification is running."},
+        "canonical_refs": [{"kind": "TASK", "ref": "task-typed"}],
+    }
+
+
+async def test_typed_message_roundtrips_through_rest_and_sse(client):
+    queue = main.create_sse_queue()
+    main._subscribers.add(queue)
+    try:
+        response = await client.post(
+            "/api/messages",
+            headers=HEADERS_ENGINEER,
+            json={
+                "content": "Typed status",
+                "message_type": "STATUS",
+                "task_id": "task-typed",
+                "typed": typed_status(correlation_id="verification-cycle-3"),
+            },
+        )
+        assert response.status_code == 200
+        created = response.json()
+        assert created["typed"]["kind"] == "STATUS_UPDATE"
+        assert created["typed"]["payload"]["summary"] == "Verification is running."
+
+        event = await asyncio.wait_for(queue.get(), timeout=1)
+        assert event.model_dump(mode="json")["typed"] == created["typed"]
+
+        restored = await client.get(
+            "/api/messages",
+            params={"typed_kind": "status_update", "correlation_id": "verification-cycle-3"},
+            headers=HEADERS_WORKER,
+        )
+        assert restored.status_code == 200
+        assert restored.json() == [created]
+    finally:
+        main._subscribers.discard(queue)
+
+
+async def test_malformed_persisted_typed_data_fails_closed_but_keeps_markdown(client):
+    created = await client.post(
+        "/api/messages",
+        headers=HEADERS_WORKER,
+        json={"content": "Keep this visible", "typed": typed_status("worker-malformed-1")},
+    )
+    assert created.status_code == 200
+
+    async with main.connect_db() as db:
+        await db.execute(
+            "UPDATE messages SET expects_reply = NULL WHERE id = ?",
+            (created.json()["id"],),
+        )
+        await db.commit()
+
+    restored = await client.get("/api/messages", headers=HEADERS_ENGINEER)
+
+    assert restored.status_code == 200
+    assert restored.json() == [
+        {
+            **{key: value for key, value in created.json().items() if key != "typed"},
+            "typed": None,
+        }
+    ]
+
+
+async def test_existing_database_migrates_typed_columns_without_losing_legacy_data(tmp_path, monkeypatch):
+    import aiosqlite
+
+    legacy_db_file = tmp_path / "legacy-typed.db"
+    async with aiosqlite.connect(legacy_db_file) as db:
+        await db.execute(
+            """
+            CREATE TABLE messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at REAL NOT NULL
+            )
+            """
+        )
+        await db.execute(
+            "INSERT INTO messages (role, content, created_at) VALUES ('engineer', 'legacy', 1.0)"
+        )
+        await db.commit()
+
+    monkeypatch.setattr(main, "DB_PATH", legacy_db_file)
+    await main.init_db()
+
+    async with main.connect_db() as db:
+        columns = {row["name"] for row in await (await db.execute("PRAGMA table_info(messages)")).fetchall()}
+    assert {
+        "typed_schema_version",
+        "typed_kind",
+        "message_key",
+        "correlation_id",
+        "reply_to_id",
+        "expects_reply",
+        "typed_payload_json",
+        "canonical_refs_json",
+    } <= columns
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        legacy = await c.get("/api/messages", headers=HEADERS_WORKER)
+        assert legacy.status_code == 200
+        assert legacy.json()[0]["content"] == "legacy"
+        typed = await c.post(
+            "/api/messages",
+            headers=HEADERS_WORKER,
+            json={"content": "migrated typed", "typed": typed_status("worker-migrated-1")},
+        )
+        assert typed.status_code == 200
+        assert typed.json()["typed"]["kind"] == "STATUS_UPDATE"
+
+
+async def test_typed_idempotency_returns_original_and_rejects_conflict(client):
+    body = {
+        "content": "A stable typed message",
+        "message_type": "STATUS",
+        "typed": typed_status(message_key="worker-idempotent-1"),
+    }
+    first = await client.post("/api/messages", headers=HEADERS_WORKER, json=body)
+    retry = await client.post("/api/messages", headers=HEADERS_WORKER, json=body)
+
+    assert first.status_code == 200
+    assert retry.status_code == 200
+    assert retry.json() == first.json()
+    assert len((await client.get("/api/messages", headers=HEADERS_ENGINEER)).json()) == 1
+
+    conflict_body = {**body, "content": "A different body"}
+    conflict = await client.post("/api/messages", headers=HEADERS_WORKER, json=conflict_body)
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["code"] == "E_BRIDGE_IDEMPOTENCY_CONFLICT"
+
+    other_role = await client.post("/api/messages", headers=HEADERS_ENGINEER, json=body)
+    assert other_role.status_code == 200
+    assert other_role.json()["id"] != first.json()["id"]
+
+
+async def test_typed_reply_validation_and_filters(client):
+    request_body = {
+        "content": "Which storage engine?",
+        "message_type": "DECISION_NEEDED",
+        "typed": {
+            "schema_version": 1,
+            "kind": "DECISION_REQUEST",
+            "message_key": "engineer-decision-1",
+            "correlation_id": "decision-storage",
+            "expects_reply": True,
+            "payload": {
+                "kind": "DECISION_REQUEST",
+                "question": "Which storage engine?",
+                "options": [{"id": "A", "label": "PostgreSQL"}],
+            },
+            "canonical_refs": [],
+        },
+    }
+    request = await client.post("/api/messages", headers=HEADERS_ENGINEER, json=request_body)
+    assert request.status_code == 200
+    request_id = request.json()["id"]
+
+    response_body = {
+        "content": "Use PostgreSQL.",
+        "message_type": "DECISION_RESOLVED",
+        "typed": {
+            "schema_version": 1,
+            "kind": "DECISION_RESPONSE",
+            "message_key": "worker-decision-1",
+            "correlation_id": "decision-storage",
+            "reply_to_id": request_id,
+            "expects_reply": False,
+            "payload": {
+                "kind": "DECISION_RESPONSE",
+                "decision": "A",
+                "rationale": "Production durability.",
+            },
+            "canonical_refs": [],
+        },
+    }
+    response = await client.post("/api/messages", headers=HEADERS_WORKER, json=response_body)
+    assert response.status_code == 200
+    reply_id = response.json()["id"]
+
+    filtered = await client.get(
+        "/api/messages",
+        params={
+            "typed_kind": "DECISION_RESPONSE",
+            "correlation_id": "decision-storage",
+            "reply_to_id": request_id,
+            "limit": 1,
+        },
+        headers=HEADERS_ENGINEER,
+    )
+    assert [message["id"] for message in filtered.json()] == [reply_id]
+
+    same_role = await client.post("/api/messages", headers=HEADERS_ENGINEER, json=response_body)
+    assert same_role.status_code == 422
+    assert same_role.json()["error"]["code"] == "E_BRIDGE_REPLY_ROLE_INVALID"
+
+
+@pytest.mark.parametrize(
+    ("typed", "code"),
+    (
+        (typed_status(message_key="worker-schema-2", state="IN_PROGRESS") | {"schema_version": 2}, "E_BRIDGE_TYPED_SCHEMA_UNSUPPORTED"),
+        (typed_status(message_key="worker-extra") | {"payload": {"kind": "STATUS_UPDATE", "state": "IN_PROGRESS", "summary": "ok", "extra": True}}, "E_BRIDGE_TYPED_PAYLOAD_INVALID"),
+    ),
+)
+async def test_typed_validation_errors_are_stable(client, typed, code):
+    response = await client.post(
+        "/api/messages",
+        headers=HEADERS_ENGINEER,
+        json={"content": "invalid typed", "typed": typed},
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == code
+
+
+async def test_status_advertises_bridge_typed_schema(client):
+    response = await client.get("/api/status")
+
+    assert response.status_code == 200
+    assert response.json()["bridge_api_version"] == "2.1.0"
+    assert response.json()["typed_message_versions"] == [1]

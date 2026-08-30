@@ -4,6 +4,7 @@ between Engineer and Worker agents.
 """
 
 import asyncio
+import json
 import logging
 import math
 import os
@@ -12,12 +13,24 @@ import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 import aiosqlite
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
+
+from bridge_protocol.errors import (
+    E_BRIDGE_IDEMPOTENCY_CONFLICT,
+    BridgeProtocolError,
+)
+from bridge_protocol.validation import (
+    envelope_to_dict,
+    parse_typed_envelope,
+    validate_legacy_kind_consistency,
+    validate_reply_relationship,
+)
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent
@@ -43,6 +56,8 @@ if len(ENGINEER_TOKEN) < 16 or len(WORKER_TOKEN) < 16:
     )
 
 MAX_PAGE_SIZE = 1000
+BRIDGE_API_VERSION = "2.1.0"
+TYPED_MESSAGE_VERSIONS = [1]
 
 
 def _env_int(name: str, default: int, minimum: int, maximum: int | None = None) -> int:
@@ -225,6 +240,7 @@ class MessageCreate(BaseModel):
     approval_id: str | None = Field(default=None, min_length=1, max_length=200)
     next_action: str | None = Field(default=None, min_length=1, max_length=100)
     reason_code: str | None = Field(default=None, min_length=1, max_length=160)
+    typed: Any | None = None
 
     @field_validator("task_id", "action_id", "approval_id", "next_action", "reason_code", mode="before")
     @classmethod
@@ -249,6 +265,7 @@ class MessageOut(BaseModel):
     approval_id: str | None = None
     next_action: str | None = None
     reason_code: str | None = None
+    typed: dict[str, Any] | None = None
 
 
 # ─── Auth helpers ─────────────────────────────────────────────────────────────
@@ -305,22 +322,45 @@ async def init_db():
                 action_id TEXT,
                 approval_id TEXT,
                 next_action TEXT,
-                reason_code TEXT
+                reason_code TEXT,
+                typed_schema_version INTEGER,
+                typed_kind TEXT,
+                message_key TEXT,
+                correlation_id TEXT,
+                reply_to_id INTEGER,
+                expects_reply INTEGER,
+                typed_payload_json TEXT,
+                canonical_refs_json TEXT
             )
         """)
         # Safe schema migration for existing databases:
         cursor = await db.execute("PRAGMA table_info(messages)")
         columns = {row["name"] for row in await cursor.fetchall()}
-        for column in (
+        legacy_columns = (
             "task_id",
             "message_type",
             "action_id",
             "approval_id",
             "next_action",
             "reason_code",
-        ):
+        )
+        for column in legacy_columns:
             if column not in columns:
                 await db.execute(f"ALTER TABLE messages ADD COLUMN {column} TEXT")
+
+        typed_columns = {
+            "typed_schema_version": "INTEGER",
+            "typed_kind": "TEXT",
+            "message_key": "TEXT",
+            "correlation_id": "TEXT",
+            "reply_to_id": "INTEGER",
+            "expects_reply": "INTEGER",
+            "typed_payload_json": "TEXT",
+            "canonical_refs_json": "TEXT",
+        }
+        for column, column_type in typed_columns.items():
+            if column not in columns:
+                await db.execute(f"ALTER TABLE messages ADD COLUMN {column} {column_type}")
 
         await db.execute("""
             CREATE INDEX IF NOT EXISTS idx_messages_created_at
@@ -342,6 +382,23 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS idx_messages_message_type
             ON messages(message_type)
         """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_messages_typed_kind
+            ON messages(typed_kind)
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_messages_correlation_id
+            ON messages(correlation_id)
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_messages_reply_to_id
+            ON messages(reply_to_id)
+        """)
+        await db.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_role_message_key
+            ON messages(role, message_key)
+            WHERE message_key IS NOT NULL
+        """)
         await db.commit()
     logger.info("Database ready at %s", DB_PATH)
 
@@ -358,9 +415,150 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="ForgeLoopBridge",
     description="Minimalist Markdown communication hub between Engineer and Worker agents",
-    version="2.0.0",
+    version=BRIDGE_API_VERSION,
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(BridgeProtocolError)
+async def bridge_protocol_error_handler(_request: Request, exc: BridgeProtocolError):
+    """Keep Bridge transport errors separate from ForgeLoop reason codes."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": {"code": exc.code, "message": exc.message}},
+    )
+
+
+MESSAGE_SELECT = """
+    id, role, content, created_at, task_id, message_type,
+    action_id, approval_id, next_action, reason_code,
+    typed_schema_version, typed_kind, message_key, correlation_id,
+    reply_to_id, expects_reply, typed_payload_json, canonical_refs_json
+"""
+
+
+def _json_dumps(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _typed_storage_values(envelope) -> tuple[Any, ...]:
+    if envelope is None:
+        return (None, None, None, None, None, None, None, None)
+    return (
+        envelope.schema_version,
+        envelope.kind,
+        envelope.message_key,
+        envelope.correlation_id,
+        envelope.reply_to_id,
+        int(envelope.expects_reply),
+        _json_dumps(envelope.payload.model_dump(mode="json", exclude_none=False)),
+        _json_dumps(
+            [reference.model_dump(mode="json", exclude_none=False) for reference in envelope.canonical_refs]
+        ),
+    )
+
+
+def _typed_envelope_from_row(row):
+    data = dict(row)
+    if data.get("typed_schema_version") is None:
+        return None
+    try:
+        payload = json.loads(data["typed_payload_json"])
+        canonical_refs = json.loads(data["canonical_refs_json"])
+        stored_expects_reply = data["expects_reply"]
+        if isinstance(stored_expects_reply, bool):
+            expects_reply = stored_expects_reply
+        elif isinstance(stored_expects_reply, int) and stored_expects_reply in {0, 1}:
+            expects_reply = bool(stored_expects_reply)
+        else:
+            raise ValueError("persisted expects_reply must be a boolean integer")
+        raw = {
+            "schema_version": data["typed_schema_version"],
+            "kind": data["typed_kind"],
+            "message_key": data["message_key"],
+            "correlation_id": data["correlation_id"],
+            "reply_to_id": data["reply_to_id"],
+            "expects_reply": expects_reply,
+            "payload": payload,
+            "canonical_refs": canonical_refs,
+        }
+        return parse_typed_envelope(raw)
+    except (BridgeProtocolError, TypeError, ValueError, KeyError, json.JSONDecodeError):
+        logger.warning("Malformed typed representation for message id=%s", data.get("id"))
+        return None
+
+
+def _message_out_from_row(row) -> MessageOut:
+    data = dict(row)
+    envelope = _typed_envelope_from_row(data)
+    return MessageOut(
+        id=int(data["id"]),
+        role=data["role"],
+        content=data["content"],
+        created_at=data["created_at"],
+        task_id=data.get("task_id"),
+        message_type=data.get("message_type"),
+        action_id=data.get("action_id"),
+        approval_id=data.get("approval_id"),
+        next_action=data.get("next_action"),
+        reason_code=data.get("reason_code"),
+        typed=envelope_to_dict(envelope) if envelope is not None else None,
+    )
+
+
+def _submission_fingerprint(
+    *,
+    content: str,
+    task_id: str | None,
+    message_type: str | None,
+    action_id: str | None,
+    approval_id: str | None,
+    next_action: str | None,
+    reason_code: str | None,
+    envelope,
+) -> str:
+    return _json_dumps(
+        {
+            "content": content,
+            "task_id": task_id,
+            "message_type": message_type,
+            "action_id": action_id,
+            "approval_id": approval_id,
+            "next_action": next_action,
+            "reason_code": reason_code,
+            "typed": envelope_to_dict(envelope) if envelope is not None else None,
+        }
+    )
+
+
+def _row_submission_fingerprint(row) -> str | None:
+    data = dict(row)
+    envelope = _typed_envelope_from_row(data)
+    if data.get("message_key") is not None and envelope is None:
+        return None
+    return _submission_fingerprint(
+        content=data["content"],
+        task_id=data.get("task_id"),
+        message_type=data.get("message_type"),
+        action_id=data.get("action_id"),
+        approval_id=data.get("approval_id"),
+        next_action=data.get("next_action"),
+        reason_code=data.get("reason_code"),
+        envelope=envelope,
+    )
+
+
+async def _find_message_by_id(db, message_id: int):
+    cursor = await db.execute(f"SELECT {MESSAGE_SELECT} FROM messages WHERE id = ?", (message_id,))
+    return await cursor.fetchone()
+
+
+async def _find_message_by_key(db, role: str, message_key: str):
+    cursor = await db.execute(
+        f"SELECT {MESSAGE_SELECT} FROM messages WHERE role = ? AND message_key = ?",
+        (role, message_key),
+    )
+    return await cursor.fetchone()
 
 
 # ─── API ──────────────────────────────────────────────────────────────────────
@@ -372,6 +570,9 @@ async def get_messages(
     message_type: str | None = None,
     action_id: str | None = None,
     approval_id: str | None = None,
+    typed_kind: str | None = None,
+    correlation_id: str | None = None,
+    reply_to_id: int | None = None,
     after_id: int | None = None,
     before_id: int | None = None,
     latest: bool = False,
@@ -383,6 +584,9 @@ async def get_messages(
     - `message_type`: filter by normalized coordination type
     - `action_id`: filter by action reference (exact match)
     - `approval_id`: filter by approval reference (exact match)
+    - `typed_kind`: filter by typed message kind
+    - `correlation_id`: filter by typed exchange correlation
+    - `reply_to_id`: filter by concrete replied-to message id
     - `after_id`: only messages with id > after_id (live updates)
     - `before_id`: only messages with id < before_id (history paging)
     - `latest`: return newest page of messages (cannot combine with after_id / before_id)
@@ -403,13 +607,13 @@ async def get_messages(
         message_type = message_type.upper() if message_type else None
         action_id = normalize_optional_reference(action_id)
         approval_id = normalize_optional_reference(approval_id)
+        typed_kind = normalize_optional_reference(typed_kind)
+        typed_kind = typed_kind.upper() if typed_kind else None
+        correlation_id = normalize_optional_reference(correlation_id)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    query = (
-        "SELECT id, role, content, created_at, task_id, message_type, "
-        "action_id, approval_id, next_action, reason_code FROM messages"
-    )
+    query = f"SELECT {MESSAGE_SELECT} FROM messages"
     clauses, params = [], []
 
     if task_id is not None:
@@ -424,6 +628,15 @@ async def get_messages(
     if approval_id is not None:
         clauses.append("approval_id = ?")
         params.append(approval_id)
+    if typed_kind is not None:
+        clauses.append("typed_kind = ?")
+        params.append(typed_kind)
+    if correlation_id is not None:
+        clauses.append("correlation_id = ?")
+        params.append(correlation_id)
+    if reply_to_id is not None:
+        clauses.append("reply_to_id = ?")
+        params.append(reply_to_id)
     if after_id is not None:
         clauses.append("id > ?")
         params.append(after_id)
@@ -444,17 +657,20 @@ async def get_messages(
     async with connect_db() as db:
         rows = await db.execute_fetchall(query, tuple(params))
 
-    messages = [MessageOut(**dict(row)) for row in rows]
+    messages = [_message_out_from_row(row) for row in rows]
     if latest or before_id is not None:
         messages.reverse()
     logger.debug(
-        "GET /api/messages role=%s count=%d task_id=%s message_type=%s action_id=%s approval_id=%s latest=%s",
+        "GET /api/messages role=%s count=%d task_id=%s message_type=%s action_id=%s approval_id=%s typed_kind=%s correlation_id=%s reply_to_id=%s latest=%s",
         role,
         len(messages),
         task_id,
         message_type,
         action_id,
         approval_id,
+        typed_kind,
+        correlation_id,
+        reply_to_id,
         latest,
     )
     return messages
@@ -481,29 +697,84 @@ async def post_message(msg: MessageCreate, request: Request):
             )
         message_type = normalized_type
 
-    created_at = time.time()
+    envelope = None
+    if msg.typed is not None:
+        envelope = parse_typed_envelope(msg.typed)
+        validate_legacy_kind_consistency(message_type, envelope)
+
+    submission_fingerprint = _submission_fingerprint(
+        content=content,
+        task_id=msg.task_id,
+        message_type=message_type,
+        action_id=msg.action_id,
+        approval_id=msg.approval_id,
+        next_action=msg.next_action,
+        reason_code=msg.reason_code,
+        envelope=envelope,
+    )
+    typed_storage_values = _typed_storage_values(envelope)
 
     async with connect_db() as db:
-        cursor = await db.execute(
-            """
-            INSERT INTO messages (
-                role, content, created_at, task_id, message_type,
-                action_id, approval_id, next_action, reason_code
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                role,
-                content,
-                created_at,
-                task_id,
-                message_type,
-                msg.action_id,
-                msg.approval_id,
-                msg.next_action,
-                msg.reason_code,
-            ),
-        )
-        await db.commit()
+        if envelope is not None:
+            existing = await _find_message_by_key(db, role, envelope.message_key)
+            if existing is not None:
+                existing_fingerprint = _row_submission_fingerprint(existing)
+                if existing_fingerprint == submission_fingerprint:
+                    return _message_out_from_row(existing)
+                raise BridgeProtocolError(
+                    E_BRIDGE_IDEMPOTENCY_CONFLICT,
+                    "The message key already exists with different content.",
+                    status_code=409,
+                )
+
+            target = None
+            target_typed = None
+            if envelope.reply_to_id is not None:
+                target = await _find_message_by_id(db, envelope.reply_to_id)
+                target_typed = _typed_envelope_from_row(target) if target is not None else None
+            validate_reply_relationship(envelope, role, target, target_typed)
+
+        created_at = time.time()
+        try:
+            cursor = await db.execute(
+                """
+                INSERT INTO messages (
+                    role, content, created_at, task_id, message_type,
+                    action_id, approval_id, next_action, reason_code,
+                    typed_schema_version, typed_kind, message_key, correlation_id,
+                    reply_to_id, expects_reply, typed_payload_json, canonical_refs_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    role,
+                    content,
+                    created_at,
+                    task_id,
+                    message_type,
+                    msg.action_id,
+                    msg.approval_id,
+                    msg.next_action,
+                    msg.reason_code,
+                    *typed_storage_values,
+                ),
+            )
+            await db.commit()
+        except aiosqlite.IntegrityError:
+            await db.rollback()
+            if envelope is None:
+                raise
+            existing = await _find_message_by_key(db, role, envelope.message_key)
+            if existing is None:
+                raise
+            existing_fingerprint = _row_submission_fingerprint(existing)
+            if existing_fingerprint == submission_fingerprint:
+                return _message_out_from_row(existing)
+            raise BridgeProtocolError(
+                E_BRIDGE_IDEMPOTENCY_CONFLICT,
+                "The message key already exists with different content.",
+                status_code=409,
+            ) from None
+
         msg_id = cursor.lastrowid
         if msg_id is None:
             raise HTTPException(status_code=500, detail="Could not allocate message id")
@@ -519,6 +790,7 @@ async def post_message(msg: MessageCreate, request: Request):
         approval_id=msg.approval_id,
         next_action=msg.next_action,
         reason_code=msg.reason_code,
+        typed=envelope_to_dict(envelope) if envelope is not None else None,
     )
     broadcast(out)
     return out
@@ -611,6 +883,8 @@ async def status():
 
     return {
         "status": "ok",
+        "bridge_api_version": BRIDGE_API_VERSION,
+        "typed_message_versions": TYPED_MESSAGE_VERSIONS,
         "total_messages": total,
         "last_message_role": last["role"] if last else None,
         "last_message_at": last["created_at"] if last else None,

@@ -28,8 +28,11 @@ ForgeLoopBridge only carries the high-level coordination conversation (instructi
 ForgeLoopBridge targets **ForgeLoop Protocol v1** and **Integration API v1**.
 
 The Bridge supports current ForgeLoop observability, diagnostic, durable-action,
-approval, capability-policy, and trajectory capabilities when the active host
-advertises them. Package version alone is never a compatibility decision.
+approval, capability-policy, trajectory, workspace-binding, canonical-handoff,
+responsibility-constraint, differential-verification-scope, and code-attestation
+capabilities when the active host advertises them. Package version alone is
+never a compatibility decision; the observed ForgeLoop package `1.6.4` is an
+informational baseline only.
 
 Before creating or resuming ForgeLoop task state, the active execution host must inspect the installed project's public compatibility boundary with `forgeloop protocol-info --json` (or the equivalent official structured integration capability call).
 
@@ -38,7 +41,7 @@ If the host exposes an official ForgeLoop structured integration (such as `@cass
 ### Compatibility dimensions & recovery awareness
 
 - **Protocol-first handshake**: Require `protocolVersion == 1`; when structured integration is used, require a supported Integration API version. Unknown protocol/schema versions fail closed.
-- **Capability detection**: Inspect `protocolInfo.features` (or the equivalent structured capability response) for `diagnostics`, `executionHistory`, `structuredTrace`, `taskInspection`, `reflection`, `durableActions`, `capabilityPolicy`, `durableApprovals`, `trajectoryMetrics`, `trajectoryEvaluation`, `verificationExecutionIsolation`, and `observabilityStability`. Additive features are enabled only when advertised.
+- **Capability detection**: Inspect `protocolInfo.features` (or the equivalent structured capability response) for `diagnostics`, `executionHistory`, `structuredTrace`, `taskInspection`, `reflection`, `durableActions`, `capabilityPolicy`, `durableApprovals`, `trajectoryMetrics`, `trajectoryEvaluation`, `verificationExecutionIsolation`, `observabilityStability`, `workspaceBinding`, `canonicalHandoffs`, `responsibilityConstraints`, `differentialVerificationScope`, and `codeAttestation`. Additive features are enabled only when advertised.
 - **No package-version inference**: A package version alone does not imply that a capability is present. Use `features.durableActions.supported`, `features.capabilityPolicy.supported`, and `features.durableApprovals.supported`.
 - **Capability decisions**: Treat canonical `ALLOW`, `DENY`, `REQUIRE_AUTHORITY`, and `REQUIRE_APPROVAL` decisions as ForgeLoop policy output; Bridge messages can report them but cannot satisfy them.
 - **Recovery awareness**: A project with active recovery state requires a recovery-aware reader supporting validated claim projection. A reader that does not understand that projection must fail closed instead of inferring ownership from `task.json` or `recovery.json` alone.
@@ -71,12 +74,46 @@ If ForgeLoop reports `E_VERIFICATION_ISOLATION_UNAVAILABLE` or
 the canonical ForgeLoop recovery/next guidance. Do not downgrade isolation,
 repair contradictory metadata, or manually create execution evidence.
 
+### ForgeLoop 1.6.4 optional extension boundaries
+
+ForgeLoopBridge coordinates hosts that may use these optional Protocol v1
+capabilities. It does not implement, validate, infer, or attest them. Absence
+of a feature is not an error unless project policy requires it; malformed active
+security artifacts fail closed; unknown future additive features must not break
+the Bridge. Bridge messages are never canonical truth.
+
+- **Workspace binding**: ForgeLoop owns workspace identity. A path, branch,
+  copied repository, container, or Bridge message cannot prove a binding match.
+  A workspace mismatch is a canonical blocker; do not silently rebind.
+- **Canonical handoffs**: A handoff is an immutable continuity snapshot, not
+  delegation, identity, approval, completion, or verification evidence.
+- **Responsibility constraints**: Allowed/read-only paths, required checks, and
+  frozen-input fingerprints are canonical. Engineer approval cannot waive a
+  responsibility violation.
+- **Differential verification**: Ask ForgeLoop for `AUTO`, `CHANGED`, `CLAIMED`,
+  or `FULL` scope. Verification scope is not evidence and verification scope is
+  not revision coverage. Never calculate impacted paths in the Bridge or Worker
+  example. A trusted scoped checker is required for narrow checks; without it,
+  canonical `AUTO` falls back to `FULL`, while explicit narrow scope fails
+  closed.
+- **Code attestation**: Use canonical attestation and revision-provider
+  commands. `NOT_VERIFIED`, `VERIFIED`, and `ATTESTED` are distinct; an
+  external signature is required for `ATTESTED`, and a Bridge message cannot
+  promote trust or independently attest code.
+
+Relevant copied canonical boundary errors include
+`E_WORKSPACE_BINDING_MISMATCH`, `E_HANDOFF_TAMPERED`,
+`E_RESPONSIBILITY_SCOPE_VIOLATION`, `E_VERIFICATION_SCOPE_STALE`,
+`E_REVISION_PROVIDER_UNAVAILABLE`, and `E_ATTESTATION_SIGNATURE_INVALID`.
+The Worker reports exact reason codes and follows ForgeLoop `next`; the Bridge
+does not add recovery behavior for these codes.
+
 ---
 
 ## Features
 
 - Extremely simple (single backend + single page)
-- 100% Markdown communication
+- Markdown communication with optional machine-validatable typed envelopes
 - Minimal REST API for agents + real-time SSE stream
 - **Task-aware message metadata**: optional `task_id`, `message_type`, `action_id`, `approval_id`, `next_action`, and `reason_code` references for multi-task coordination; these are reported copies, never canonical ForgeLoop truth
 - Task-aware filtering on the board and API
@@ -85,6 +122,8 @@ repair contradictory metadata, or manually create execution evidence.
 - SQLite with WAL mode (zero extra configuration, automatic backward-compatible schema migration)
 - Message pagination (`after_id` / `before_id` / `limit`), delete by author, `/api/whoami`
 - Capability-aware coordination with current ForgeLoop protocol surfaces
+- Optional Bridge Typed Message Schema v1 with strict payloads, correlation,
+  replies, role-scoped idempotency, opaque canonical references, and REST/SSE parity
 - Test suite (pytest) and CI (GitHub Actions: ruff + pytest)
 
 ---
@@ -95,7 +134,8 @@ repair contradictory metadata, or manually create execution evidence.
                          ┌─────────────────────────────┐
                          │        ForgeLoopBridge      │
                          │ coordination / Markdown /   │
-                         │ task refs / status / PRs    │
+                         │ typed coordination / refs  │
+                         │ status / correlation / PRs│
                          └──────────────┬──────────────┘
                                         │
                          board messages │ board messages
@@ -119,6 +159,10 @@ repair contradictory metadata, or manually create execution evidence.
                     │ diagnostics / trace / reflection│
                     │ policy / durable actions         │
                     │ approvals / verification         │
+                    │ workspace binding / handoffs    │
+                    │ responsibility / verification   │
+                    │ scope / revision providers      │
+                    │ code attestation                │
                     │ Integration API / MCP / CLI      │
                     │ writes canonical `.forgeloop/`  │
                     └──────────────────────────────────┘
@@ -128,6 +172,8 @@ repair contradictory metadata, or manually create execution evidence.
 
 **ForgeLoopBridge may report or index:**
 - `task_id` and `message_type`
+- typed coordination intent, correlation IDs, reply IDs, and role-scoped message keys
+- opaque canonical references (`HANDOFF`, `RESPONSIBILITY`, `VERIFICATION_SCOPE`, `ATTESTATION`, `REVISION`, and similar)
 - Pull Request URLs
 - Worker-provided completion summaries
 - Worker/Engineer discussion and decision records
@@ -143,6 +189,10 @@ repair contradictory metadata, or manually create execution evidence.
 - Verification truth or whether completion is `VALID`
 - Whether an external authority grant is trusted
 - Whether a recovered task may mutate again
+- Whether a workspace binding matches, a handoff is valid, or a responsibility contract is satisfied
+- Which paths are changed/claimed/impacted or whether narrow verification is safe
+- Whether verification is evidence, a revision range is covered, or code is `ATTESTED`
+- Whether an external signature or signer identity is trusted
 
 Those answers originate solely from canonical ForgeLoop operations.
 
@@ -233,6 +283,36 @@ absolute local paths, environment secrets, raw credentials, unredacted
 execution output, or complete private `.forgeloop/` state unless it is strictly
 necessary and already redacted by the canonical owner.
 
+Never publish through the Bridge signing private keys, OIDC/Sigstore tokens,
+revision-provider credentials, raw sensitive source manifests, unredacted
+attestation statements, complete verification execution output, or full
+`.forgeloop` task state. Prefer an opaque reference, canonical status,
+fingerprint when useful, PR/publication URL, bounded error code, and redacted
+summary. `VERIFIED` is not `ATTESTED`; only the canonical external signing
+boundary can establish the latter.
+
+### Typed coordination is a separate protocol
+
+Bridge Typed Message Schema v1 is advertised independently from ForgeLoop
+Protocol v1. A typed message always retains human-readable Markdown `content`
+and adds a strict envelope with `schema_version: 1`, a semantic `kind`, a
+client-generated `message_key`, optional `correlation_id`/`reply_to_id`, and
+opaque `canonical_refs`. The authenticated token remains the only source of
+sender role; a payload field such as `sender_role` cannot override it.
+
+The initial typed kinds are `TASK_REQUEST`, `STATUS_UPDATE`,
+`DECISION_REQUEST`, `DECISION_RESPONSE`, `BLOCKER`, `REVIEW_RESULT`,
+`CONTROL_NOTICE`, `HANDOFF_NOTICE`, `VERIFICATION_REPORT`, and
+`ATTESTATION_REPORT`. Typed decisions are project coordination only. A typed
+control, verification, or attestation report is a copied projection until the
+consuming host independently checks canonical ForgeLoop state.
+
+Bridge message idempotency (`UNIQUE(role, message_key)`) is transport delivery
+behavior. It is not ForgeLoop durable-action idempotency or side-effect safety.
+Exact retries return the original message; conflicting reuse returns
+`E_BRIDGE_IDEMPOTENCY_CONFLICT` with HTTP 409. Bridge validation errors use the
+separate `E_BRIDGE_*` namespace and never reuse ForgeLoop `E_*` protocol errors.
+
 ---
 
 ## Prompt templates (capability-aware ForgeLoop workflow)
@@ -278,6 +358,22 @@ When reviewing verification evidence:
 - Distinguish `protocolProjectRoot` from the execution cwd (`cwd`).
 - Never infer isolation from path shape or copied metadata alone.
 - Treat ForgeLoop's canonical execution/audit projection as the source of truth.
+
+When the advertised capabilities exist, add relevant read-only checks for
+`workspace-status`, `handoff-list`, `handoff-show`, `responsibility-status`,
+`attestation-status`, `attestation-verify`, and
+`attestation-verify-range`. Confirm workspace binding, handoff validity,
+responsibility status, whether verification was `FULL` or canonically scoped
+through a trusted scoped checker, and whether any required revision-range
+coverage is complete. A reported handoff is not delegation authority, and a
+Bridge `ATTESTED` message is not cryptographic proof.
+
+Use typed Bridge messages for new coordination: `REVIEW_RESULT` for the project
+review outcome and `DECISION_REQUEST`/`DECISION_RESPONSE` for a decision exchange.
+Preserve one `correlation_id` through the exchange and set `reply_to_id` to the
+concrete message being answered. A typed decision is never a ForgeLoop approval.
+Do not run `workspace-bind`, create a handoff, rewrite responsibility, rerun a
+check, sign an attestation, or resolve trust merely to review the Worker.
 
 Your APPROVED message is a project decision, not ForgeLoop host authority. Never represent an Engineer/Worker board agreement as HOST_ATTESTED authority, trusted installation authority, force-recovery authority, or any other ForgeLoop authority class that requires an external trusted boundary.
 
@@ -351,14 +447,46 @@ Mandatory workflow for every instruction from the Engineer:
    forgeloop protocol-info --json
    Require protocol version `1`, a supported Integration API when using structured
    integration, and feature-detect diagnostics, durable actions, capability policy,
-   durable approvals, and `verificationExecutionIsolation`. Do not infer any
+   durable approvals, `verificationExecutionIsolation`, `workspaceBinding`,
+   `canonicalHandoffs`, `responsibilityConstraints`,
+   `differentialVerificationScope`, and `codeAttestation`. Do not infer any
    feature from the package version alone.
    Fail closed if the installed compatibility boundary cannot safely read/write protocol state.
+
+   When `workspaceBinding` is advertised, inspect `workspace-status` for bound
+   tasks and use canonical `workspace-bind` only when the workflow requires it.
+   Never recreate `workspace-binding.json`, infer identity from a directory, or
+   continue mutation after `E_WORKSPACE_BINDING_MISMATCH`.
+
+   When `canonicalHandoffs` is advertised and the harness changes, create a
+   canonical handoff with `handoff-create`; report only its opaque reference.
+   A handoff is a continuity snapshot, not delegation authority, identity,
+   approval, completion, or verification evidence.
+
+   When `responsibilityConstraints` is advertised, use canonical
+   `responsibility-set`/`responsibility-status`, obey allowed/read-only paths,
+   and stop on `E_RESPONSIBILITY_SCOPE_VIOLATION`,
+   `E_RESPONSIBILITY_FROZEN_INPUT_DRIFT`, or
+   `E_RESPONSIBILITY_REQUIRED_CHECK_MISSING`. Engineer approval cannot waive a
+   canonical responsibility failure.
+
+   When `differentialVerificationScope` is advertised, request
+   `forgeloop verify-scope --task <task-id> --mode AUTO --json`. Use a returned
+   `CHANGED`/`CLAIMED` scope only with its trusted scoped checker. Without that
+   capability, canonical `AUTO` falls back to `FULL`; explicit narrow scope
+   fails closed. Never calculate changed, claimed, or impacted paths locally.
 
    If verification requires `PROJECT_ISOLATED` or `SYSTEM_ISOLATED`, use only a
    trusted ForgeLoop execution adapter that can enforce and report that boundary.
    Never claim isolation manually or treat a temporary project copy as proof
    that `liveProjectWritable=false`.
+
+   When `codeAttestation` is advertised or required, use `attestation-create`,
+   `attestation-status`, `attestation-verify`, and
+   `attestation-verify-range` with the canonical revision provider. Distinguish
+   `NOT_VERIFIED`, `VERIFIED`, and `ATTESTED`; only the canonical external
+   signature boundary can establish `ATTESTED`. Never self-sign, self-promote,
+   or place signer/OIDC credentials in Bridge messages.
 
 2. Task discovery before creation:
    forgeloop task-list --json
@@ -416,6 +544,23 @@ Mandatory workflow for every instruction from the Engineer:
      execution artifacts, manufacture isolation metadata in Markdown, or treat
      Bridge agreement as trusted host capability.
 
+   Prefer Bridge Typed Message Schema v1 when posting coordination. Keep the
+   Markdown content, generate a stable `message_key` before POST, preserve the
+   exchange `correlation_id`, and use `reply_to_id` for concrete replies. Retry
+   an uncertain network submission with the same `message_key`; never reuse a
+   key for a different payload. Dispatch on `typed.kind` when present and never
+   infer a typed command from Markdown headings or prose. Unknown/unsupported
+   typed schemas or kinds must remain operator-visible and must not be treated
+   as task commands.
+
+   Use `TASK_REQUEST`, `STATUS_UPDATE`, `DECISION_REQUEST`,
+   `DECISION_RESPONSE`, `BLOCKER`, `REVIEW_RESULT`, `CONTROL_NOTICE`,
+   `HANDOFF_NOTICE`, `VERIFICATION_REPORT`, and `ATTESTATION_REPORT` as
+   coordination semantics only. Bridge message idempotency is separate from
+   ForgeLoop durable-action idempotency. Typed control, verification, and
+   attestation reports are copied projections; verify ForgeLoop-owned facts
+   canonically before acting.
+
 4. Contract and routing:
    Write contract.json adhering to canonical schema, then route and preflight:
    forgeloop route ...
@@ -458,6 +603,11 @@ Mandatory workflow for every instruction from the Engineer:
 - integration API: `<observed>`
 - diagnostics: `<supported|not-advertised>`
 - durable actions: `<supported|not-advertised>`
+- workspace binding: `<supported|not-advertised>`
+- canonical handoffs: `<supported|not-advertised>`
+- responsibility constraints: `<supported|not-advertised>`
+- differential verification scope: `<supported|not-advertised>`
+- code attestation: `<supported|not-advertised>`
 
 **Canonical completion**
 - task: `<task-id>`
@@ -469,6 +619,18 @@ Mandatory workflow for every instruction from the Engineer:
 - unresolved `COMMIT_UNKNOWN`: `0`
 - pending canonical approvals: `0`
 - checks: <concise observed evidence summary>
+
+**Optional boundaries**
+- workspace: `<MATCH|MISMATCH|UNBOUND|NOT_APPLICABLE|canonical status>`
+- handoff: `<opaque ref|none>`
+- responsibility: `<canonical status|not applicable>`
+- verification scope: `<FULL|CHANGED|CLAIMED|canonical status>`
+- trusted scoped checker: `<canonical checker id|none>`
+- attestation: `<canonical status|not requested>`
+- revision coverage: `<canonical status|not requested>`
+
+Every value above is a copied canonical projection or an informational Bridge
+reference. ForgeLoopBridge does not validate these values.
 
 Counts and statuses come from canonical ForgeLoop read-only surfaces, not Bridge history.
 No ForgeLoop-owned state was synthesized outside the canonical integration/CLI.
@@ -619,6 +781,9 @@ Query parameters:
 - `message_type` (*optional*): filter by coordination type
 - `action_id` (*optional*): filter by opaque ForgeLoop action reference
 - `approval_id` (*optional*): filter by opaque ForgeLoop approval reference
+- `typed_kind` (*optional*): filter by typed coordination kind
+- `correlation_id` (*optional*): filter by typed exchange correlation
+- `reply_to_id` (*optional*): filter by concrete replied-to message ID
 - `after_id` (*optional*): return messages with `id > after_id` (for live polling updates)
 - `before_id` (*optional*): return historical page with `id < before_id` (for history paging)
 - `latest` (*optional*, `true`/`false`): return newest page of messages (cannot combine with `after_id` or `before_id`)
@@ -630,6 +795,9 @@ Query parameters:
 | `message_type` | Filters by normalized coordination type |
 | `action_id` | Filters by opaque action reference |
 | `approval_id` | Filters by opaque approval reference |
+| `typed_kind` | Filters by normalized typed kind |
+| `correlation_id` | Filters by typed exchange correlation |
+| `reply_to_id` | Filters by concrete reply target |
 | `after_id` | Returns messages with `id > after_id` |
 | `before_id` | Returns historical page before cursor |
 | `latest=true` | Returns newest page while preserving ascending order |
@@ -647,7 +815,24 @@ Query parameters:
   "action_id": "action-publish-image",
   "approval_id": "approval-publish-image",
   "next_action": "REQUEST_ACTION_APPROVAL",
-  "reason_code": "E_ACTION_APPROVAL_REQUIRED"
+  "reason_code": "E_ACTION_APPROVAL_REQUIRED",
+  "typed": {
+    "schema_version": 1,
+    "kind": "BLOCKER",
+    "message_key": "worker-01J8Y9J5J1S7X2A8QZJ6A6W0R4",
+    "correlation_id": "release-publication",
+    "reply_to_id": 418,
+    "expects_reply": false,
+    "payload": {
+      "kind": "BLOCKER",
+      "category": "WORKSPACE",
+      "summary": "Canonical workspace validation failed.",
+      "canonical_reason_code": "E_WORKSPACE_BINDING_MISMATCH",
+      "canonical_next_action": "RESOLVE_WORKSPACE_MISMATCH",
+      "retryable": false
+    },
+    "canonical_refs": [{"kind": "TASK", "ref": "auth-service"}]
+  }
 }
 ```
 
@@ -673,6 +858,9 @@ Query parameters:
 - `approval_id` (*optional*): opaque approval reference, max 200 characters; reference only
 - `next_action` (*optional*): copied canonical next action, max 100 characters
 - `reason_code` (*optional*): copied canonical reason code, max 160 characters
+- `typed` (*optional*): strict Bridge Typed Message Schema v1 envelope. The
+  Markdown `content` remains required; `typed.kind` must match
+  `typed.payload.kind`, and decision messages require `correlation_id`.
 
 Action/approval/next/reason fields are coordination references. The Bridge does
 not check whether an action or approval exists, is current, authorized, stale,
@@ -680,6 +868,14 @@ verified, or allowed by policy. It exposes no ForgeLoop mutation endpoint and
 never accepts authority secrets.
 
 Rate limited (default 30/min per role).
+
+Typed submission rules: the authenticated role is derived only from the token;
+client payloads cannot claim `sender_role`. `reply_to_id` must reference an
+existing opposite-role message, and `DECISION_RESPONSE` must reply to a
+`DECISION_REQUEST` with matching correlation. Exact retries with the same
+role-scoped `message_key` return the original message; different content with
+that key returns HTTP 409 and `E_BRIDGE_IDEMPOTENCY_CONFLICT`. Invalid typed
+contracts return HTTP 422 with a stable `E_BRIDGE_*` error body.
 
 ### `DELETE /api/messages/{id}`
 
@@ -724,7 +920,15 @@ Public minimal liveness response:
 
 Public backward-compatible activity counters. This intentionally exposes no
 message contents but does reveal board activity metadata; use `/healthz` for
-generic health checks and restrict `/api/status` at the proxy when needed.
+generic health checks and restrict `/api/status` at the proxy when needed. It
+also advertises the Bridge transport contract:
+
+```json
+{
+  "bridge_api_version": "2.1.0",
+  "typed_message_versions": [1]
+}
+```
 
 ---
 
@@ -764,7 +968,7 @@ while True:
     time.sleep(10)
 ```
 
-A production-ready polling script is available at [`examples/worker_poll.py`](examples/worker_poll.py) (persists an integer cursor across restarts and supports `--auto-ack` plus explicit first-start modes).
+A production-ready polling script is available at [`examples/worker_poll.py`](examples/worker_poll.py) (persists an integer cursor across restarts, dispatches typed envelopes when present, and supports `--auto-ack` plus explicit first-start modes). Its `post_typed_message(...)` helper writes a stable outbound key to a local outbox until the server confirms receipt, making uncertain retries safe at the Bridge transport layer.
 
 On first start, when `.worker_last_seen` does not exist, the default
 `--start-mode pending` hands off the latest existing Engineer instruction before

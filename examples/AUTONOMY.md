@@ -79,6 +79,55 @@ Bridge agreement is not sufficient proof. When ForgeLoop reports
 ForgeLoop guidance rather than weakening the requirement or fabricating
 execution evidence.
 
+## Optional ForgeLoop extension boundaries
+
+The following ForgeLoop Protocol v1 capabilities are optional and must be
+feature-detected from canonical `protocol-info --json` or structured
+integration. ForgeLoopBridge coordinates them but does not implement, validate,
+infer, or attest them.
+
+### Workspace binding
+
+Workspace identity and binding come only from ForgeLoop. Board agreement cannot
+override a workspace mismatch, and a path, branch, copied repository, or
+container name cannot prove a match. On `E_WORKSPACE_BINDING_MISMATCH`, stop,
+report the exact reason code, and do not silently rebind.
+
+### Canonical handoff
+
+A handoff is an immutable continuity snapshot, not delegation, identity,
+approval, completion, or verification evidence. Use canonical handoff commands
+when a harness changes and carry only an opaque reference on the board.
+
+### Responsibility
+
+Allowed/read-only paths, required checks, and frozen-input fingerprints are
+canonical responsibility constraints. An Engineer cannot waive a canonical
+responsibility violation by writing `APPROVED`; if scope legitimately changes,
+the Worker must use the canonical ForgeLoop path to refresh protocol state.
+
+### Verification scope
+
+Only ForgeLoop may calculate `AUTO`, `CHANGED`, `CLAIMED`, or `FULL` scope. The
+agents must not invent impacted paths. Verification scope is not verification
+evidence and verification scope is not revision coverage. A trusted scoped
+checker is required for narrow execution; otherwise canonical `AUTO` falls back
+to `FULL` and explicit narrow scope fails closed.
+
+### Attestation
+
+`NOT_VERIFIED`, `VERIFIED`, and `ATTESTED` are distinct canonical trust levels.
+An external signature is required for `ATTESTED`; a Bridge message such as
+`ATTESTED` has no cryptographic authority by itself. A typed attestation report
+is a copied projection until the consuming host independently reads canonical
+ForgeLoop state.
+
+### Signing
+
+Private signing keys, OIDC credentials, access tokens, Sigstore credentials,
+revision-provider secrets, and signing-provider tokens must never be placed in
+Bridge messages or persisted by ForgeLoopBridge.
+
 ## Decision, approval, and attestation boundaries
 
 The board can carry coordination references, but the following concepts are
@@ -174,6 +223,15 @@ external attestation.
 ## Message discipline
 
 - Every status change (started / blocked / done / failed) gets a board message.
+- When using Bridge Typed Message Schema v1, retain Markdown `content`, use the
+  explicit `typed.kind`, preserve `correlation_id`, reply with `reply_to_id`,
+  and generate a stable `message_key` before submission. Retry an uncertain
+  POST with the same key; never reuse it for a different payload.
+- Typed `DECISION_RESPONSE` is a project decision, not canonical ForgeLoop
+  approval. Typed `CONTROL_NOTICE`, `VERIFICATION_REPORT`, and
+  `ATTESTATION_REPORT` are copied projections that require canonical
+  verification before acting. Typed task/request status is Bridge coordination
+  status, not ForgeLoop lifecycle state.
 - Never end your turn with a question addressed to a human.
 - Never output "please run X" or "the user should Y". Either do it yourself or
   negotiate it with the other agent on the board.
