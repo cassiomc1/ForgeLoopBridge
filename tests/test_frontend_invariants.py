@@ -119,6 +119,11 @@ def test_typed_messages_have_filters_and_safe_structured_rendering():
     assert "typed-fields" in INDEX
     assert "currentTypedKindFilter" in INDEX
     assert "currentCorrelationFilter" in INDEX
+    assert 'value="DECISION_NOTICE"' in INDEX
+    assert "typed_integrity" in INDEX
+    assert "buildTypedIntegrityDetails" in INDEX
+    assert "const payload = { content };" in INDEX
+    assert "const payload = { token, content };" not in INDEX
 
 
 def test_typed_values_do_not_bypass_html_sanitization():

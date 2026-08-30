@@ -41,6 +41,7 @@ TypedMessageKind = Literal[
     "STATUS_UPDATE",
     "DECISION_REQUEST",
     "DECISION_RESPONSE",
+    "DECISION_NOTICE",
     "BLOCKER",
     "REVIEW_RESULT",
     "CONTROL_NOTICE",
@@ -55,6 +56,7 @@ TYPED_MESSAGE_KINDS = frozenset(
         "STATUS_UPDATE",
         "DECISION_REQUEST",
         "DECISION_RESPONSE",
+        "DECISION_NOTICE",
         "BLOCKER",
         "REVIEW_RESULT",
         "CONTROL_NOTICE",
@@ -129,11 +131,27 @@ class DecisionRequestPayload(BridgeModel):
     recommended_option: str | None = Field(default=None, min_length=1, max_length=100)
     decision_class: Literal["REVERSIBLE", "IRREVERSIBLE", "POLICY_SENSITIVE"] = "REVERSIBLE"
 
+    @model_validator(mode="after")
+    def validate_option_references(self):
+        option_ids = [option.id for option in self.options]
+        if len(option_ids) != len(set(option_ids)):
+            raise ValueError("decision option IDs must be unique")
+        if self.recommended_option is not None and self.recommended_option not in option_ids:
+            raise ValueError("recommended_option must reference a declared option")
+        return self
+
 
 class DecisionResponsePayload(BridgeModel):
     kind: Literal["DECISION_RESPONSE"] = "DECISION_RESPONSE"
     decision: str = Field(min_length=1, max_length=200)
     rationale: str = Field(min_length=1, max_length=10_000)
+
+
+class DecisionNoticePayload(BridgeModel):
+    kind: Literal["DECISION_NOTICE"] = "DECISION_NOTICE"
+    decision: str = Field(min_length=1, max_length=200)
+    rationale: str = Field(min_length=1, max_length=10_000)
+    decision_class: Literal["REVERSIBLE", "IRREVERSIBLE", "POLICY_SENSITIVE"] = "REVERSIBLE"
 
 
 class BlockerPayload(BridgeModel):
@@ -181,11 +199,27 @@ class HandoffNoticePayload(BridgeModel):
 class VerificationReportPayload(BridgeModel):
     kind: Literal["VERIFICATION_REPORT"] = "VERIFICATION_REPORT"
     canonical_result: str = Field(min_length=1, max_length=100)
-    scope_mode: Literal["AUTO", "CHANGED", "CLAIMED", "FULL"]
+    # Deprecated v1 compatibility field. New clients should use the precise
+    # requested/resolved fields below.
+    scope_mode: Literal["AUTO", "CHANGED", "CLAIMED", "FULL"] | None = None
+    requested_scope_mode: Literal["AUTO", "CHANGED", "CLAIMED", "FULL"] | None = None
+    resolved_scope_mode: Literal["CHANGED", "CLAIMED", "FULL", "UNRESOLVED"] | None = None
     scope_ref: str | None = Field(default=None, min_length=1, max_length=500)
     checker_id: str | None = Field(default=None, min_length=1, max_length=200)
     execution_ref: str | None = Field(default=None, min_length=1, max_length=500)
     summary: str = Field(min_length=1, max_length=10_000)
+
+    @model_validator(mode="after")
+    def validate_scope_representation(self):
+        if self.scope_mode is None and self.requested_scope_mode is None and self.resolved_scope_mode is None:
+            raise ValueError("verification report must include a scope representation")
+        if (
+            self.scope_mode is not None
+            and self.requested_scope_mode is not None
+            and self.scope_mode != self.requested_scope_mode
+        ):
+            raise ValueError("scope_mode must match requested_scope_mode when both are present")
+        return self
 
 
 class AttestationReportPayload(BridgeModel):
@@ -202,6 +236,7 @@ TypedPayload = Annotated[
     | StatusUpdatePayload
     | DecisionRequestPayload
     | DecisionResponsePayload
+    | DecisionNoticePayload
     | BlockerPayload
     | ReviewResultPayload
     | ControlNoticePayload
@@ -231,6 +266,12 @@ class TypedEnvelopeV1(BridgeModel):
         if isinstance(payload, dict) and "kind" not in payload and "kind" in value:
             normalized = dict(value)
             normalized["payload"] = {"kind": value["kind"], **payload}
+            if value["kind"] == "DECISION_REQUEST" and "expects_reply" not in normalized:
+                normalized["expects_reply"] = True
+            return normalized
+        if value.get("kind") == "DECISION_REQUEST" and "expects_reply" not in value:
+            normalized = dict(value)
+            normalized["expects_reply"] = True
             return normalized
         return value
 
@@ -240,4 +281,8 @@ class TypedEnvelopeV1(BridgeModel):
             raise ValueError("envelope.kind must match payload.kind")
         if self.kind in {"DECISION_REQUEST", "DECISION_RESPONSE"} and self.correlation_id is None:
             raise ValueError("correlation_id is required for decision messages")
+        if self.kind == "DECISION_REQUEST" and not self.expects_reply:
+            raise ValueError("DECISION_REQUEST must expect a reply")
+        if self.kind in {"DECISION_RESPONSE", "DECISION_NOTICE"} and self.expects_reply:
+            raise ValueError(f"{self.kind} must not expect a reply")
         return self

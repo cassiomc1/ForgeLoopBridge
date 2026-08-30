@@ -131,13 +131,33 @@ artifacts, or treat Bridge agreement as trusted adapter evidence.
 
 ForgeLoopBridge additionally exposes **Bridge Typed Message Schema v1**. This
 is separate from ForgeLoop Protocol v1 and is advertised as
-`bridge_api_version: 2.1.0` with `typed_message_versions: [1]` in the public
-status response. Typed messages retain mandatory Markdown content and carry
-typed coordination intent, correlation/reply metadata, idempotency keys, and
-opaque canonical references. Strict validation, role-scoped message
-idempotency, and cross-role reply linkage belong to Bridge transport; they do
-not create ForgeLoop task lifecycle, approval, verification, or attestation
+`bridge_api_version: 2.1.1` with `typed_message_versions: [1]` and the
+`typed_features` capability map in the public status response. Typed messages
+retain mandatory Markdown content and carry typed coordination intent,
+correlation/reply metadata, idempotency keys, and opaque canonical references.
+Strict validation, role-scoped message idempotency, cross-role reply linkage,
+and persisted typed-integrity reporting belong to Bridge transport; they do not
+create ForgeLoop task lifecycle, approval, verification, or attestation
 authority.
+
+The typed surface includes `DECISION_NOTICE` for a unilateral project decision.
+`DECISION_REQUEST` expects a reply, while `DECISION_RESPONSE` and
+`DECISION_NOTICE` do not. Decision option IDs are unique and recommendations
+must reference declared options. Verification reports preserve deprecated v1
+`scope_mode` while new clients may distinguish `requested_scope_mode` from
+`resolved_scope_mode`; `AUTO` is a request, never a resolved value.
+
+`MessageOut` explicitly reports `typed_integrity` as `VALID`,
+`NOT_APPLICABLE`, or `INVALID`. Invalid persisted typed data keeps Markdown
+visible for diagnosis but must not be dispatched as Markdown fallback, and a
+Worker must not advance its cursor. Typed envelopes are capped at 65,536
+normalized UTF-8 JSON bytes before database insertion or SSE broadcast.
+
+The example Worker's typed outbox stores only the exact request and stable
+message key, never authentication, cookie, SSE-ticket, signing, or OIDC
+material. It atomically replaces a bounded file, replays it before polling,
+retains network/5xx failures, and quarantines permanent 4xx failures and
+corrupt outbox files.
 
 ## Current coordination surfaces
 
@@ -156,6 +176,9 @@ authority.
 - Typed REST and SSE messages use the same normalized envelope. REST remains
   the reconciliation source after SSE overflow; typed data is recovered with
   `after_id` and is never interpreted as canonical ForgeLoop truth.
+- The public status response advertises `idempotency`, `correlation`,
+  `reply_linkage`, `canonical_refs`, `outbox_safe_retry`, and
+  `typed_integrity_status` as Bridge transport features.
 
 ## Verification expectation
 

@@ -51,6 +51,15 @@ def envelope(kind: str, payload: dict, **overrides) -> dict:
             {"correlation_id": "decision-1", "reply_to_id": 1},
         ),
         (
+            "DECISION_NOTICE",
+            {
+                "decision": "A",
+                "rationale": "The project chose the durable option.",
+                "decision_class": "REVERSIBLE",
+            },
+            {},
+        ),
+        (
             "BLOCKER",
             {"category": "WORKSPACE", "summary": "Canonical validation failed."},
             {},
@@ -72,7 +81,12 @@ def envelope(kind: str, payload: dict, **overrides) -> dict:
         ),
         (
             "VERIFICATION_REPORT",
-            {"canonical_result": "VALID", "scope_mode": "FULL", "summary": "Checks passed."},
+            {
+                "canonical_result": "VALID",
+                "requested_scope_mode": "AUTO",
+                "resolved_scope_mode": "FULL",
+                "summary": "Checks passed.",
+            },
             {},
         ),
         (
@@ -155,6 +169,108 @@ def test_decision_messages_require_correlation_id():
         )
 
     assert exc_info.value.code == E_BRIDGE_CORRELATION_MISMATCH
+
+
+def test_decision_request_defaults_to_expecting_a_reply():
+    parsed = parse_typed_envelope(
+        envelope(
+            "DECISION_REQUEST",
+            {"question": "Which option?", "options": [{"id": "A", "label": "Use A"}]},
+            correlation_id="decision-default",
+        )
+    )
+
+    assert parsed.expects_reply is True
+
+
+@pytest.mark.parametrize(
+    "raw",
+    (
+        envelope(
+            "DECISION_REQUEST",
+            {"question": "Which option?", "options": [{"id": "A", "label": "Use A"}]},
+            correlation_id="decision-explicit-false",
+            expects_reply=False,
+        ),
+        envelope(
+            "DECISION_NOTICE",
+            {
+                "decision": "A",
+                "rationale": "Chosen.",
+                "decision_class": "REVERSIBLE",
+            },
+            expects_reply=True,
+        ),
+    ),
+)
+def test_decision_expectation_flags_are_consistent(raw):
+    with pytest.raises(BridgeProtocolError) as exc_info:
+        parse_typed_envelope(raw)
+
+    assert exc_info.value.code == E_BRIDGE_TYPED_PAYLOAD_INVALID
+
+
+def test_decision_request_option_references_are_consistent():
+    duplicate_ids = envelope(
+        "DECISION_REQUEST",
+        {
+            "question": "Which option?",
+            "options": [{"id": "A", "label": "First"}, {"id": "A", "label": "Second"}],
+        },
+        correlation_id="decision-options",
+    )
+    unknown_recommendation = envelope(
+        "DECISION_REQUEST",
+        {
+            "question": "Which option?",
+            "options": [{"id": "A", "label": "First"}],
+            "recommended_option": "B",
+        },
+        correlation_id="decision-recommendation",
+    )
+
+    for raw in (duplicate_ids, unknown_recommendation):
+        with pytest.raises(BridgeProtocolError) as exc_info:
+            parse_typed_envelope(raw)
+        assert exc_info.value.code == E_BRIDGE_TYPED_PAYLOAD_INVALID
+
+
+@pytest.mark.parametrize(
+    "resolved_scope_mode",
+    ("CHANGED", "CLAIMED", "FULL", "UNRESOLVED"),
+)
+def test_verification_scope_separates_requested_and_resolved_modes(resolved_scope_mode):
+    parsed = parse_typed_envelope(
+        envelope(
+            "VERIFICATION_REPORT",
+            {
+                "canonical_result": "VALID",
+                "requested_scope_mode": "AUTO",
+                "resolved_scope_mode": resolved_scope_mode,
+                "summary": "Scope was resolved by the canonical host.",
+            },
+        )
+    )
+
+    assert parsed.payload.requested_scope_mode == "AUTO"
+    assert parsed.payload.resolved_scope_mode == resolved_scope_mode
+
+
+def test_verification_scope_rejects_auto_as_a_resolved_mode():
+    with pytest.raises(BridgeProtocolError) as exc_info:
+        parse_typed_envelope(
+            envelope(
+                "VERIFICATION_REPORT",
+                {
+                    "canonical_result": "VALID",
+                    "requested_scope_mode": "AUTO",
+                    "resolved_scope_mode": "AUTO",
+                    "summary": "Invalid scope projection.",
+                },
+            )
+        )
+
+    assert exc_info.value.code == E_BRIDGE_TYPED_PAYLOAD_INVALID
 
 
 def test_reply_relationship_requires_existing_opposite_role_message():

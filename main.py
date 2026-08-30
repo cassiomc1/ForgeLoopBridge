@@ -13,7 +13,7 @@ import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import aiosqlite
 from fastapi import FastAPI, HTTPException, Request
@@ -23,6 +23,8 @@ from pydantic import BaseModel, Field, field_validator
 
 from bridge_protocol.errors import (
     E_BRIDGE_IDEMPOTENCY_CONFLICT,
+    E_BRIDGE_PERSISTED_TYPED_INVALID,
+    E_BRIDGE_TYPED_PAYLOAD_TOO_LARGE,
     BridgeProtocolError,
 )
 from bridge_protocol.validation import (
@@ -56,8 +58,16 @@ if len(ENGINEER_TOKEN) < 16 or len(WORKER_TOKEN) < 16:
     )
 
 MAX_PAGE_SIZE = 1000
-BRIDGE_API_VERSION = "2.1.0"
+BRIDGE_API_VERSION = "2.1.1"
 TYPED_MESSAGE_VERSIONS = [1]
+TYPED_FEATURES = {
+    "idempotency": True,
+    "correlation": True,
+    "reply_linkage": True,
+    "canonical_refs": True,
+    "outbox_safe_retry": True,
+    "typed_integrity_status": True,
+}
 
 
 def _env_int(name: str, default: int, minimum: int, maximum: int | None = None) -> int:
@@ -101,6 +111,7 @@ SSE_QUEUE_SIZE = _env_int("SSE_QUEUE_SIZE", 256, 16, 10000)
 SSE_TICKET_TTL = _env_float("SSE_TICKET_TTL", 30, 1, 300, minimum_inclusive=True)
 SSE_TICKET_RATE_LIMIT = _env_int("SSE_TICKET_RATE_LIMIT", 30, 1)
 SSE_TICKET_RATE_WINDOW = _env_float("SSE_TICKET_RATE_WINDOW", 60, 0)
+MAX_TYPED_ENVELOPE_BYTES = _env_int("MAX_TYPED_ENVELOPE_BYTES", 65536, 1)
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -266,6 +277,8 @@ class MessageOut(BaseModel):
     next_action: str | None = None
     reason_code: str | None = None
     typed: dict[str, Any] | None = None
+    typed_integrity: Literal["INVALID", "NOT_APPLICABLE", "VALID"] = "NOT_APPLICABLE"
+    typed_error: dict[str, str] | None = None
 
 
 # ─── Auth helpers ─────────────────────────────────────────────────────────────
@@ -441,6 +454,20 @@ def _json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def _typed_envelope_size(envelope) -> int:
+    return len(_json_dumps(envelope_to_dict(envelope)).encode("utf-8"))
+
+
+def _validate_typed_envelope_size(envelope) -> None:
+    size = _typed_envelope_size(envelope)
+    if size > MAX_TYPED_ENVELOPE_BYTES:
+        raise BridgeProtocolError(
+            E_BRIDGE_TYPED_PAYLOAD_TOO_LARGE,
+            f"typed envelope is {size} bytes; maximum is {MAX_TYPED_ENVELOPE_BYTES}",
+            status_code=413,
+        )
+
+
 def _typed_storage_values(envelope) -> tuple[Any, ...]:
     if envelope is None:
         return (None, None, None, None, None, None, None, None)
@@ -458,10 +485,31 @@ def _typed_storage_values(envelope) -> tuple[Any, ...]:
     )
 
 
-def _typed_envelope_from_row(row):
+def _typed_row_state(row) -> tuple[Any, str, dict[str, str] | None]:
     data = dict(row)
+    typed_values = (
+        data.get("typed_schema_version"),
+        data.get("typed_kind"),
+        data.get("message_key"),
+        data.get("correlation_id"),
+        data.get("reply_to_id"),
+        data.get("expects_reply"),
+        data.get("typed_payload_json"),
+        data.get("canonical_refs_json"),
+    )
     if data.get("typed_schema_version") is None:
-        return None
+        if any(value is not None for value in typed_values[1:]):
+            logger.warning("Partial typed representation for message id=%s", data.get("id"))
+            return (
+                None,
+                "INVALID",
+                {
+                    "code": E_BRIDGE_PERSISTED_TYPED_INVALID,
+                    "message": "Persisted typed representation failed validation.",
+                },
+            )
+        return None, "NOT_APPLICABLE", None
+
     try:
         payload = json.loads(data["typed_payload_json"])
         canonical_refs = json.loads(data["canonical_refs_json"])
@@ -482,15 +530,26 @@ def _typed_envelope_from_row(row):
             "payload": payload,
             "canonical_refs": canonical_refs,
         }
-        return parse_typed_envelope(raw)
-    except (BridgeProtocolError, TypeError, ValueError, KeyError, json.JSONDecodeError):
+        return parse_typed_envelope(raw), "VALID", None
+    except Exception:
         logger.warning("Malformed typed representation for message id=%s", data.get("id"))
-        return None
+        return (
+            None,
+            "INVALID",
+            {
+                "code": E_BRIDGE_PERSISTED_TYPED_INVALID,
+                "message": "Persisted typed representation failed validation.",
+            },
+        )
+
+
+def _typed_envelope_from_row(row):
+    return _typed_row_state(row)[0]
 
 
 def _message_out_from_row(row) -> MessageOut:
     data = dict(row)
-    envelope = _typed_envelope_from_row(data)
+    envelope, typed_integrity, typed_error = _typed_row_state(data)
     return MessageOut(
         id=int(data["id"]),
         role=data["role"],
@@ -503,6 +562,8 @@ def _message_out_from_row(row) -> MessageOut:
         next_action=data.get("next_action"),
         reason_code=data.get("reason_code"),
         typed=envelope_to_dict(envelope) if envelope is not None else None,
+        typed_integrity=typed_integrity,
+        typed_error=typed_error,
     )
 
 
@@ -533,8 +594,10 @@ def _submission_fingerprint(
 
 def _row_submission_fingerprint(row) -> str | None:
     data = dict(row)
-    envelope = _typed_envelope_from_row(data)
-    if data.get("message_key") is not None and envelope is None:
+    envelope, typed_integrity, _typed_error = _typed_row_state(data)
+    if typed_integrity == "INVALID" or (
+        data.get("message_key") is not None and envelope is None
+    ):
         return None
     return _submission_fingerprint(
         content=data["content"],
@@ -701,6 +764,7 @@ async def post_message(msg: MessageCreate, request: Request):
     if msg.typed is not None:
         envelope = parse_typed_envelope(msg.typed)
         validate_legacy_kind_consistency(message_type, envelope)
+        _validate_typed_envelope_size(envelope)
 
     submission_fingerprint = _submission_fingerprint(
         content=content,
@@ -791,6 +855,8 @@ async def post_message(msg: MessageCreate, request: Request):
         next_action=msg.next_action,
         reason_code=msg.reason_code,
         typed=envelope_to_dict(envelope) if envelope is not None else None,
+        typed_integrity="VALID" if envelope is not None else "NOT_APPLICABLE",
+        typed_error=None,
     )
     broadcast(out)
     return out
@@ -885,6 +951,7 @@ async def status():
         "status": "ok",
         "bridge_api_version": BRIDGE_API_VERSION,
         "typed_message_versions": TYPED_MESSAGE_VERSIONS,
+        "typed_features": TYPED_FEATURES,
         "total_messages": total,
         "last_message_role": last["role"] if last else None,
         "last_message_at": last["created_at"] if last else None,
