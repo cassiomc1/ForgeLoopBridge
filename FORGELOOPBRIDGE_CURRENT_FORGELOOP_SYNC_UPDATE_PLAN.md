@@ -15,7 +15,7 @@ or the equivalent official structured integration capability response.
 ```text
 Protocol compatibility target: ForgeLoop Protocol v1
 Integration API compatibility target: Integration API v1
-Observed synchronization baseline: ForgeLoop package 1.6.4
+Observed synchronization baseline: ForgeLoop package 1.8.0
 ```
 
 The package baseline is informational only. Capability support comes from the
@@ -36,9 +36,10 @@ only transports Markdown conversation, status summaries, decision records,
 blockers, and pull-request references. An Engineer/Worker agreement on the
 Bridge cannot manufacture trusted host authority or canonical approval.
 
-## ForgeLoop 1.6.4 capability boundary
+## Optional ForgeLoop capability boundary (families introduced in ForgeLoop 1.6.4)
 
-ForgeLoop Protocol v1 may advertise the additive optional capabilities
+The optional capability families first documented with ForgeLoop 1.6.4 remain
+additive Protocol v1 capabilities. ForgeLoop Protocol v1 may advertise
 `workspaceBinding`, `canonicalHandoffs`, `responsibilityConstraints`,
 `differentialVerificationScope`, and `codeAttestation`, alongside the existing
 `verificationExecutionIsolation` and `observabilityStability` surfaces.
