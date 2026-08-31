@@ -4,7 +4,7 @@
 
 <p align="center">
   <strong>Minimalist Markdown communication board between Engineer and Worker agents</strong><br>
-  Built to coordinate with <a href="https://github.com/cassiomc1/ForgeLoop">ForgeLoop</a>
+  Built to coordinate with <a href="https://github.com/cassiomc1/forgeloop">ForgeLoop</a>
 </p>
 
 ---
@@ -13,7 +13,7 @@
 
 **Minimalist Markdown communication board between two agents: Engineer and Worker.**
 
-Designed to coordinate alongside [ForgeLoop](https://github.com/cassiomc1/ForgeLoop) — a portable engineering protocol for AI coding agents.
+Designed to coordinate alongside [ForgeLoop](https://github.com/cassiomc1/forgeloop) — a portable engineering protocol for AI coding agents.
 
 Current Bridge release: **2.1.2**. The typed message schema remains v1, and
 ForgeLoop compatibility remains Protocol v1 / Integration API v1.
@@ -34,8 +34,9 @@ The Bridge supports current ForgeLoop observability, diagnostic, durable-action,
 approval, capability-policy, trajectory, workspace-binding, canonical-handoff,
 responsibility-constraint, differential-verification-scope, and code-attestation
 capabilities when the active host advertises them. Package version alone is
-never a compatibility decision; the observed ForgeLoop package `1.6.4` is an
-informational baseline only.
+never a compatibility decision; the observed ForgeLoop package `1.8.0` is an
+informational baseline only. Capability support still comes from the canonical
+protocol-info or structured integration response.
 
 Before creating or resuming ForgeLoop task state, the active execution host must inspect the installed project's public compatibility boundary with `forgeloop protocol-info --json` (or the equivalent official structured integration capability call).
 
@@ -105,7 +106,7 @@ a lifecycle failure. Provider/host usage must come through the trusted
 integration boundary; the standalone ForgeLoop CLI's `usage-record` fallback
 is actor-reported only.
 
-### ForgeLoop 1.6.4 optional extension boundaries
+### Optional ForgeLoop extension boundaries (families introduced in ForgeLoop 1.6.4)
 
 ForgeLoopBridge coordinates hosts that may use these optional Protocol v1
 capabilities. It does not implement, validate, infer, or attest them. Absence
@@ -444,7 +445,7 @@ Your only communication channel with the Worker is ForgeLoopBridge.
 Board URL: http://localhost:8000
 Engineer token: <your ENGINEER_TOKEN>
 
-The Worker is required to follow the ForgeLoop protocol (https://github.com/cassiomc1/ForgeLoop) for every task.
+The Worker is required to follow the ForgeLoop protocol (https://github.com/cassiomc1/forgeloop) for every task.
 
 When you post a task, always include:
 - Clear goal
@@ -550,7 +551,7 @@ Your only communication channel with the Engineer is ForgeLoopBridge.
 Board URL: http://localhost:8000
 Worker token: <your WORKER_TOKEN>
 
-You MUST execute every task using the ForgeLoop protocol (https://github.com/cassiomc1/ForgeLoop).
+You MUST execute every task using the ForgeLoop protocol (https://github.com/cassiomc1/forgeloop).
 
 Integration selection:
 If your execution host exposes an official ForgeLoop structured integration (e.g. `@cassiomc1/forgeloop/integration` or the official MCP adapter), prefer it. Otherwise resolve and use the project-local ForgeLoop CLI. Never write ForgeLoop-owned state manually.

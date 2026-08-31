@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Align the current ForgeLoop compatibility baseline with published package
+  1.8.0 while preserving Protocol v1, Integration API v1, and capability-first
+  authority decisions.
+
 ## 2.1.2 - 2026-08-30
 
 - Treat HTTP 408, 425, 429, and 5xx typed-message delivery failures as

@@ -228,7 +228,7 @@ def test_current_sync_record_documents_verification_isolation():
     assert "execution cwd" in text
 
 
-def test_current_sync_record_is_current_for_forgeloop_164():
+def test_current_sync_record_is_current_for_forgeloop_18():
     current = (ROOT / "FORGELOOPBRIDGE_CURRENT_FORGELOOP_SYNC_UPDATE_PLAN.md").read_text(
         encoding="utf-8"
     )
@@ -240,7 +240,7 @@ def test_current_sync_record_is_current_for_forgeloop_164():
         "codeAttestation",
     ):
         assert capability in current
-    assert "Observed synchronization baseline: ForgeLoop package 1.6.4" in current
+    assert "Observed synchronization baseline: ForgeLoop package 1.8.0" in current
     assert "package version" in current.lower()
     assert "does not implement, validate, infer, or attest" in current
     assert "trusted scoped checker" in current.lower()
