@@ -235,6 +235,71 @@ def test_decision_request_option_references_are_consistent():
         assert exc_info.value.code == E_BRIDGE_TYPED_PAYLOAD_INVALID
 
 
+def test_status_update_can_carry_canonical_profile_and_context_usage():
+    parsed = parse_typed_envelope(
+        envelope(
+            "STATUS_UPDATE",
+            {
+                "state": "IN_PROGRESS",
+                "summary": "Using canonical context.",
+                "execution_profile": {
+                    "requested": "light",
+                    "floor": "balanced",
+                    "resolved": "balanced",
+                    "reasons": ["SAFETY_FLOOR"],
+                    "escalated": True,
+                },
+                "context_policy": {
+                    "context_depth": "relevant",
+                    "output": "standard",
+                    "plan_depth": "standard",
+                    "guide_strategy": "relevant",
+                    "verification_strategy": "normal",
+                    "optional_artifacts": "lazy",
+                    "required_sections": ["objective", "verification"],
+                    "excluded_context": ["unrelated-repository-context"],
+                    "allowed_optional_context": ["task-history"],
+                },
+                "context_usage": {
+                    "source": "HOST_REPORTED",
+                    "profile": "balanced",
+                    "items": {
+                        "task_context": 12,
+                        "guides": 8,
+                        "history": None,
+                        "protocol_instructions": None,
+                        "repository_context": None,
+                        "other": None,
+                    },
+                },
+            },
+        )
+    )
+
+    assert parsed.payload.execution_profile.resolved == "balanced"
+    assert parsed.payload.context_policy.context_depth == "relevant"
+    assert parsed.payload.context_usage.items.task_context == 12
+
+
+def test_unknown_context_usage_must_keep_items_null():
+    with pytest.raises(BridgeProtocolError) as exc_info:
+        parse_typed_envelope(
+            envelope(
+                "STATUS_UPDATE",
+                {
+                    "state": "IN_PROGRESS",
+                    "summary": "Invalid context telemetry.",
+                    "context_usage": {
+                        "source": "UNKNOWN",
+                        "profile": "light",
+                        "items": {"task_context": 1},
+                    },
+                },
+            )
+        )
+    assert exc_info.value.code == E_BRIDGE_TYPED_PAYLOAD_INVALID
+
+
 @pytest.mark.parametrize(
     "resolved_scope_mode",
     ("CHANGED", "CLAIMED", "FULL", "UNRESOLVED"),

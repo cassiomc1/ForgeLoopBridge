@@ -316,6 +316,27 @@ def test_readme_documents_architecture_correct_banner_and_reported_metadata():
     assert "/healthz" in README
 
 
+def test_readme_documents_adaptive_context_boundary_and_unknown_usage():
+    text = README.lower()
+    assert "adaptive execution context" in text
+    assert "forgeloop_context_command" in text
+    assert "task/context" in text
+    assert "resolved" in text
+    assert "unknown" in text
+    assert "never estimates token counts" in text
+    assert "usage-record" in text
+
+
+def test_worker_poller_documents_adaptive_context_boundary():
+    text = WORKER_POLL.lower()
+    assert "forgeloop_context_command" in text
+    assert "executionprofilecontext" in text
+    assert "balanced compatibility behavior" in text
+    assert "guessed light" in text
+    assert "never run" in text
+    assert "through a shell" in text
+
+
 def test_pyproject_version_matches_app_version():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'version = "2.1.2"' in pyproject
