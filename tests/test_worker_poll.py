@@ -114,6 +114,128 @@ def test_worker_poller_documents_all_forgeloop_164_boundaries():
         assert name in WORKER_POLL
 
 
+def test_read_forgeloop_context_uses_canonical_host_adapter(monkeypatch, tmp_path):
+    monkeypatch.setenv("FORGELOOP_CONTEXT_COMMAND", "context-adapter --fixed")
+    monkeypatch.setenv("FORGELOOP_CLI", "forgeloop --local")
+    monkeypatch.setenv("FORGELOOP_PROJECT_PATH", str(tmp_path))
+    calls = []
+
+    def fake_run_json_command(command, arguments, project_root):
+        calls.append((command, arguments, project_root))
+        if arguments[0] == "protocol-info":
+            return {
+                "features": {
+                    "adaptiveExecutionProfiles": {"supported": True},
+                    "executionProfileContext": {"supported": True},
+                },
+                "resources": [{"name": "task/context"}],
+            }
+        return {"data": {
+            "taskId": "task-context-1",
+            "executionProfile": {
+                "requested": "light",
+                "floor": "balanced",
+                "resolved": "balanced",
+                "reasons": ["SAFETY_FLOOR"],
+                "escalated": True,
+            },
+            "phase": "EXECUTING",
+            "nextAction": "START_VERIFICATION",
+            "objective": "Build the page.",
+            "deliverables": ["index.html"],
+            "constraints": ["No external services."],
+            "selectedGuideIds": ["clean"],
+            "verificationRequirements": [{"id": "html"}],
+            "contextPolicy": {
+                "contextDepth": "relevant",
+                "output": "standard",
+                "planDepth": "standard",
+                "guideStrategy": "relevant",
+                "verificationStrategy": "normal",
+                "optionalArtifacts": "lazy",
+                "requiredSections": ["objective", "verification"],
+                "excludedContext": ["full-history"],
+                "allowedOptionalContext": [],
+            },
+            "optionalContext": {"available": [], "loaded": []},
+            "invariants": {
+                "lifecyclePhasesPreserved": True,
+                "requiredGatesPreserved": True,
+                "evidenceRequirementsPreserved": True,
+                "verificationTruthPreserved": True,
+                "authorityChecksPreserved": True,
+                "provenancePreserved": True,
+                "completionValidationPreserved": True,
+                "safetyFloorPreserved": True,
+                "lifecyclePhaseSkippingAllowed": False,
+            },
+        }}
+
+    monkeypatch.setattr(worker_poll, "_run_json_command", fake_run_json_command)
+
+    consumed = worker_poll.read_forgeloop_context("task-context-1")
+
+    assert consumed["status"] == "CANONICAL"
+    assert consumed["execution_profile"]["resolved"] == "balanced"
+    assert calls[0][0] == ["forgeloop", "--local"]
+    assert calls[0][1][:2] == ["protocol-info", "--json"]
+    assert calls[1][0] == ["context-adapter", "--fixed"]
+    assert calls[1][1] == ["--task", "task-context-1", "--path", str(tmp_path), "--json"]
+    assert all(call[2] == tmp_path for call in calls)
+
+
+def test_context_status_payload_preserves_host_usage_and_unknowns(monkeypatch):
+    context = {
+        "status": "CANONICAL",
+        "execution_profile": {
+            "requested": "auto",
+            "floor": "light",
+            "resolved": "light",
+            "reasons": [],
+            "escalated": False,
+        },
+        "context_policy": {
+            "context_depth": "targeted",
+            "output": "compact",
+            "plan_depth": "short",
+            "guide_strategy": "targeted",
+            "verification_strategy": "focused",
+            "optional_artifacts": "lazy",
+            "required_sections": [],
+            "excluded_context": [],
+            "allowed_optional_context": [],
+        },
+    }
+
+    payload = worker_poll.build_context_status_payload(
+        context,
+        {
+            "source": "HOST_REPORTED",
+            "items": {"taskContext": 20, "guides": 5},
+        },
+    )
+
+    assert payload["context_usage"] == {
+        "source": "HOST_REPORTED",
+        "profile": "light",
+        "items": {
+            "task_context": 20,
+            "guides": 5,
+            "history": None,
+            "protocol_instructions": None,
+            "repository_context": None,
+            "other": None,
+        },
+    }
+    assert "total" not in payload["context_usage"]["items"]
+
+    unknown = worker_poll.build_context_status_payload(
+        context,
+        {"source": "UNKNOWN", "items": {}},
+    )
+    assert all(value is None for value in unknown["context_usage"]["items"].values())
+
+
 def test_post_status_forwards_coordination_references(monkeypatch):
     captured = {}
 

@@ -44,7 +44,7 @@ If the host exposes an official ForgeLoop structured integration (such as `@cass
 ### Compatibility dimensions & recovery awareness
 
 - **Protocol-first handshake**: Require `protocolVersion == 1`; when structured integration is used, require a supported Integration API version. Unknown protocol/schema versions fail closed.
-- **Capability detection**: Inspect `protocolInfo.features` (or the equivalent structured capability response) for `diagnostics`, `executionHistory`, `structuredTrace`, `taskInspection`, `reflection`, `durableActions`, `capabilityPolicy`, `durableApprovals`, `trajectoryMetrics`, `trajectoryEvaluation`, `verificationExecutionIsolation`, `observabilityStability`, `workspaceBinding`, `canonicalHandoffs`, `responsibilityConstraints`, `differentialVerificationScope`, and `codeAttestation`. Additive features are enabled only when advertised.
+- **Capability detection**: Inspect `protocolInfo.features` (or the equivalent structured capability response) for `diagnostics`, `executionHistory`, `structuredTrace`, `taskInspection`, `reflection`, `durableActions`, `capabilityPolicy`, `durableApprovals`, `trajectoryMetrics`, `trajectoryEvaluation`, `verificationExecutionIsolation`, `observabilityStability`, `adaptiveExecutionProfiles`, `executionProfileContext`, `workspaceBinding`, `canonicalHandoffs`, `responsibilityConstraints`, `differentialVerificationScope`, and `codeAttestation`. Additive features are enabled only when advertised.
 - **No package-version inference**: A package version alone does not imply that a capability is present. Use `features.durableActions.supported`, `features.capabilityPolicy.supported`, and `features.durableApprovals.supported`.
 - **Capability decisions**: Treat canonical `ALLOW`, `DENY`, `REQUIRE_AUTHORITY`, and `REQUIRE_APPROVAL` decisions as ForgeLoop policy output; Bridge messages can report them but cannot satisfy them.
 - **Recovery awareness**: A project with active recovery state requires a recovery-aware reader supporting validated claim projection. A reader that does not understand that projection must fail closed instead of inferring ownership from `task.json` or `recovery.json` alone.
@@ -76,6 +76,34 @@ If ForgeLoop reports `E_VERIFICATION_ISOLATION_UNAVAILABLE` or
 `E_VERIFICATION_EXECUTION_INVALID`, treat verification as blocked and follow
 the canonical ForgeLoop recovery/next guidance. Do not downgrade isolation,
 repair contradictory metadata, or manually create execution evidence.
+
+### Adaptive execution context
+
+The Worker example can consume ForgeLoop's read-only `task/context`
+integration resource through a configured local host adapter. Set
+`FORGELOOP_CONTEXT_COMMAND` to a command accepting
+`--task <id> --path <project> --json`; it must return the canonical projection
+or an object containing it under `data`. The worker reads
+`forgeloop protocol-info --json` first and enables the projection only when
+`adaptiveExecutionProfiles`, `executionProfileContext`, and
+`task/context` are advertised.
+
+The displayed and forwarded profile is the canonical `resolved` value, not
+the request. The canonical context policy is copied with bounded lists and
+invariants; the Bridge does not classify work, lower a safety floor, skip a
+lifecycle phase, or treat the Engineer's Markdown as authority. Older hosts
+receive the explicit balanced compatibility projection. An advertised but
+unavailable or malformed projection is reported as unavailable and does not
+become a guessed light profile.
+
+Typed `STATUS_UPDATE` payloads may carry `execution_profile`,
+`context_policy`, and `context_usage`. Context usage is optional host
+telemetry: `HOST_REPORTED` values are copied only when actually supplied,
+and `UNKNOWN` keeps every item null. The Bridge never estimates token counts,
+derives totals from item values, or turns observational context inflation into
+a lifecycle failure. Provider/host usage must come through the trusted
+integration boundary; the standalone ForgeLoop CLI's `usage-record` fallback
+is actor-reported only.
 
 ### ForgeLoop 1.6.4 optional extension boundaries
 

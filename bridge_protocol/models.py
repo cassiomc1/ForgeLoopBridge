@@ -104,6 +104,65 @@ class StatusProgress(BridgeModel):
         return self
 
 
+class ExecutionProfileProjection(BridgeModel):
+    """Opaque canonical execution-profile values copied for host presentation."""
+
+    requested: Literal["auto", "light", "balanced", "full"] | None = None
+    floor: Literal["light", "balanced", "full"]
+    resolved: Literal["light", "balanced", "full"]
+    reasons: list[str] = Field(default_factory=list, max_length=32)
+    escalated: bool
+
+    @field_validator("reasons")
+    @classmethod
+    def validate_reasons(cls, value: list[str]) -> list[str]:
+        return _validate_printable_string_list(value)
+
+
+class ContextPolicyProjection(BridgeModel):
+    """Bounded presentation policy copied from canonical task/context."""
+
+    context_depth: str = Field(min_length=1, max_length=100)
+    output: str = Field(min_length=1, max_length=100)
+    plan_depth: str = Field(min_length=1, max_length=100)
+    guide_strategy: str = Field(min_length=1, max_length=100)
+    verification_strategy: str = Field(min_length=1, max_length=100)
+    optional_artifacts: str = Field(min_length=1, max_length=100)
+    required_sections: list[str] = Field(default_factory=list, max_length=32)
+    excluded_context: list[str] = Field(default_factory=list, max_length=64)
+    allowed_optional_context: list[str] = Field(default_factory=list, max_length=64)
+
+    @field_validator("required_sections", "excluded_context", "allowed_optional_context")
+    @classmethod
+    def validate_policy_lists(cls, value: list[str]) -> list[str]:
+        return _validate_printable_string_list(value)
+
+
+class ContextUsageItems(BridgeModel):
+    task_context: int | None = Field(default=None, ge=0)
+    guides: int | None = Field(default=None, ge=0)
+    history: int | None = Field(default=None, ge=0)
+    protocol_instructions: int | None = Field(default=None, ge=0)
+    repository_context: int | None = Field(default=None, ge=0)
+    other: int | None = Field(default=None, ge=0)
+
+
+class ContextUsageReport(BridgeModel):
+    """Host-observed context usage; UNKNOWN is never treated as zero."""
+
+    source: Literal["HOST_REPORTED", "UNKNOWN"]
+    profile: Literal["light", "balanced", "full"] | None = None
+    items: ContextUsageItems
+
+    @model_validator(mode="after")
+    def unknown_usage_is_null(self):
+        if self.source == "UNKNOWN" and any(
+            value is not None for value in self.items.model_dump().values()
+        ):
+            raise ValueError("UNKNOWN context usage must keep every item null")
+        return self
+
+
 class StatusUpdatePayload(BridgeModel):
     kind: Literal["STATUS_UPDATE"] = "STATUS_UPDATE"
     state: Literal[
@@ -116,6 +175,9 @@ class StatusUpdatePayload(BridgeModel):
     ]
     summary: str = Field(min_length=1, max_length=10_000)
     progress: StatusProgress | None = None
+    execution_profile: ExecutionProfileProjection | None = None
+    context_policy: ContextPolicyProjection | None = None
+    context_usage: ContextUsageReport | None = None
 
 
 class DecisionOption(BridgeModel):

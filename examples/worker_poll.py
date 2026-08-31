@@ -16,15 +16,18 @@ workflow:
 2. Inspect `forgeloop protocol-info --json` and feature-detect capabilities;
    include `verificationExecutionIsolation`; never infer capabilities from a
    package version alone or self-attest a trusted isolation boundary.
-3. Discover existing tasks (`forgeloop task-list --json`) before creating a new one.
-4. Treat canonical `forgeloop next` as the dispatcher after every meaningful
+3. When `FORGELOOP_CONTEXT_COMMAND` is configured, read the canonical
+   `task/context` projection through that host adapter; use its resolved profile
+   and bounded policy, and never classify the task locally.
+4. Discover existing tasks (`forgeloop task-list --json`) before creating a new one.
+5. Treat canonical `forgeloop next` as the dispatcher after every meaningful
    protocol mutation. The example lifecycle is a happy-path illustration only.
-5. Respect canonical action, approval, policy, diagnostic, and reconciliation
+6. Respect canonical action, approval, policy, diagnostic, and reconciliation
    guidance. `COMMIT_UNKNOWN` is a hard stop: do not retry the action.
-6. Reach VALID completion with `forgeloop complete --task <task-id> --json` and
+7. Reach VALID completion with `forgeloop complete --task <task-id> --json` and
    verify terminal `nextAction: NONE` before posting a COMPLETE status;
    otherwise report the exact blocked/partial state.
-7. Open PR and report structured Markdown status on ForgeLoopBridge.
+8. Open PR and report structured Markdown status on ForgeLoopBridge.
 
 Usage:
     python worker_poll.py [--auto-ack] [--start-mode pending|now|history]
@@ -44,10 +47,25 @@ import json
 import math
 import os
 import secrets
+import shlex
+import subprocess
+import sys
 import time
 from pathlib import Path
 
 import requests
+
+# Keep the documented `python examples/worker_poll.py` entry point usable from
+# a source checkout while still allowing the example to be imported normally.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from bridge_protocol.forgeloop_context import (  # noqa: E402
+    consume_task_context,
+    unavailable_context,
+)
+from bridge_protocol.models import ContextUsageReport  # noqa: E402
 
 BASE_URL = "http://localhost:8000"          # change to your ForgeLoopBridge URL
 WORKER_TOKEN = "change-me"                  # same token configured on the server
@@ -174,6 +192,7 @@ TYPED_MESSAGE_KINDS = frozenset(
 SUPPORTED_TYPED_SCHEMA_VERSIONS = frozenset({1})
 START_MODES = ("pending", "now", "history")
 LATEST_PAGE_SIZE = 200
+FORGELOOP_JSON_TIMEOUT_SECONDS = 30
 
 
 FORGELOOP_BOOTSTRAP = """
@@ -217,6 +236,19 @@ Query `forgeloop next --task <task-id> --json` after every meaningful mutation;
 its nextAction, reasonCodes, authorityRequired, approvalRequired,
 capabilityDecision, hostActionRequired, and reconciliationAuthorityRequired
 fields take precedence over examples.
+
+For profile-aware host integration, configure `FORGELOOP_CONTEXT_COMMAND` with
+a local command that accepts `--task <id> --path <project> --json` and returns
+the canonical `task/context` object (or an object containing it under `data`).
+The poller invokes `forgeloop protocol-info --json` first, then consumes the
+projection only when `adaptiveExecutionProfiles`, `executionProfileContext`,
+and `task/context` are advertised. Older ForgeLoop installations use explicit
+balanced compatibility behavior; an advertised but unavailable or malformed
+projection is reported as unavailable and never replaced with a guessed light
+profile. Set `FORGELOOP_PROJECT_PATH` when the worker process is not running in
+the target project. Set `FORGELOOP_CLI` only to the executable plus fixed
+arguments needed to invoke the project-local CLI; commands are never run
+through a shell.
 """.strip()
 
 
@@ -238,6 +270,133 @@ class OutboxKeyConflict(ValueError):
 
 class OutboxSecurityError(ValueError):
     """Raised when an outbox value contains an authentication secret field."""
+
+
+def _configured_command(name: str) -> list[str] | None:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return None
+    try:
+        command = shlex.split(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} is not valid shell-style argument text") from exc
+    if not command:
+        raise ValueError(f"{name} must contain an executable")
+    return command
+
+
+def _run_json_command(command: list[str], arguments: list[str], project_root: Path) -> object:
+    """Run a configured host adapter without shell expansion or secret logging."""
+    try:
+        result = subprocess.run(
+            [*command, *arguments],
+            cwd=project_root,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=FORGELOOP_JSON_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"configured ForgeLoop adapter did not complete ({exc.__class__.__name__})") from exc
+    if result.returncode != 0:
+        raise RuntimeError(f"configured ForgeLoop adapter exited with status {result.returncode}")
+    try:
+        value = json.loads(result.stdout)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("configured ForgeLoop adapter returned invalid JSON") from exc
+    return value
+
+
+def read_forgeloop_context(task_id: str | None) -> dict | None:
+    """Read and validate canonical task/context when a host adapter is configured.
+
+    A missing adapter is deliberately distinct from a missing canonical
+    projection. The former leaves the example unconfigured; the latter is
+    reported as unavailable and never becomes a locally guessed profile.
+    """
+    if not task_id:
+        return None
+    context_command = _configured_command("FORGELOOP_CONTEXT_COMMAND")
+    if context_command is None:
+        return None
+
+    cli_command = _configured_command("FORGELOOP_CLI") or ["forgeloop"]
+    project_root = Path(os.getenv("FORGELOOP_PROJECT_PATH") or os.getcwd()).resolve()
+    try:
+        protocol_info = _run_json_command(
+            cli_command,
+            ["protocol-info", "--json", "--path", str(project_root)],
+            project_root,
+        )
+        raw_context = _run_json_command(
+            context_command,
+            ["--task", task_id, "--path", str(project_root), "--json"],
+            project_root,
+        )
+        if isinstance(raw_context, dict) and isinstance(raw_context.get("data"), dict):
+            raw_context = raw_context["data"]
+        return consume_task_context(
+            protocol_info if isinstance(protocol_info, dict) else None,
+            raw_context if isinstance(raw_context, dict) else None,
+            expected_task_id=task_id,
+        )
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        return unavailable_context(f"ForgeLoop context adapter failed: {exc}")
+
+
+def build_context_status_payload(context: dict | None, usage: dict | None = None) -> dict:
+    """Build typed status fields from canonical projection and host telemetry.
+
+    The usage argument is copied only when the host supplies actual values.
+    Missing values remain null; this helper never estimates totals or item
+    counts and never accepts a Bridge message as canonical context.
+    """
+    if not isinstance(context, dict) or context.get("status") not in {
+        "CANONICAL",
+        "COMPATIBILITY_FALLBACK",
+    }:
+        return {}
+
+    payload = {
+        "execution_profile": context["execution_profile"],
+        "context_policy": context["context_policy"],
+    }
+    if usage is None:
+        return payload
+
+    candidate = usage.get("contextUsage", usage) if isinstance(usage, dict) else {}
+    raw_items = candidate.get("items", {}) if isinstance(candidate, dict) else {}
+    if not isinstance(raw_items, dict):
+        raw_items = {}
+    item_names = {
+        "taskContext": "task_context",
+        "task_context": "task_context",
+        "guides": "guides",
+        "history": "history",
+        "protocolInstructions": "protocol_instructions",
+        "protocol_instructions": "protocol_instructions",
+        "repositoryContext": "repository_context",
+        "repository_context": "repository_context",
+        "other": "other",
+    }
+    items = {
+        field: raw_items.get(source)
+        for source, field in item_names.items()
+        if source in raw_items
+    }
+    normalized = ContextUsageReport.model_validate(
+        {
+            "source": candidate.get("source", "UNKNOWN") if isinstance(candidate, dict) else "UNKNOWN",
+            "profile": (
+                candidate.get("profile", context["execution_profile"].get("resolved"))
+                if isinstance(candidate, dict)
+                else context["execution_profile"].get("resolved")
+            ),
+            "items": items,
+        }
+    )
+    payload["context_usage"] = normalized.model_dump(mode="json")
+    return payload
 
 
 def classify_reason_code(message: dict) -> str | None:
@@ -862,6 +1021,7 @@ def handoff_message(message: dict, auto_ack: bool = False) -> None:
     typed_kind = dispatch_typed_message(message)
     task_id = message.get("task_id")
     msg_type = message.get("message_type")
+    context = read_forgeloop_context(task_id)
 
     print("\n" + "=" * 60)
     print("NEW INSTRUCTION FROM ENGINEER")
@@ -875,6 +1035,16 @@ def handoff_message(message: dict, auto_ack: bool = False) -> None:
     print(message["content"])
     print("=" * 60 + "\n")
     print_control_event(message)
+    if context is not None:
+        print("FORGELOOP TASK/CONTEXT PROJECTION")
+        print(json.dumps(context, sort_keys=True))
+        if context.get("status") == "UNAVAILABLE":
+            print("HARD STOP: canonical task/context is unavailable; do not infer a profile.")
+        elif context.get("status") == "COMPATIBILITY_FALLBACK":
+            print("Compatibility mode: using the explicit balanced ForgeLoop fallback.")
+        else:
+            resolved = context.get("execution_profile", {}).get("resolved")
+            print(f"Canonical resolved execution profile: {resolved}")
 
     # ────────────────────────────────────────────────────────────────
     # HERE you hand off the instruction to your Worker agent/harness
@@ -902,6 +1072,7 @@ def handoff_message(message: dict, auto_ack: bool = False) -> None:
                 "or invalid. No weaker-isolation retry or synthetic evidence will "
                 "be attempted."
             )
+        context_payload = build_context_status_payload(context)
         typed = message.get("typed")
         if isinstance(typed, dict):
             post_typed_message(
@@ -910,6 +1081,7 @@ def handoff_message(message: dict, auto_ack: bool = False) -> None:
                 payload={
                     "state": "RECEIVED",
                     "summary": "Coordination event received; canonical processing is in progress.",
+                    **context_payload,
                 },
                 task_id=task_id,
                 message_type="STATUS",
