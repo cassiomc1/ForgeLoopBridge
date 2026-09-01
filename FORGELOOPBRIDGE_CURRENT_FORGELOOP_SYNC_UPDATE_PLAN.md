@@ -15,7 +15,7 @@ or the equivalent official structured integration capability response.
 ```text
 Protocol compatibility target: ForgeLoop Protocol v1
 Integration API compatibility target: Integration API v1
-Observed synchronization baseline: ForgeLoop package 1.8.0
+Observed synchronization baseline: ForgeLoop package 1.8.1
 ```
 
 The package baseline is informational only. Capability support comes from the

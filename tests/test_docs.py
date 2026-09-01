@@ -240,7 +240,7 @@ def test_current_sync_record_is_current_for_forgeloop_18():
         "codeAttestation",
     ):
         assert capability in current
-    assert "Observed synchronization baseline: ForgeLoop package 1.8.0" in current
+    assert "Observed synchronization baseline: ForgeLoop package 1.8.1" in current
     assert "package version" in current.lower()
     assert "does not implement, validate, infer, or attest" in current
     assert "trusted scoped checker" in current.lower()
