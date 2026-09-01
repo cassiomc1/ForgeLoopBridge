@@ -34,7 +34,7 @@ The Bridge supports current ForgeLoop observability, diagnostic, durable-action,
 approval, capability-policy, trajectory, workspace-binding, canonical-handoff,
 responsibility-constraint, differential-verification-scope, and code-attestation
 capabilities when the active host advertises them. Package version alone is
-never a compatibility decision; the observed ForgeLoop package `1.8.0` is an
+never a compatibility decision; the observed ForgeLoop package `1.8.1` is an
 informational baseline only. Capability support still comes from the canonical
 protocol-info or structured integration response.
 
