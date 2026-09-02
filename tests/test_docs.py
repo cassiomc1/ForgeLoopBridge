@@ -228,7 +228,7 @@ def test_current_sync_record_documents_verification_isolation():
     assert "execution cwd" in text
 
 
-def test_current_sync_record_is_current_for_forgeloop_19():
+def test_current_sync_record_is_current_for_forgeloop_110():
     current = (ROOT / "FORGELOOPBRIDGE_CURRENT_FORGELOOP_SYNC_UPDATE_PLAN.md").read_text(
         encoding="utf-8"
     )
@@ -243,12 +243,32 @@ def test_current_sync_record_is_current_for_forgeloop_19():
         "quality-status",
     ):
         assert capability in current
-    assert "Observed synchronization baseline: ForgeLoop package 1.9.0" in current
+    assert "Observed synchronization baseline: ForgeLoop package 1.10.0" in current
     assert "package version" in current.lower()
     assert "does not implement, validate, infer, or attest" in current
     assert "trusted scoped checker" in current.lower()
     assert "VERIFIED" in current
     assert "ATTESTED" in current
+
+
+def test_current_docs_cover_forgeloop_110_advisory_and_handoff_boundaries():
+    text = f"{README}\n{AUTONOMY}".lower()
+    for required in (
+        "forgeloop package `1.10.0`",
+        "protocol v1",
+        "integration api v1",
+        "canonicalhandoffs",
+        "advisorycontextproviders",
+        "exactly-once",
+        "open",
+        "accepted",
+        "unbound",
+        "inconsistent",
+        "operational receipt only",
+        "reconcile-continuity",
+        "bridge does not create authority/evidence from acceptance",
+    ):
+        assert required in text
 
 
 WORKER_POLL = (ROOT / "examples" / "worker_poll.py").read_text(encoding="utf-8")
@@ -342,8 +362,9 @@ def test_worker_poller_documents_adaptive_context_boundary():
 
 def test_pyproject_version_matches_app_version():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'version = "2.1.2"' in pyproject
+    assert 'version = "2.1.3"' in pyproject
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "## 2.1.3 - 2026-09-02" in changelog
     assert "## 2.1.2 - 2026-08-30" in changelog
     assert "## 2.1.1 - 2026-08-30" in changelog
 
@@ -354,7 +375,7 @@ def test_current_sync_record_documents_stream_close_before_rest_recovery():
     )
     assert "explicitly closes the affected stream" in current
     assert "fresh SSE ticket" in current
-    assert "bridge_api_version: 2.1.2" in current
+    assert "bridge_api_version: 2.1.3" in current
 
 
 def test_readme_documents_realtime_topology_and_worker_start_policy():

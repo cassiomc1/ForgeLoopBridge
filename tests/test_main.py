@@ -1085,7 +1085,7 @@ async def test_status_advertises_bridge_typed_schema(client):
     response = await client.get("/api/status")
 
     assert response.status_code == 200
-    assert response.json()["bridge_api_version"] == "2.1.2"
+    assert response.json()["bridge_api_version"] == "2.1.3"
     assert response.json()["typed_message_versions"] == [1]
     assert response.json()["typed_features"] == {
         "idempotency": True,

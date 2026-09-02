@@ -120,6 +120,10 @@ HANDOFF_REASON_CODES = frozenset(
         "E_HANDOFF_STATE_UNAVAILABLE",
         "E_HANDOFF_TAMPERED",
         "E_HANDOFF_NOT_FOUND",
+        "E_HANDOFF_ACCEPTANCE_UNBOUND",
+        "E_HANDOFF_STALE",
+        "E_HANDOFF_ALREADY_ACCEPTED",
+        "E_HANDOFF_ACCEPTANCE_INCONSISTENT",
     }
 )
 RESPONSIBILITY_BOUNDARY_REASON_CODES = frozenset(
@@ -201,7 +205,8 @@ Before creating or resuming protocol state, inspect:
   forgeloop protocol-info --json
 Then use the advertised feature set for diagnostics, durableActions,
 capabilityPolicy, durableApprovals, verificationExecutionIsolation,
-workspaceBinding, canonicalHandoffs, responsibilityConstraints,
+workspaceBinding, canonicalHandoffs v2, advisoryContextProviders v1,
+responsibilityConstraints,
 differentialVerificationScope, codeAttestation, and structuralQuality.
 When structuralQuality is advertised, preserve the canonical
 `task/structural-quality` resource and treat `quality-status` as read-only.
@@ -213,11 +218,28 @@ protocol-info or structured integration result.
 When workspaceBinding is supported, use only canonical workspace-bind and
 workspace-status operations. A path, cwd, branch, copied checkout, or Bridge
 message is not workspace identity proof. When canonicalHandoffs is supported,
-use handoff-create/list/show for continuity; a handoff is not delegation,
-identity, approval, completion, or verification evidence. When
+use handoff-create/list/show for continuity, and use handoff-accept only by the
+receiving harness when it actually consumes the handoff. A HANDOFF_NOTICE is not handoff acceptance.
+Receiving a Bridge message, opening the Bridge UI, or
+advancing a Bridge cursor must never append HANDOFF_ACCEPTED. A canonical
+acceptance is an OPERATIONAL_RECEIPT_ONLY with no evidence and no claims
+transferred; a handoff is not delegation, identity, approval, completion, or
+verification evidence. When
 responsibilityConstraints is supported, use responsibility-set/status and stop
 on canonical scope or frozen-input violations. Never infer responsibility from
 Markdown.
+
+When advisoryContextProviders is advertised, treat it as optional, lazy,
+opt-in, provider-neutral, Integration API-only context. Bridge never creates a
+provider, recalls context because a message arrived, turns a message into a
+provider result, or persists raw provider output as ForgeLoop state. A bounded
+host-produced summary remains ordinary, non-authoritative coordination text;
+it is non-evidence and non-executable.
+
+When available, use `forgeloop reconcile-continuity --task <id> --json` as a
+read-only resume diagnostic. Lint warnings are operational context only: they
+are not a Bridge blocker, verification failure, or completion failure. Follow
+canonical `forgeloop next` for the actual lifecycle action.
 
 When differentialVerificationScope is supported, ask ForgeLoop for verify-scope
 with AUTO and use its returned scope only through the trusted scoped checker.
