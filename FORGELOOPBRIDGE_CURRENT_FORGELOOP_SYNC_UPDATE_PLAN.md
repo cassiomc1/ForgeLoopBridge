@@ -15,7 +15,7 @@ or the equivalent official structured integration capability response.
 ```text
 Protocol compatibility target: ForgeLoop Protocol v1
 Integration API compatibility target: Integration API v1
-Observed synchronization baseline: ForgeLoop package 1.8.1
+Observed synchronization baseline: ForgeLoop package 1.9.0
 ```
 
 The package baseline is informational only. Capability support comes from the
@@ -48,6 +48,18 @@ ForgeLoopBridge coordinates hosts that may use these ForgeLoop capabilities. It
 does not implement, validate, infer, or attest them. The Bridge transports only
 task IDs, opaque artifact references, copied canonical results/reason codes,
 bounded summaries, and relevant PR/publication URLs.
+
+### Structural Quality
+
+ForgeLoop 1.9.0 may advertise the provider-neutral `structuralQuality` feature,
+the canonical `task/structural-quality` resource, and the
+`quality-baseline`, `quality-verify`, and `quality-status` command identities.
+Bridge preserves these as capability metadata or opaque canonical results when
+advertised. `quality-status` is read-only; observation is invoked only through
+the authorized canonical ForgeLoop execution boundary. Bridge never calculates
+quality, runs Sentrux as a hidden authority, self-attests freshness, turns
+`NOT_OBSERVED` into PASS, invents provider compatibility, or infers support
+from package version.
 
 ### Workspace binding
 

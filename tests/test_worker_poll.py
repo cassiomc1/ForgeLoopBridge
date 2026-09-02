@@ -89,6 +89,16 @@ def test_worker_poller_uses_capability_discovery_and_safe_dispatch_language():
     assert "authorization" in text
 
 
+def test_worker_poller_feature_detects_structural_quality_without_version_inference():
+    text = WORKER_POLL.lower()
+    assert "structuralquality" in text
+    assert "task/structural-quality" in text
+    assert "quality-status" in text
+    assert "package version" in text
+    assert "canonical forgeloop execution boundary" in text
+    assert "never infer" in text
+
+
 def test_worker_poller_documents_all_forgeloop_164_boundaries():
     text = WORKER_POLL.lower()
     for capability in (
