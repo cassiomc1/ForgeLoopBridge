@@ -14,8 +14,9 @@ workflow:
 1. Prefer official ForgeLoop structured integration when exposed by the host;
    otherwise use the project-local ForgeLoop CLI.
 2. Inspect `forgeloop protocol-info --json` and feature-detect capabilities;
-   include `verificationExecutionIsolation`; never infer capabilities from a
-   package version alone or self-attest a trusted isolation boundary.
+   include `verificationExecutionIsolation` and `structuralQuality` when
+   advertised; never infer capabilities from a package version alone or
+   self-attest a trusted isolation boundary.
 3. When `FORGELOOP_CONTEXT_COMMAND` is configured, read the canonical
    `task/context` projection through that host adapter; use its resolved profile
    and bounded policy, and never classify the task locally.
@@ -201,8 +202,12 @@ Before creating or resuming protocol state, inspect:
 Then use the advertised feature set for diagnostics, durableActions,
 capabilityPolicy, durableApprovals, verificationExecutionIsolation,
 workspaceBinding, canonicalHandoffs, responsibilityConstraints,
-differentialVerificationScope, and codeAttestation. Package version is
-informational only; feature support must be advertised by the canonical
+differentialVerificationScope, codeAttestation, and structuralQuality.
+When structuralQuality is advertised, preserve the canonical
+`task/structural-quality` resource and treat `quality-status` as read-only.
+Invoke `quality-baseline` or `quality-verify` only through the authorized
+canonical ForgeLoop execution boundary. Package version is informational only;
+feature support must be advertised by the canonical
 protocol-info or structured integration result.
 
 When workspaceBinding is supported, use only canonical workspace-bind and

@@ -3,7 +3,7 @@
 ## Unreleased
 
 - Align the current ForgeLoop compatibility baseline with published package
-  1.8.1 while preserving Protocol v1, Integration API v1, and capability-first
+  1.9.0 while preserving Protocol v1, Integration API v1, and capability-first
   authority decisions.
 
 ## 2.1.2 - 2026-08-30

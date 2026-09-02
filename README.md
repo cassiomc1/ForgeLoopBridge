@@ -32,9 +32,10 @@ ForgeLoopBridge targets **ForgeLoop Protocol v1** and **Integration API v1**.
 
 The Bridge supports current ForgeLoop observability, diagnostic, durable-action,
 approval, capability-policy, trajectory, workspace-binding, canonical-handoff,
-responsibility-constraint, differential-verification-scope, and code-attestation
-capabilities when the active host advertises them. Package version alone is
-never a compatibility decision; the observed ForgeLoop package `1.8.1` is an
+responsibility-constraint, differential-verification-scope, code-attestation,
+and structural-quality capabilities when the active host advertises them.
+Package version alone is never a compatibility decision; the observed
+ForgeLoop package `1.9.0` is an
 informational baseline only. Capability support still comes from the canonical
 protocol-info or structured integration response.
 
@@ -45,10 +46,16 @@ If the host exposes an official ForgeLoop structured integration (such as `@cass
 ### Compatibility dimensions & recovery awareness
 
 - **Protocol-first handshake**: Require `protocolVersion == 1`; when structured integration is used, require a supported Integration API version. Unknown protocol/schema versions fail closed.
-- **Capability detection**: Inspect `protocolInfo.features` (or the equivalent structured capability response) for `diagnostics`, `executionHistory`, `structuredTrace`, `taskInspection`, `reflection`, `durableActions`, `capabilityPolicy`, `durableApprovals`, `trajectoryMetrics`, `trajectoryEvaluation`, `verificationExecutionIsolation`, `observabilityStability`, `adaptiveExecutionProfiles`, `executionProfileContext`, `workspaceBinding`, `canonicalHandoffs`, `responsibilityConstraints`, `differentialVerificationScope`, and `codeAttestation`. Additive features are enabled only when advertised.
+- **Capability detection**: Inspect `protocolInfo.features` (or the equivalent structured capability response) for `diagnostics`, `executionHistory`, `structuredTrace`, `taskInspection`, `reflection`, `durableActions`, `capabilityPolicy`, `durableApprovals`, `trajectoryMetrics`, `trajectoryEvaluation`, `verificationExecutionIsolation`, `observabilityStability`, `adaptiveExecutionProfiles`, `executionProfileContext`, `workspaceBinding`, `canonicalHandoffs`, `responsibilityConstraints`, `differentialVerificationScope`, `codeAttestation`, and `structuralQuality`. Additive features are enabled only when advertised.
 - **No package-version inference**: A package version alone does not imply that a capability is present. Use `features.durableActions.supported`, `features.capabilityPolicy.supported`, and `features.durableApprovals.supported`.
 - **Capability decisions**: Treat canonical `ALLOW`, `DENY`, `REQUIRE_AUTHORITY`, and `REQUIRE_APPROVAL` decisions as ForgeLoop policy output; Bridge messages can report them but cannot satisfy them.
 - **Recovery awareness**: A project with active recovery state requires a recovery-aware reader supporting validated claim projection. A reader that does not understand that projection must fail closed instead of inferring ownership from `task.json` or `recovery.json` alone.
+
+When `structuralQuality` is advertised, the host may preserve the canonical
+`task/structural-quality` projection and the `quality-status` read-only command.
+Observation commands remain behind ForgeLoop's canonical execution boundary
+when authorized; Bridge never runs Sentrux as a hidden authority, calculates a
+quality result, or infers support from the package version.
 
 ### Verification execution isolation
 
