@@ -15,7 +15,7 @@
 
 Designed to coordinate alongside [ForgeLoop](https://github.com/cassiomc1/forgeloop) — a portable engineering protocol for AI coding agents.
 
-Current Bridge release: **2.1.2**. The typed message schema remains v1, and
+Current Bridge release: **2.1.3**. The typed message schema remains v1, and
 ForgeLoop compatibility remains Protocol v1 / Integration API v1.
 
 - **Engineer** (e.g. Grok / LLM) → defines intent, acceptance criteria, reviews PRs, and performs read-only canonical verification.
@@ -33,9 +33,10 @@ ForgeLoopBridge targets **ForgeLoop Protocol v1** and **Integration API v1**.
 The Bridge supports current ForgeLoop observability, diagnostic, durable-action,
 approval, capability-policy, trajectory, workspace-binding, canonical-handoff,
 responsibility-constraint, differential-verification-scope, code-attestation,
-and structural-quality capabilities when the active host advertises them.
+structural-quality, canonicalHandoffs v2, and advisoryContextProviders v1
+capabilities when the active host advertises them.
 Package version alone is never a compatibility decision; the observed
-ForgeLoop package `1.9.0` is an
+ForgeLoop package `1.10.0` is an
 informational baseline only. Capability support still comes from the canonical
 protocol-info or structured integration response.
 
@@ -113,6 +114,56 @@ a lifecycle failure. Provider/host usage must come through the trusted
 integration boundary; the standalone ForgeLoop CLI's `usage-record` fallback
 is actor-reported only.
 
+### Advisory context and canonical handoffs
+
+ForgeLoop 1.10.0 may advertise the optional `advisoryContextProviders` v1
+capability. Its trust contract is:
+
+```text
+version: 1
+providerNeutral: true
+integrationApiOnly: true
+lazy: true
+optIn: true
+persistedByForgeLoop: false
+lifecycleAuthority: false
+evidenceAuthority: false
+executable: false
+```
+
+Bridge never creates an advisory provider, automatically recalls context when a
+message arrives, converts a message into a provider result, or persists raw
+provider output as canonical ForgeLoop state. It may transport a bounded
+host-produced summary as ordinary coordination text, but that copy remains
+non-authoritative, non-evidence, and non-executable. Bridge has no memory or
+recall endpoint, and a future provider adapter requires a separate design and
+release.
+
+When `canonicalHandoffs` is advertised, Bridge understands the v2 capability
+contract and carries only the opaque canonical reference. Handoffs are
+immutable continuity snapshots, not delegation, identity, approval, completion,
+or verification evidence. The canonical statuses are `OPEN`, `ACCEPTED`,
+`UNBOUND`, and `INCONSISTENT`, with exactly-once acceptance controlled by
+ForgeLoop's `handoff-accept` command.
+
+`HANDOFF_NOTICE` is a coordination message, not acceptance. Only the receiving
+harness that actually consumes a canonical handoff may invoke `handoff-accept`.
+Receiving a Bridge message, opening the Bridge UI, or advancing a Bridge cursor
+must never append `HANDOFF_ACCEPTED`. Acceptance is an operational receipt only:
+authority is `OPERATIONAL_RECEIPT_ONLY`, evidence is `NONE`, and no claims are
+transferred. Bridge does not create authority/evidence from acceptance and does
+not reclassify copied canonical results.
+
+ForgeLoop continuity remains operational context: work-state is lifecycle truth,
+continuity is operational context, and continuity lint is non-authoritative
+diagnostics. The Worker may run
+`forgeloop reconcile-continuity --task <id> --json` as a read-only diagnostic;
+`CONTINUITY_REMAINING_ALREADY_COMPLETED`,
+`CONTINUITY_FOCUS_ALREADY_COMPLETED`, `CONTINUITY_ITEM_ROLE_CONFLICT`,
+`CONTINUITY_INSPECT_PATH_MISSING`, and `CONTINUITY_EMPTY_HINT_SET` are lint
+results, not Bridge blockers, verification failures, or completion failures.
+Actual lifecycle action always follows canonical `forgeloop next`.
+
 ### Optional ForgeLoop extension boundaries (families introduced in ForgeLoop 1.6.4)
 
 ForgeLoopBridge coordinates hosts that may use these optional Protocol v1
@@ -124,8 +175,10 @@ the Bridge. Bridge messages are never canonical truth.
 - **Workspace binding**: ForgeLoop owns workspace identity. A path, branch,
   copied repository, container, or Bridge message cannot prove a binding match.
   A workspace mismatch is a canonical blocker; do not silently rebind.
-- **Canonical handoffs**: A handoff is an immutable continuity snapshot, not
-  delegation, identity, approval, completion, or verification evidence.
+- **Canonical handoffs**: `canonicalHandoffs` v2 is an immutable continuity
+  snapshot with `OPEN`, `ACCEPTED`, `UNBOUND`, and `INCONSISTENT` statuses;
+  exactly-once acceptance is canonical ForgeLoop behavior and remains an
+  operational receipt only, with no claims transferred.
 - **Responsibility constraints**: Allowed/read-only paths, required checks, and
   frozen-input fingerprints are canonical. Engineer approval cannot waive a
   responsibility violation.
@@ -570,7 +623,8 @@ Mandatory workflow for every instruction from the Engineer:
    Require protocol version `1`, a supported Integration API when using structured
    integration, and feature-detect diagnostics, durable actions, capability policy,
    durable approvals, `verificationExecutionIsolation`, `workspaceBinding`,
-   `canonicalHandoffs`, `responsibilityConstraints`,
+   `canonicalHandoffs` v2, `advisoryContextProviders` v1,
+   `responsibilityConstraints`,
    `differentialVerificationScope`, and `codeAttestation`. Do not infer any
    feature from the package version alone.
    Fail closed if the installed compatibility boundary cannot safely read/write protocol state.
@@ -582,8 +636,21 @@ Mandatory workflow for every instruction from the Engineer:
 
    When `canonicalHandoffs` is advertised and the harness changes, create a
    canonical handoff with `handoff-create`; report only its opaque reference.
-   A handoff is a continuity snapshot, not delegation authority, identity,
-   approval, completion, or verification evidence.
+   Understand `canonicalHandoffs` v2 statuses `OPEN`, `ACCEPTED`, `UNBOUND`, and
+   `INCONSISTENT`. A `HANDOFF_NOTICE` is not acceptance. Only the receiving
+   harness that actually consumes the handoff may invoke `handoff-accept`; the
+   Bridge must never auto-run it. Acceptance is `OPERATIONAL_RECEIPT_ONLY`,
+   evidence `NONE`, and transfers no claims.
+
+   When `advisoryContextProviders` is advertised, treat it as optional, lazy,
+   opt-in, provider-neutral, Integration API-only context. It is not persisted
+   by ForgeLoop, authoritative, evidence, or executable. Bridge never creates a
+   provider, auto-recalls context, or stores provider output as canonical state.
+
+   When available, use `forgeloop reconcile-continuity --task <task-id> --json`
+   as a read-only resume diagnostic. Lint warnings are non-authoritative
+   operational context and do not block verification or completion; follow
+   canonical `forgeloop next` for lifecycle action.
 
    When `responsibilityConstraints` is advertised, use canonical
    `responsibility-set`/`responsibility-status`, obey allowed/read-only paths,
@@ -1086,7 +1153,7 @@ also advertises the Bridge transport contract:
 
 ```json
 {
-  "bridge_api_version": "2.1.2",
+  "bridge_api_version": "2.1.3",
   "typed_message_versions": [1],
   "typed_features": {
     "idempotency": true,

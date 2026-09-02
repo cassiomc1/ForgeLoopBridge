@@ -124,6 +124,29 @@ def test_worker_poller_documents_all_forgeloop_164_boundaries():
         assert name in WORKER_POLL
 
 
+def test_worker_poller_documents_forgeloop_110_handoff_and_advisory_boundaries():
+    text = WORKER_POLL.lower()
+    for required in (
+        "advisorycontextproviders",
+        "canonicalhandoffs v2",
+        "handoff-accept",
+        "operational_receipt_only",
+        "reconcile-continuity",
+        "lint warning",
+        "package version is informational",
+    ):
+        assert required in text
+    for reason_code in (
+        "E_HANDOFF_ACCEPTANCE_UNBOUND",
+        "E_HANDOFF_STALE",
+        "E_HANDOFF_ALREADY_ACCEPTED",
+        "E_HANDOFF_ACCEPTANCE_INCONSISTENT",
+    ):
+        assert reason_code in WORKER_POLL
+    assert "HANDOFF_NOTICE is not handoff acceptance" in WORKER_POLL
+    assert "must never append HANDOFF_ACCEPTED" in WORKER_POLL
+
+
 def test_read_forgeloop_context_uses_canonical_host_adapter(monkeypatch, tmp_path):
     monkeypatch.setenv("FORGELOOP_CONTEXT_COMMAND", "context-adapter --fixed")
     monkeypatch.setenv("FORGELOOP_CLI", "forgeloop --local")

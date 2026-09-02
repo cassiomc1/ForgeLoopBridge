@@ -15,7 +15,7 @@ or the equivalent official structured integration capability response.
 ```text
 Protocol compatibility target: ForgeLoop Protocol v1
 Integration API compatibility target: Integration API v1
-Observed synchronization baseline: ForgeLoop package 1.9.0
+Observed synchronization baseline: ForgeLoop package 1.10.0
 ```
 
 The package baseline is informational only. Capability support comes from the
@@ -51,7 +51,7 @@ bounded summaries, and relevant PR/publication URLs.
 
 ### Structural Quality
 
-ForgeLoop 1.9.0 may advertise the provider-neutral `structuralQuality` feature,
+ForgeLoop 1.10.0 may advertise the provider-neutral `structuralQuality` feature,
 the canonical `task/structural-quality` resource, and the
 `quality-baseline`, `quality-verify`, and `quality-status` command identities.
 Bridge preserves these as capability metadata or opaque canonical results when
@@ -71,12 +71,59 @@ exact blocker, do not silently rebind, and follow canonical `next` guidance.
 
 ### Canonical handoffs
 
-Handoffs are immutable continuity snapshots, not delegation authority, identity
-proof, approval, completion evidence, or verification evidence. The Bridge may
-carry an opaque handoff reference, but must not validate its digest or treat the
-reference as authority. Relevant failures include `E_HANDOFF_INVALID`,
-`E_HANDOFF_STATE_UNAVAILABLE`, `E_HANDOFF_TAMPERED`, and
-`E_HANDOFF_NOT_FOUND`.
+`canonicalHandoffs` v2 handoffs are immutable continuity snapshots, not
+delegation authority, identity proof, approval, completion evidence, or
+verification evidence. The canonical statuses are `OPEN`, `ACCEPTED`, `UNBOUND`,
+and `INCONSISTENT`; exactly-once acceptance is controlled by ForgeLoop's
+`handoff-accept` command. The Bridge may carry an opaque handoff reference and
+copy the canonical result, but must not validate its digest, infer acceptance,
+or treat the reference as authority.
+
+`HANDOFF_NOTICE` is not handoff acceptance. Only the receiving harness that
+actually consumes the canonical handoff may invoke `handoff-accept`. Receiving a
+Bridge message, opening the Bridge UI, or advancing a Bridge cursor must never
+append `HANDOFF_ACCEPTED`. Canonical acceptance is an operational receipt only:
+`authority: OPERATIONAL_RECEIPT_ONLY`, `evidence: NONE`, and no claims
+transferred. Bridge does not create authority/evidence from acceptance.
+
+Relevant failures include `E_HANDOFF_INVALID`,
+`E_HANDOFF_STATE_UNAVAILABLE`, `E_HANDOFF_TAMPERED`, `E_HANDOFF_NOT_FOUND`,
+`E_HANDOFF_ACCEPTANCE_UNBOUND`, `E_HANDOFF_STALE`,
+`E_HANDOFF_ALREADY_ACCEPTED`, and `E_HANDOFF_ACCEPTANCE_INCONSISTENT`.
+
+### Advisory context providers
+
+ForgeLoop 1.10.0 may advertise the optional `advisoryContextProviders` v1
+capability with this trust contract:
+
+```text
+version: 1
+providerNeutral: true
+integrationApiOnly: true
+lazy: true
+optIn: true
+persistedByForgeLoop: false
+lifecycleAuthority: false
+evidenceAuthority: false
+executable: false
+```
+
+Bridge never creates a provider, auto-recalls context when a message arrives,
+turns a message into a provider result, or persists raw provider output as
+canonical ForgeLoop state. A bounded host-produced summary may be transported
+as ordinary coordination text, but it remains non-authoritative,
+non-evidence, and non-executable. There is no Bridge memory or recall endpoint;
+a provider adapter requires a separate design and release.
+
+### Continuity diagnostics
+
+The Worker may use `forgeloop reconcile-continuity --task <id> --json` as a
+read-only resume diagnostic. `CONTINUITY_REMAINING_ALREADY_COMPLETED`,
+`CONTINUITY_FOCUS_ALREADY_COMPLETED`, `CONTINUITY_ITEM_ROLE_CONFLICT`,
+`CONTINUITY_INSPECT_PATH_MISSING`, and `CONTINUITY_EMPTY_HINT_SET` are
+non-authoritative operational lint results. A lint warning is not a Bridge
+blocker, verification failure, or completion failure; actual lifecycle action
+always follows canonical `forgeloop next`.
 
 ### Responsibility constraints
 
@@ -144,7 +191,7 @@ artifacts, or treat Bridge agreement as trusted adapter evidence.
 
 ForgeLoopBridge additionally exposes **Bridge Typed Message Schema v1**. This
 is separate from ForgeLoop Protocol v1 and is advertised as
-`bridge_api_version: 2.1.2` with `typed_message_versions: [1]` and the
+`bridge_api_version: 2.1.3` with `typed_message_versions: [1]` and the
 `typed_features` capability map in the public status response. Typed messages
 retain mandatory Markdown content and carry typed coordination intent,
 correlation/reply metadata, idempotency keys, and opaque canonical references.

@@ -108,9 +108,70 @@ report the exact reason code, and do not silently rebind.
 
 ### Canonical handoff
 
-A handoff is an immutable continuity snapshot, not delegation, identity,
-approval, completion, or verification evidence. Use canonical handoff commands
-when a harness changes and carry only an opaque reference on the board.
+`canonicalHandoffs` v2 is an immutable continuity snapshot, not delegation,
+identity, approval, completion, or verification evidence. The canonical
+statuses are `OPEN`, `ACCEPTED`, `UNBOUND`, and `INCONSISTENT`, and acceptance
+is exactly-once through ForgeLoop's `handoff-accept` command.
+
+Use canonical handoff commands when a harness changes and carry only an opaque
+reference on the board. A `HANDOFF_NOTICE` is not handoff acceptance. Only the
+receiving harness that actually consumes the handoff may invoke
+`handoff-accept`; receiving a Bridge message, opening the Bridge UI, or
+advancing a cursor must never append `HANDOFF_ACCEPTED`. Canonical acceptance
+is `OPERATIONAL_RECEIPT_ONLY`, has `evidence: NONE`, and transfers no claims.
+Bridge does not create authority/evidence from acceptance.
+
+Recognize these copied canonical handoff reason codes without reclassifying or
+resolving them in Bridge:
+
+```python
+HANDOFF_REASON_CODES = frozenset(
+    {
+        "E_HANDOFF_INVALID",
+        "E_HANDOFF_STATE_UNAVAILABLE",
+        "E_HANDOFF_TAMPERED",
+        "E_HANDOFF_NOT_FOUND",
+        "E_HANDOFF_ACCEPTANCE_UNBOUND",
+        "E_HANDOFF_STALE",
+        "E_HANDOFF_ALREADY_ACCEPTED",
+        "E_HANDOFF_ACCEPTANCE_INCONSISTENT",
+    }
+)
+```
+
+### Advisory context
+
+When ForgeLoop advertises `advisoryContextProviders` v1, the capability is
+optional, lazy, opt-in, provider-neutral, and Integration API-only:
+
+```text
+version: 1
+providerNeutral: true
+integrationApiOnly: true
+lazy: true
+optIn: true
+persistedByForgeLoop: false
+lifecycleAuthority: false
+evidenceAuthority: false
+executable: false
+```
+
+Bridge never creates a provider, auto-recalls context because a message
+arrived, converts a message into a provider result, or persists raw provider
+output as canonical ForgeLoop state. A bounded host-produced summary may be
+transported as ordinary coordination text, but remains non-authoritative,
+non-evidence, and non-executable. There is no Bridge memory or recall endpoint.
+
+### Continuity diagnostics
+
+The Worker may use `forgeloop reconcile-continuity --task <id> --json` as a
+read-only resume diagnostic. The reason codes
+`CONTINUITY_REMAINING_ALREADY_COMPLETED`,
+`CONTINUITY_FOCUS_ALREADY_COMPLETED`, `CONTINUITY_ITEM_ROLE_CONFLICT`,
+`CONTINUITY_INSPECT_PATH_MISSING`, and `CONTINUITY_EMPTY_HINT_SET` describe
+non-authoritative lint results. A lint warning is not a Bridge blocker,
+verification failure, or completion failure; actual lifecycle action follows
+canonical `forgeloop next`.
 
 ### Responsibility
 

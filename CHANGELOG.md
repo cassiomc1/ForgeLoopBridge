@@ -2,9 +2,20 @@
 
 ## Unreleased
 
+Future changes will be recorded here.
+
+## 2.1.3 - 2026-09-02
+
 - Align the current ForgeLoop compatibility baseline with published package
-  1.9.0 while preserving Protocol v1, Integration API v1, and capability-first
+  1.10.0 while preserving Protocol v1, Integration API v1, and capability-first
   authority decisions.
+- Document `advisoryContextProviders` v1 as optional, lazy, opt-in,
+  provider-neutral, Integration API-only context that Bridge never recalls,
+  persists, executes, or treats as authoritative.
+- Recognize `canonicalHandoffs` v2 statuses and acceptance reason codes while
+  keeping `HANDOFF_NOTICE` separate from receiving-harness acceptance.
+- Document `reconcile-continuity` as a read-only diagnostic whose lint warnings
+  do not block Bridge coordination, verification, or completion.
 
 ## 2.1.2 - 2026-08-30
 
