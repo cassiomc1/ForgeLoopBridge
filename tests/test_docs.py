@@ -669,3 +669,33 @@ def test_changelog_announces_optional_observer_without_version_bump():
     assert "does not change the bridge api" in CHANGELOG.lower()
     assert "typed message schema v1" in CHANGELOG.lower()
     assert "forgeloop authority boundary" in CHANGELOG.lower()
+
+
+def test_docs_define_the_observer_launcher_exit_contract():
+    """Interrupt semantics are a documented contract, not incidental behavior."""
+    for text in (README.lower(), OBSERVER_README.lower()):
+        assert "`130`" in text
+        assert "`143`" in text
+        assert "128 + n" in text
+        assert "keyboardinterrupt" in text
+    combined = f"{README}\n{OBSERVER_README}".lower()
+    assert "never reported as" in combined or "never surface as success" in combined
+
+
+def test_changelog_records_natural_shutdown_and_interrupt_semantics():
+    lowered = " ".join(CHANGELOG.lower().split())
+    assert "observer_stop_failed" in lowered
+    assert "ctrl-c exits `130`" in lowered
+    assert "`sigterm` exits `143`" in lowered
+
+
+def test_observer_docs_cover_the_launcher_flag_surface():
+    for flag in (
+        "--provider",
+        "--shell-command",
+        "--bridge-url",
+        "--worker-token-env",
+        "--task-id",
+        "--metadata-timeout",
+    ):
+        assert flag in OBSERVER_README
