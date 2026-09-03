@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.png" alt="ForgeLoopBridge — coordination between Engineer and Worker agents" width="900">
+  <img src="assets/banner.png" alt="ForgeLoopBridge architecture: an Engineer and an ephemeral Worker exchange coordination messages through ForgeLoopBridge (REST API, SSE stream, SQLite persistence, message board, worker routing); the Worker implements changes in the workspace while ForgeLoop remains the canonical engineering authority and source of truth; an optional read-only shell.online live execution observer streams the Worker terminal to the Engineer for observation only, never as evidence or authority" width="900">
 </p>
 
 <p align="center">
