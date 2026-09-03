@@ -10,7 +10,57 @@ after the initial bootstrap message.
    approval, confirmation, or clarification**.
 2. There is no user watching this conversation. The board IS the conversation.
 3. Any question, doubt, ambiguity, or decision point MUST be resolved by posting
-   a Markdown message to the other agent and waiting for its reply.
+   a Markdown message to the other agent and reading its reply from the board.
+
+## Worker invocation lifetime
+
+ForgeLoopBridge may be monitored by a long-running transport process, but an
+individual AI Worker invocation is not required to remain alive indefinitely.
+Transport liveness and agent-turn liveness are separate concerns:
+
+```text
+daemon transport          -> a dedicated process that keeps monitoring the board
+bounded Worker invocation -> one ephemeral agent turn that reports and exits
+```
+
+When running as a bounded/ephemeral Worker:
+
+1. Consume only messages newer than the persisted Bridge cursor.
+2. Read canonical ForgeLoop state before lifecycle decisions.
+3. Perform all currently actionable Worker work.
+4. Report meaningful progress through ForgeLoopBridge.
+5. If further progress requires a new Engineer decision, review, clarification,
+   or project-level response that is not already present:
+   - post one `STATUS_UPDATE` with `state=WAITING`;
+   - clearly state `WAITING_FOR_ENGINEER` in the human-readable content;
+   - persist the Bridge cursor after safe handling;
+   - exit successfully.
+6. If canonically blocked:
+   - post the exact blocker/reason code;
+   - do not fabricate authority or evidence;
+   - exit the bounded Worker invocation after reporting the blocker.
+7. A future Worker invocation reconstructs context from ForgeLoopBridge and
+   canonical ForgeLoop state. Hidden conversational memory must not be required.
+
+Do not repeatedly reread unchanged Bridge messages, rerun `git diff`, query
+unchanged canonical state, or repost an identical waiting status merely to remain
+alive. Do not poll indefinitely inside a foreground Worker process that the
+Engineer is waiting on: that is an orchestration deadlock even when the Bridge
+server is healthy.
+
+A Bridge `WAITING` status is coordination state only, and a Bridge
+`COMPLETE_REPORTED` status is not canonical completion.
+ForgeLoop remains the sole authority for lifecycle, claims, ownership, recovery,
+verification, approvals, and completion.
+
+### One wait report per triggering input
+
+Within one bounded invocation, emit at most one waiting status for the same
+triggering Engineer message. Identity comes from existing coordination fields —
+`correlation_id` together with the `reply_to_id`/source Engineer message id —
+never from hashing Markdown text. New input is a new trigger and deserves a new
+status. Do not persist a new authoritative wait state in Bridge: the transport
+cannot know when the agent is waiting, so this remains a harness contract.
 
 ## Decision-making protocol
 
@@ -39,10 +89,17 @@ Rationale: <one line>
 
 Rules:
 - Decisions are made **exclusively** via these Markdown exchanges.
-- If there is no answer within your polling window, poll again — do not escalate to the user.
-- If truly blocked after 2 unanswered decision requests, post `BLOCKED` with full context
-  and keep polling. Never invent a silent assumption for irreversible/destructive actions
-  (deleting data, force-push, publishing secrets): mark those as BLOCKED instead.
+- If the reply is not on the board yet, do not escalate to the human. Resolve it
+  through process lifetime instead:
+  - **daemon transport:** keep monitoring the board for the reply.
+  - **bounded Worker invocation:** post one `STATUS_UPDATE` with `state=WAITING`
+    and `WAITING_FOR_ENGINEER`, then exit successfully. A later invocation
+    resumes from the persisted Bridge cursor.
+- If truly blocked after 2 unanswered decision requests, post `BLOCKED` with
+  full context; a daemon keeps monitoring, a bounded invocation exits after
+  reporting the blocker. Never invent a silent assumption for
+  irreversible/destructive actions (deleting data, force-push, publishing
+  secrets): mark those as BLOCKED instead.
 - Reversible decisions may be taken unilaterally, but must be documented on the board
   afterwards (`### DECISION TAKEN – ...`).
 
@@ -72,9 +129,10 @@ Examples include:
 - Operations whose canonical risk class requires an external trusted capability
 
 If the required authority is not already supplied by the execution host, post
-`BLOCKED` with the exact ForgeLoop error/action and continue polling. Do not
-fabricate an approval token, edit authority/recovery state, or reinterpret a
-board `APPROVED` message as host attestation.
+`BLOCKED` with the exact ForgeLoop error/action. A daemon transport keeps
+monitoring the board; a bounded Worker invocation exits after reporting the
+blocker. Do not fabricate an approval token, edit authority/recovery state, or
+reinterpret a board `APPROVED` message as host attestation.
 
 Autonomy remains fully active for reversible, non-blocking project decisions and normal development tasks.
 
@@ -257,9 +315,10 @@ take precedence over a static happy-path example.
 
 If canonical `next` reports `authorityRequired`, `hostActionRequired`,
 `reconciliationAuthorityRequired`, or an unresolved approval that the current
-host cannot resolve, post `AUTHORITY_REQUIRED`/`BLOCKED` and keep polling. Do
-not reinterpret the no-human-in-the-loop rule as permission to fabricate
-authority.
+host cannot resolve, post `AUTHORITY_REQUIRED`/`BLOCKED`. A daemon transport
+keeps monitoring; a bounded Worker invocation exits after reporting it. Do not
+reinterpret the no-human-in-the-loop rule as permission to fabricate authority,
+and do not reinterpret a bounded exit as canonical resolution.
 
 If an action reaches `COMMIT_UNKNOWN`:
 
@@ -331,4 +390,8 @@ must be locally protected.
 - Never end your turn with a question addressed to a human.
 - Never output "please run X" or "the user should Y". Either do it yourself or
   negotiate it with the other agent on the board.
-- Loop: read board → act → post result → wait/poll → repeat. Forever.
+- Loop shape: read board → act → post result → report status. A daemon transport
+  then keeps monitoring the board; a bounded Worker invocation exits, and the
+  next invocation continues from the persisted Bridge cursor plus canonical
+  ForgeLoop state. Ending a bounded turn with `WAITING`/`BLOCKED` is not the
+  same as ending the collaboration.

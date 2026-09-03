@@ -470,3 +470,109 @@ def test_historical_and_planning_documents_are_not_current_instructions():
     assert "HISTORICAL / SUPERSEDED" in historical_plan
     assert "ARCHIVE / HISTORICAL RECORD" in improvements
     assert "HISTORICAL / COMPLETED IMPLEMENTATION RECORD" in implementation_record
+
+
+def test_docs_define_bounded_worker_turns():
+    combined = f"{README}\n{AUTONOMY}"
+    lowered = combined.lower()
+
+    assert "WAITING_FOR_ENGINEER" in combined
+    assert "bounded" in lowered
+    assert "do not poll indefinitely" in lowered
+    assert "ForgeLoop remains the sole authority" in combined
+
+
+def test_docs_separate_transport_lifetime_from_agent_turn_lifetime():
+    lowered = f"{README}\n{AUTONOMY}".lower()
+    for required in (
+        "daemon transport",
+        "bounded worker invocation",
+        "--run-mode daemon",
+        "--run-mode once",
+        "--run-mode bounded",
+        "--max-idle-polls",
+        "a communication channel may be persistent without requiring the ai process",
+    ):
+        assert required in lowered
+
+
+def test_autonomy_defines_the_bounded_worker_exit_contract():
+    assert "## Worker invocation lifetime" in AUTONOMY
+    lowered = AUTONOMY.lower()
+    for required in (
+        "persisted bridge cursor",
+        "state=waiting",
+        "waiting_for_engineer",
+        "exit successfully",
+        "hidden conversational memory must not be required",
+        "coordination state only",
+    ):
+        assert required in lowered
+
+
+def test_autonomy_no_longer_tells_bounded_invocations_to_poll_forever():
+    assert "poll again — do not escalate to the user" not in AUTONOMY
+    assert "and keep polling. Never invent a silent assumption" not in AUTONOMY
+    assert "wait/poll → repeat. Forever." not in AUTONOMY
+    lowered = AUTONOMY.lower()
+    assert "do not escalate to the human" in lowered or "do not escalate to the user" in lowered
+    assert "bounded worker invocation" in lowered
+
+
+def test_autonomy_suppresses_same_turn_duplicate_waiting_status():
+    lowered = AUTONOMY.lower()
+    assert "at most one" in lowered
+    assert "correlation_id" in lowered
+    assert "do not repeatedly reread unchanged bridge messages" in lowered
+
+
+def test_readme_documents_the_ephemeral_cli_worker_pattern():
+    assert "## Ephemeral CLI Worker pattern" in README
+    section = README.split("## Ephemeral CLI Worker pattern", 1)[1].split("\n## ", 1)[0]
+    lowered = section.lower()
+    for required in (
+        "foreground",
+        "deadlock",
+        "waiting_for_engineer",
+        "status_update",
+        "bounded worker turn",
+        "exits",
+        "cursor",
+    ):
+        assert required in lowered
+    assert "ForgeLoop remains the sole authority" in section
+
+
+def test_readme_documents_bounded_run_modes_and_exit_markers():
+    lowered = README.lower()
+    for required in (
+        "--run-mode once",
+        "--run-mode bounded",
+        "--max-idle-polls",
+        "worker_poll_exit",
+        "one_shot_complete",
+        "idle_bound_reached",
+        "worker_poll_error",
+    ):
+        assert required in lowered
+
+
+def test_readme_defines_the_handled_count_semantics():
+    marker_section = README.split("WORKER_POLL_ERROR type=<ExceptionClass>", 1)[1].split(
+        "## Ephemeral CLI Worker pattern", 1
+    )[0]
+    lowered = marker_section.lower()
+    assert "handled" in lowered
+    assert "first-start" in lowered or "first start" in lowered
+    assert "engineer" in lowered
+
+
+def test_worker_prompt_reports_waiting_instead_of_polling_forever():
+    worker_section = README.split("### Worker system prompt", 1)[1].split(
+        "## Canonical recovery and ownership invariants", 1
+    )[0]
+    lowered = worker_section.lower()
+    assert "waiting_for_engineer" in lowered
+    assert "bounded" in lowered
+    assert "exit" in lowered
+    assert "state=waiting" in lowered or "state waiting" in lowered
