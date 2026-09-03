@@ -44,7 +44,6 @@ from examples.live_observer.base import (
     UNKNOWN,
     ObserverError,
     ObserverSession,
-    ParsedObserverStart,
     get_shell_command,
     map_relay_status,
     project_safe_metadata,
@@ -204,12 +203,42 @@ def _iter_candidate_json_blobs(text: str):
             yield value
 
 
-def parse_start_output(stdout: str, stderr: str) -> ParsedObserverStart:
+def is_provider_metadata_dict(value: object) -> bool:
+    """Detect a provider session-metadata object without validating it.
+
+    Matches a JSON object carrying a session identity (`session_id`,
+    `share_url`) or the provider access markers (`read_only` + `encrypted`).
+    Ordinary Worker output is forwarded untouched; only a matching line is
+    treated as metadata (and never forwarded, since it holds the password).
+    """
+    if not isinstance(value, dict):
+        return False
+    return (
+        "session_id" in value
+        or "share_url" in value
+        or ("read_only" in value and "encrypted" in value)
+    )
+
+
+def try_parse_json_line(line: str) -> dict | None:
+    """Parse one stderr line as a JSON object; return None when not one."""
+    stripped = (line or "").strip()
+    if not stripped.startswith("{") or not stripped.endswith("}"):
+        return None
+    try:
+        value = json.loads(stripped)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def parse_start_output(stdout: str, stderr: str) -> ObserverSession:
     """Parse provider start metadata from stdout/stderr text.
 
     Upstream prints the session JSON on a single stderr line; this parser
     accepts it from either stream for robustness. Raises OBSERVER_JSON_INVALID
     on malformed output, and fail-closed read-only/E2EE/URL errors otherwise.
+    The E2EE password is discarded during projection and never returned.
     """
     combined_candidates: list[dict] = []
     for chunk in (stderr or "", stdout or ""):
@@ -327,7 +356,7 @@ class ShellOnlineProvider:
     def start_argv(self, command: list[str]) -> list[str]:
         return build_wrapper_argv(command, self.shell_cmd)
 
-    def parse_start(self, stdout: str, stderr: str) -> ParsedObserverStart:
+    def parse_start(self, stdout: str, stderr: str) -> ObserverSession:
         return parse_start_output(stdout, stderr)
 
     def status(self, session_id: str) -> str:
@@ -346,12 +375,14 @@ __all__ = [
     "build_wrapper_argv",
     "clear_probe_cache",
     "find_session_entry",
+    "is_provider_metadata_dict",
     "parse_list_output",
     "parse_start_output",
     "preflight",
     "query_status",
     "resolve_executable",
     "stop_session",
+    "try_parse_json_line",
     "ONLINE",
     "RECONNECTING",
     "EXPIRED",

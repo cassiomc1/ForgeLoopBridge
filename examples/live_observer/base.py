@@ -11,9 +11,7 @@ Terminal output is observational only and is never canonical evidence.
 from __future__ import annotations
 
 import os
-import stat
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlparse
 
@@ -27,6 +25,7 @@ OBSERVER_ENCRYPTION_DISABLED = "OBSERVER_ENCRYPTION_DISABLED"
 OBSERVER_URL_INVALID = "OBSERVER_URL_INVALID"
 OBSERVER_STATUS_FAILED = "OBSERVER_STATUS_FAILED"
 OBSERVER_STOP_FAILED = "OBSERVER_STOP_FAILED"
+OBSERVER_SECURITY_VALIDATION_FAILED = "OBSERVER_SECURITY_VALIDATION_FAILED"
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -93,14 +92,6 @@ class ObserverSession:
     relay_status: str | None = None
 
 
-@dataclass(frozen=True)
-class ParsedObserverStart:
-    """Safe session projection plus the local-only operator secret."""
-
-    session: ObserverSession
-    e2ee_password: str | None
-
-
 class LiveObserverProvider(Protocol):
     """Minimal provider surface. No plugin framework beyond one adapter."""
 
@@ -110,8 +101,8 @@ class LiveObserverProvider(Protocol):
         """Return True when the provider executable passes bounded preflight."""
         ...
 
-    def start(self, command: list[str]) -> ParsedObserverStart:
-        """Start an observed worker command and return safe metadata + secret."""
+    def start(self, command: list[str]) -> ObserverSession:
+        """Start an observed worker command and return safe metadata only."""
         ...
 
     def status(self, session_id: str) -> str:
@@ -191,13 +182,32 @@ def _require_non_empty_str(value: object, field: str) -> str:
     return value.strip()
 
 
-def project_safe_metadata(raw: dict) -> ParsedObserverStart:
-    """Project raw provider JSON onto the allow-list and separate the secret.
+def extract_session_id(raw: object) -> str | None:
+    """Extract the opaque provider session id without validating anything else.
 
-    Enforces read-only + E2EE (fail closed), validates the share URL, and
-    never retains arbitrary raw provider JSON. The E2EE password is returned
-    separately as a local-only operator secret; it must never be persisted
-    by the Bridge, posted in messages, or written to logs.
+    Used for targeted cleanup (`shell kill <session-id>`) before or without
+    full security validation. The id is treated as opaque: it is never
+    interpreted, never guessed, and never trusted semantically. Returns None
+    when no usable id is present.
+    """
+    if not isinstance(raw, dict):
+        return None
+    value = raw.get("session_id")
+    if not isinstance(value, str) or not value.strip():
+        return None
+    if any(ord(char) < 32 or ord(char) == 127 for char in value):
+        return None
+    return value.strip()
+
+
+def project_safe_metadata(raw: dict) -> ObserverSession:
+    """Project raw provider JSON onto the allow-list and discard the secret.
+
+    Enforces read-only + E2EE (fail closed) and validates the share URL.
+    The E2EE password is never read into Bridge state: it is discarded
+    immediately and never reaches logs, messages, or persistence. shell.online
+    retains its own owner-side session record; operators retrieve the
+    password locally with `shell list`.
     """
     if not isinstance(raw, dict):
         raise ObserverError(OBSERVER_JSON_INVALID, "provider output must be a JSON object")
@@ -222,10 +232,7 @@ def project_safe_metadata(raw: dict) -> ParsedObserverStart:
     ):
         raise ObserverError(OBSERVER_JSON_INVALID, "provider field 'relay_status' is malformed")
     normalized_relay = relay_status.strip().lower() if isinstance(relay_status, str) else None
-    password = raw.get("e2ee_password")
-    if password is not None and (not isinstance(password, str) or not password):
-        raise ObserverError(OBSERVER_JSON_INVALID, "provider field 'e2ee_password' is malformed")
-    session = ObserverSession(
+    return ObserverSession(
         provider="shell.online",
         session_id=session_id,
         share_url=share_url,
@@ -233,7 +240,6 @@ def project_safe_metadata(raw: dict) -> ParsedObserverStart:
         encrypted=True,
         relay_status=normalized_relay,
     )
-    return ParsedObserverStart(session=session, e2ee_password=password)
 
 
 def map_relay_status(relay: str | None) -> str:
@@ -288,65 +294,6 @@ def build_observer_announcement(
         if cleaned:
             lines.insert(3, f"- Task: `{cleaned}`")
     return "\n".join(lines) + "\n"
-
-
-# ─── Local secret handling (temporary, owner-only, outside the repo) ─────────
-
-
-def get_secret_dir() -> Path:
-    return Path("/tmp/forgeloopbridge-observer")
-
-
-def write_secret_file(session_id: str, share_url: str, e2ee_password: str) -> Path:
-    """Persist the operator secret locally with owner-only permissions.
-
-    The file is local-only, temporary, and is not Bridge or ForgeLoop state.
-    Callers must remove it when the observer session ends.
-    """
-    directory = get_secret_dir()
-    directory.mkdir(parents=True, exist_ok=True)
-    try:
-        os.chmod(directory, 0o700)
-    except (OSError, NotImplementedError):
-        pass
-    safe_session = "".join(
-        char if char.isalnum() or char in ("-", "_") else "_" for char in session_id
-    )[:128] or "session"
-    path = directory / f"{safe_session}.json"
-    import json as _json
-
-    payload = _json.dumps(
-        {
-            "provider": "shell.online",
-            "share_url": share_url,
-            "e2ee_password": e2ee_password,
-            "session_id": session_id,
-        },
-        indent=2,
-        sort_keys=True,
-    )
-    path.write_text(payload + "\n", encoding="utf-8")
-    try:
-        os.chmod(path, 0o600)
-    except (OSError, NotImplementedError):
-        pass
-    # Best-effort POSIX ownership check; non-POSIX platforms skip silently.
-    try:
-        mode = stat.S_IMODE(path.stat().st_mode)
-        if mode & 0o077:
-            os.chmod(path, 0o600)
-    except (OSError, NotImplementedError):
-        pass
-    return path
-
-
-def remove_secret_file(path: Path | None) -> None:
-    if path is None:
-        return
-    try:
-        Path(path).unlink(missing_ok=True)
-    except OSError:
-        pass
 
 
 # ─── Safe structured logging (never secrets or raw provider JSON) ────────────

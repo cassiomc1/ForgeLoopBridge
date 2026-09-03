@@ -60,9 +60,9 @@ Phase 1 access mode is always `READ_ONLY`. There is no interactive option.
 `examples/run_worker_observed.py` is a launcher around one Worker command.
 It reads observer config, probes the provider with bounded timeouts,
 builds `shell --read-only --json --foreground -- <worker-command>`,
-parses provider metadata, enforces read-only + E2EE, separates the secret
-from safe metadata, posts one Bridge announcement, preserves the Worker
-exit code, and cleans up only its own session.
+parses provider metadata, enforces read-only + E2EE, keeps the share URL
+only, posts one Bridge announcement, preserves the Worker exit code, and
+cleans up only its own session.
 
 ```bash
 python examples/run_worker_observed.py \
@@ -79,12 +79,21 @@ Worker exit (default background detaches). Without advertised
 
 ## Credential boundary
 
-The E2EE password never appears in Bridge SQLite, messages, typed
-messages, SSE history, logs, reports, Git, or snapshots. The Bridge
-publishes the validated HTTPS share URL only. Local retention uses a
-temporary owner-only file outside the repo
-(`/tmp/forgeloopbridge-observer/<session-id>.json`, directory `0700`,
-file `0600`), removed when the session ends.
+ForgeLoopBridge never stores the E2EE password: provider metadata is
+parsed, the share URL is kept, and the password is discarded immediately.
+The password never appears in Bridge SQLite, messages, typed messages, SSE
+history, logs, reports, Git, or snapshots. shell.online retains its own
+owner-side session record; operators retrieve the password locally with
+`shell list`.
+
+## Failure policy
+
+Pre-start provider failure fails open: the Worker runs directly, exactly
+once, and the observer is reported unavailable. Post-start security
+violation (non-read-only session, unencrypted session, or invalid share
+URL) fails closed: the unsafe session is stopped with
+`shell kill <session-id>`, the invocation is terminated boundedly with a
+non-zero exit, and the Worker command is never executed a second time.
 
 ## Announcement
 

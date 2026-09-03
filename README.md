@@ -1395,13 +1395,12 @@ engineering truth. shell.online only exposes a live observational PTY view.
   presented as an official observer.
 - **E2EE required**: sessions with `encrypted == false` are rejected and
   never published. The integration never invokes `--no-e2ee`.
-- **Password never persisted by Bridge**: the shell.online E2EE password is
-  a local operator secret. It never appears in Bridge SQLite, Bridge
-  messages, typed messages, SSE history, server logs, final reports, Git,
-  or test snapshots. The Bridge publishes the validated HTTPS share URL
-  only; the operator obtains the password separately. A helper may keep it
-  in a temporary owner-only file under `/tmp/forgeloopbridge-observer/`
-  (directory `0700`, file `0600`) and removes it when the session ends.
+- **Password never persisted by Bridge**: ForgeLoopBridge publishes only
+  the validated read-only share URL. The E2EE browser password is never
+  persisted or transmitted by ForgeLoopBridge. It never appears in Bridge
+  SQLite, Bridge messages, typed messages, SSE history, server logs, final
+  reports, Git, or test snapshots. Retrieve the password locally from
+  shell.online using `shell list`.
 - **Terminal is observational, not evidence**: shell.online output is not
   canonical ForgeLoop evidence, shell.online state is not Bridge task state
   and is not ForgeLoop lifecycle state. Terminal says "done" is not
@@ -1434,6 +1433,15 @@ read-only + E2EE + HTTPS provider-host URL validation, posts exactly one
 Markdown observer announcement (no password, with an explicit
 non-authoritative notice), preserves the real Worker exit code, and cleans
 up only its own session (`shell kill <session-id>`, never `--all`).
+A single blocking reader thread drains provider stderr and extracts the
+metadata line; the raw metadata (which carries the password) is never
+forwarded to logs.
+
+Pre-start provider failure fails open: the Worker runs directly, exactly
+once, and the observer is reported unavailable. Post-start security
+violation fails closed: the unsafe session is stopped, the invocation is
+terminated boundedly with a non-zero exit, and the Worker command is never
+executed a second time.
 
 ```markdown
 ### Live Execution Observer

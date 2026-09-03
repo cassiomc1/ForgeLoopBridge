@@ -6,18 +6,23 @@ without changing Bridge/ForgeLoop authority:
 
 - Disabled by default (`FORGEBRIDGE_LIVE_OBSERVER=none`).
 - Opt-in via `--provider shell-online` or the environment.
-- Read-only only; E2EE required; no `--interactive` option exists.
-- The E2EE password is a local-only operator secret: it is written to an
-  owner-only file under `/tmp/forgeloopbridge-observer/` and never posted
-  to the Bridge, logged, or persisted.
+- Read-only only; E2EE required; no interactive option exists.
+- ForgeLoopBridge never stores the E2EE password: provider metadata is
+  parsed, the share URL is kept, and the password is discarded immediately.
+  shell.online retains its own owner-side session record; operators retrieve
+  the password locally with `shell list`.
 - The Bridge receives at most one Markdown observer-start announcement per
   invocation over the existing message POST path (no schema/API change).
 - The wrapper uses `--foreground` so the orchestrator still observes the
   real Worker exit. Without advertised `--foreground` support the helper
   runs the Worker directly (fail-open, observer unavailable) rather than
   detaching the Worker behind a background wrapper.
+- Pre-start provider failure fails open (Worker runs directly, exactly
+  once). Post-start security violation fails closed: targeted
+  `shell kill <session-id>`, bounded termination, non-zero exit, and the
+  Worker command is never executed a second time.
 - Observer lifetime follows the Worker turn; cleanup targets only the
-  session created by this helper (`shell kill <session-id>`, never `--all`).
+  session created by this helper (never `--all`).
 
 Conceptual usage:
 
@@ -38,7 +43,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import select
+import queue
+import signal
 import subprocess
 import sys
 import threading
@@ -51,28 +57,32 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from examples.live_observer.base import (  # noqa: E402
+    OBSERVER_SECURITY_VALIDATION_FAILED,
     PROVIDER_NONE,
     PROVIDER_SHELL_ONLINE,
     build_observer_announcement,
+    extract_session_id,
     format_end_log,
     format_error_log,
     format_start_log,
     get_provider_name,
     get_shell_command,
     is_observer_enabled,
-    remove_secret_file,
-    write_secret_file,
+    project_safe_metadata,
 )
 from examples.live_observer.shell_online import (  # noqa: E402
     ObserverError,
     build_wrapper_argv,
-    parse_start_output,
+    is_provider_metadata_dict,
     preflight,
     stop_session,
+    try_parse_json_line,
 )
 
 BRIDGE_POST_TIMEOUT_SECONDS = 15
 METADATA_WAIT_SECONDS = 15
+METADATA_SCAN_LINES = 200
+TERMINATE_GRACE_SECONDS = 10
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -193,50 +203,129 @@ def _normalize_exit_code(returncode: int | None) -> int:
     return int(returncode)
 
 
-def _read_first_stderr_chunk(pipe, timeout: float) -> str:
-    """Wait up to `timeout` seconds for the first stderr bytes (POSIX select)."""
+class _StderrPump(threading.Thread):
+    """Sole consumer of provider stderr.
+
+    A single blocking reader thread scans a bounded number of initial lines
+    for the provider metadata object, delivers it to the main thread through
+    a queue, and forwards every other line to the terminal. The raw metadata
+    line is never forwarded because it carries the E2EE password. The file
+    descriptor is never switched to nonblocking.
+    """
+
+    def __init__(self, pipe, metadata_queue: queue.Queue, target) -> None:
+        super().__init__(daemon=True)
+        self._pipe = pipe
+        self._metadata_queue = metadata_queue
+        self._target = target
+
+    def run(self) -> None:
+        found = False
+        scanned = 0
+        try:
+            for line in self._pipe:
+                if not found and scanned < METADATA_SCAN_LINES:
+                    scanned += 1
+                    candidate = try_parse_json_line(line)
+                    if candidate is not None and is_provider_metadata_dict(candidate):
+                        found = True
+                        try:
+                            self._metadata_queue.put_nowait(line)
+                        except queue.Full:
+                            pass
+                        continue
+                try:
+                    self._target.write(line)
+                    self._target.flush()
+                except (OSError, ValueError):
+                    break
+        except (OSError, ValueError):
+            pass
+        finally:
+            if not found:
+                try:
+                    self._metadata_queue.put_nowait("")
+                except queue.Full:
+                    pass
+
+
+def _terminate_bounded(proc, grace: float = TERMINATE_GRACE_SECONDS):
+    """Terminate a started wrapper/Worker with a bounded grace period.
+
+    Returns the process return code, or None when it refuses to exit.
+    Targets only this invocation's process; never anything else.
+    """
     try:
-        ready, _, _ = select.select([pipe], [], [], max(0.0, float(timeout)))
-    except (OSError, ValueError, TypeError):
-        return ""
-    if not ready:
-        return ""
-    try:
-        # The provider prints one JSON line first; a single line is enough
-        # for metadata while the forwarder thread keeps the pipe drained.
-        line = pipe.readline()
-    except (OSError, ValueError):
-        return ""
-    rest = ""
-    try:
-        import fcntl
-
-        flags = fcntl.fcntl(pipe.fileno(), fcntl.F_GETFL)
-        fcntl.fcntl(pipe.fileno(), fcntl.F_SETFL, flags | _os_nonblock())
-        rest = pipe.read() or ""
-    except Exception:
-        rest = ""
-    return (line or "") + (rest or "")
-
-
-def _os_nonblock() -> int:
-    import os as _os
-
-    return getattr(_os, "O_NONBLOCK", 0) or 0
-
-
-def _forward_stderr(pipe, target) -> None:
-    try:
-        for chunk in iter(lambda: pipe.read(65536), ""):
-            if not chunk:
-                break
-            try:
-                target.write(chunk)
-                target.flush()
-            except (OSError, ValueError):
-                break
-    except (OSError, ValueError):
+        proc.terminate()
+    except OSError:
         pass
+    try:
+        return proc.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
+        pass
+    except (OSError, KeyboardInterrupt):
+        pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+    try:
+        return proc.wait(timeout=grace)
+    except (subprocess.TimeoutExpired, OSError, KeyboardInterrupt):
+        return None
+
+
+def _wait_for_worker(proc):
+    """Wait for the wrapped Worker; terminate it boundedly on interrupt."""
+    try:
+        return proc.wait()
+    except KeyboardInterrupt:
+        print("run_worker_observed: interrupted; terminating observed Worker invocation")
+        return _terminate_bounded(proc)
+
+
+def _install_sigterm_forward(proc):
+    """Forward SIGTERM to the wrapped process, then exit 143 via SystemExit.
+
+    The surrounding finally block still runs targeted session cleanup.
+    Returns the previous SIGTERM disposition for restoration.
+    """
+    previous = signal.getsignal(signal.SIGTERM)
+
+    def _handler(signum, frame):
+        try:
+            proc.terminate()
+        except OSError:
+            pass
+        raise SystemExit(143)
+
+    signal.signal(signal.SIGTERM, _handler)
+    return previous
+
+
+def _fail_closed(proc, session_id: str | None, shell_cmd: str | None, reason_code: str) -> int:
+    """Handle a post-start observer security violation without rerunning work.
+
+    Stops the unsafe session when its id is known, terminates the started
+    invocation boundedly, and returns non-zero. The Worker command is never
+    executed a second time: it may already have modified the target project.
+    """
+    print(format_error_log(reason_code))
+    print(format_error_log(OBSERVER_SECURITY_VALIDATION_FAILED))
+    if session_id:
+        print(f"unsafe observer session rejected; stopping session {session_id}")
+        try:
+            stop_session(session_id, shell_cmd)
+        except ObserverError as exc:
+            print(format_error_log(exc.code))
+        print(format_end_log(session_id))
+    else:
+        print(
+            "unsafe observer metadata has no usable session id; "
+            "stopping the invocation without provider cleanup"
+        )
+    _terminate_bounded(proc)
+    return 1
 
 
 def run_observed(
@@ -289,82 +378,73 @@ def run_observed(
         return run_direct(worker_command)
 
     assert proc.stderr is not None
-    stderr_head = _read_first_stderr_chunk(proc.stderr, metadata_timeout)
-    forwarder = threading.Thread(
-        target=_forward_stderr, args=(proc.stderr, sys.stderr), daemon=True
-    )
-    forwarder.start()
-
-    session = None
-    secret_path: Path | None = None
+    metadata_queue: queue.Queue = queue.Queue(maxsize=1)
+    pump = _StderrPump(proc.stderr, metadata_queue, sys.stderr)
+    pump.start()
+    previous_sigterm = _install_sigterm_forward(proc)
+    # Set only on the fully validated success path; the finally block stops
+    # exactly that session. Fail-closed paths stop their session directly.
+    published_session = None
+    exit_code = 1
     try:
-        parsed = parse_start_output("", stderr_head)
-    except ObserverError as exc:
-        # Fail closed on security properties (interactive/unencrypted/bad URL)
-        # but fail open for availability (malformed/missing metadata): the
-        # wrapped Worker is already running, so keep it and skip publishing.
-        print(format_error_log(exc.code))
-        if exc.code in ("OBSERVER_UNSAFE_ACCESS_MODE", "OBSERVER_ENCRYPTION_DISABLED", "OBSERVER_URL_INVALID"):
-            print("unsafe observer session rejected; Worker continues without a published link")
-            try:
-                # Best-effort targeted cleanup of the rejected session is not
-                # possible without a session id; the task-bound session ends
-                # with the wrapped command.
-                pass
-            finally:
-                pass
-        else:
-            print("observer unavailable; Worker continues without a published link")
-        returncode = proc.wait()
-        return _normalize_exit_code(returncode)
-
-    session = parsed.session
-    print(format_start_log(session), flush=True)
-    if parsed.e2ee_password:
         try:
-            secret_path = write_secret_file(
-                session.session_id, session.share_url, parsed.e2ee_password
-            )
-        except OSError as exc:
-            print(format_error_log("OBSERVER_START_FAILED"))
-            print(f"local secret file failed ({exc.__class__.__name__}); link not published")
-            secret_path = None
-            session = None
-            returncode = proc.wait()
-            return _normalize_exit_code(returncode)
-        print(
-            "observer password stored locally only; "
-            "share the share URL without the password on the Bridge",
-        )
+            metadata_text = metadata_queue.get(timeout=metadata_timeout)
+        except queue.Empty:
+            metadata_text = None
+        if not metadata_text:
+            # Availability failure (late or absent metadata): the wrapped
+            # Worker is already running, so keep it, drain stderr via the
+            # pump, and return the real Worker result.
+            print(format_error_log("OBSERVER_JSON_INVALID"))
+            print("observer unavailable; Worker continues without a published link")
+            return _normalize_exit_code(_wait_for_worker(proc))
 
-    if session is not None:
+        raw_metadata = try_parse_json_line(metadata_text)
+        if raw_metadata is None or not is_provider_metadata_dict(raw_metadata):
+            print(format_error_log("OBSERVER_JSON_INVALID"))
+            print("observer unavailable; Worker continues without a published link")
+            return _normalize_exit_code(_wait_for_worker(proc))
+
+        # Identity extraction is separate from security validation: the id is
+        # opaque and used only for targeted cleanup of this session.
+        session_id = extract_session_id(raw_metadata)
+        # Discard the password immediately: projection keeps the URL only.
+        raw_metadata.pop("e2ee_password", None)
+        try:
+            session = project_safe_metadata(raw_metadata)
+        except ObserverError as exc:
+            return _fail_closed(proc, session_id, shell_cmd or get_shell_command(), exc.code)
+        finally:
+            raw_metadata.clear()
+
+        published_session = session
+        print(format_start_log(session), flush=True)
+        print(
+            "Live observer started.\n"
+            "Browser password is managed by shell.online.\n"
+            "Retrieve it locally with:\n"
+            "    shell list"
+        )
         try:
             announcement = build_observer_announcement(session, task_id=task_id)
         except ObserverError as exc:
-            print(format_error_log(exc.code))
-            announcement = None
-        if announcement is not None:
-            posted = post_observer_announcement(bridge_url, worker_token, announcement, task_id)
-            if not posted:
-                print("observer announcement not delivered; Worker continues")
-
-    try:
-        returncode = proc.wait()
-    except KeyboardInterrupt:
-        try:
-            proc.terminate()
-        except OSError:
-            pass
-        returncode = proc.wait()
+            return _fail_closed(
+                proc, session.session_id, shell_cmd or get_shell_command(), exc.code
+            )
+        posted = post_observer_announcement(bridge_url, worker_token, announcement, task_id)
+        if not posted:
+            print("observer announcement not delivered; Worker continues")
+        exit_code = _normalize_exit_code(_wait_for_worker(proc))
+        return exit_code
     finally:
-        if session is not None:
+        signal.signal(signal.SIGTERM, previous_sigterm)
+        if published_session is not None:
             try:
-                stop_session(session.session_id, shell_cmd or get_shell_command())
+                stop_session(published_session.session_id, shell_cmd or get_shell_command())
             except ObserverError as exc:
                 print(format_error_log(exc.code))
-            print(format_end_log(session.session_id))
-        remove_secret_file(secret_path)
-    return _normalize_exit_code(returncode)
+            print(format_end_log(published_session.session_id))
+    return exit_code
 
 
 def main(argv: list[str] | None = None) -> int:
