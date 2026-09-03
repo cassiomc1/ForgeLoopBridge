@@ -1051,8 +1051,8 @@ def test_normal_nonzero_worker_exit_skips_cleanup(monkeypatch, capsys):
     assert "OBSERVER_STOP_FAILED" not in output
 
 
-def test_interrupt_requests_targeted_cleanup_and_bounded_exit(monkeypatch, capsys):
-    """KeyboardInterrupt terminates the Worker and cleans exactly its session."""
+def test_keyboard_interrupt_returns_130_and_requests_targeted_cleanup(monkeypatch, capsys):
+    """Ctrl-C terminates the Worker, cleans exactly its session, exits 130."""
     from examples import run_worker_observed as helper
 
     stopped: list[str] = []
@@ -1104,10 +1104,86 @@ def test_interrupt_requests_targeted_cleanup_and_bounded_exit(monkeypatch, capsy
         task_id=None,
         metadata_timeout=5.0,
     )
-    assert code == 0
+    assert code == 130
     assert terminated == ["terminate"]
     assert stopped == ["sess-test-001"]
-    assert "LIVE_OBSERVER_END" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "LIVE_OBSERVER_END" in output
+    assert "OBSERVER_STOP_FAILED" not in output
+
+
+def test_metadata_unavailable_keyboard_interrupt_returns_130(monkeypatch):
+    """Ctrl-C while the Worker runs without metadata also exits 130, no rerun."""
+    from examples import run_worker_observed as helper
+
+    terminated: list[str] = []
+
+    class BlockingStderr:
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            threading.Event().wait(30)
+            raise StopIteration
+
+    class FakeProc:
+        def __init__(self):
+            self.stderr = BlockingStderr()
+
+        def wait(self, timeout=None):
+            raise KeyboardInterrupt
+
+        def terminate(self):
+            terminated.append("terminate")
+
+        def kill(self):
+            terminated.append("kill")
+
+    monkeypatch.setattr(
+        helper, "preflight", lambda cmd=None: {"supports_read_only": True, "supports_json": True}
+    )
+    monkeypatch.setattr(
+        helper,
+        "build_wrapper_argv",
+        lambda worker, cmd=None, foreground=True: ["shell-mock", *worker],
+    )
+    monkeypatch.setattr(helper.subprocess, "Popen", lambda *args, **kwargs: FakeProc())
+    monkeypatch.setattr(
+        helper, "run_direct", lambda command: (_ for _ in ()).throw(AssertionError("rerun"))
+    )
+    posted: list = []
+    monkeypatch.setattr(
+        helper, "post_observer_announcement", lambda *args: posted.append(args) or True
+    )
+    code = helper.run_observed(
+        [sys.executable, "-c", "print(1)"],
+        shell_cmd="shell",
+        bridge_url="http://localhost:8000",
+        worker_token="worker-token",
+        task_id=None,
+        metadata_timeout=30.0,
+    )
+    assert code == 130
+    assert terminated[0] == "terminate"
+    assert posted == []
+
+
+def test_wait_for_worker_keyboard_interrupt_returns_130(monkeypatch):
+    """The child's cleanup exit code cannot overwrite interruption semantics."""
+    from examples import run_worker_observed as helper
+
+    class FakeProc:
+        def wait(self, timeout=None):
+            raise KeyboardInterrupt
+
+        def terminate(self):
+            pass
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(helper, "_terminate_bounded", lambda proc, grace=10: 0)
+    assert helper._wait_for_worker(FakeProc()) == 130
 
 
 def test_sigterm_forwarder_marks_cleanup_and_exits_143():

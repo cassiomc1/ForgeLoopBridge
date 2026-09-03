@@ -276,12 +276,17 @@ def _terminate_bounded(proc, grace: float = TERMINATE_GRACE_SECONDS):
 
 
 def _wait_for_worker(proc):
-    """Wait for the wrapped Worker; terminate it boundedly on interrupt."""
+    """Wait for the wrapped Worker; terminate it boundedly on interrupt.
+
+    A KeyboardInterrupt is the helper's interruption reason, not the child's
+    exit result: always report 130 so Ctrl-C can never look like success.
+    """
     try:
         return proc.wait()
     except KeyboardInterrupt:
         print("run_worker_observed: interrupted; terminating observed Worker invocation")
-        return _terminate_bounded(proc)
+        _terminate_bounded(proc)
+        return 130
 
 
 def _install_sigterm_forward(proc, cleanup_flag):
@@ -449,7 +454,10 @@ def run_observed(
         except KeyboardInterrupt:
             print("run_worker_observed: interrupted; terminating observed Worker invocation")
             cleanup_flag["required"] = True
-            returncode = _terminate_bounded(proc)
+            _terminate_bounded(proc)
+            # 130 is the helper's interruption reason; the child's cleanup
+            # exit code must never overwrite it into a false success.
+            returncode = 130
         if returncode is not None and returncode < 0:
             # Killed by a signal: abnormal termination where the provider
             # session may remain active, so request targeted cleanup.
