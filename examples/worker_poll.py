@@ -52,6 +52,8 @@ Transport liveness and agent-turn liveness are separate concerns:
 - `--run-mode bounded` adds a short grace window and exits after
   `--max-idle-polls` consecutive polls that deliver no new Engineer
   instruction (default 2). A handled Engineer instruction resets the counter.
+  The bound is idle-bounded, not absolute-runtime-bounded: a steady stream of
+  new Engineer input extends the turn by design.
 
 Use `once`/`bounded` for an ephemeral AI Worker turn launched by an Engineer or
 orchestrator: consume the new coordination, do the currently actionable work,

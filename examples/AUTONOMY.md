@@ -48,10 +48,35 @@ alive. Do not poll indefinitely inside a foreground Worker process that the
 Engineer is waiting on: that is an orchestration deadlock even when the Bridge
 server is healthy.
 
+For implementation-scale ephemeral Worker turns, the orchestrator must size
+its external timeout to expected task complexity: a too-short harness timeout
+can terminate a productive Worker before it posts its final coordination
+message. Use `once` for pure coordination-consumption turns and
+`bounded --max-idle-polls 2` (or `3`) for short review-gated windows;
+implementation turns need a materially larger harness timeout than the Bridge
+idle window. Token accounting is best-effort and provider-dependent: if exact
+provider usage is unavailable, report NOT AVAILABLE and never estimate token
+totals from message size, log length, or Bridge traffic.
+
 A Bridge `WAITING` status is coordination state only, and a Bridge
 `COMPLETE_REPORTED` status is not canonical completion.
 ForgeLoop remains the sole authority for lifecycle, claims, ownership, recovery,
 verification, approvals, and completion.
+
+### Agent-authored protocol inputs vs ForgeLoop-managed state
+
+Do not manually synthesize or edit ForgeLoop-managed lifecycle, ledger,
+claims, recovery, evidence, receipts, or completion state.
+
+This does not prevent the Worker from authoring required protocol inputs
+when the current canonical ForgeLoop workflow explicitly requires them.
+
+Follow current ForgeLoop GETTING_STARTED / protocol instructions for the
+exact required input and location (for example, writing the task contract
+file the documented workflow step requires, before running `route`).
+Skipping a documented required input, or inventing managed state instead
+of authoring the required input, are both protocol faults: report the
+exact canonical reason code and follow canonical guidance.
 
 ### One wait report per triggering input
 
@@ -163,6 +188,12 @@ Workspace identity and binding come only from ForgeLoop. Board agreement cannot
 override a workspace mismatch, and a path, branch, copied repository, or
 container name cannot prove a match. On `E_WORKSPACE_BINDING_MISMATCH`, stop,
 report the exact reason code, and do not silently rebind.
+
+Resolve the project root once and reuse that canonical spelling for all
+ForgeLoop operations. On macOS, `/tmp/...` may resolve to
+`/private/tmp/...`: do not alternate between both spellings where
+workspace/revision identity is path-sensitive
+(`PROJECT_ROOT="$(cd <dir> && pwd -P)"`, then reuse `$PROJECT_ROOT`).
 
 ### Canonical handoff
 
