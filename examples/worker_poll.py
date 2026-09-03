@@ -32,6 +32,7 @@ workflow:
 
 Usage:
     python worker_poll.py [--auto-ack] [--start-mode pending|now|history]
+                          [--run-mode daemon|once|bounded] [--max-idle-polls N]
 
 `--auto-ack` posts an immediate receipt/status acknowledgement for each new
 instruction. It never resolves approvals, grants authority, or changes
@@ -41,6 +42,24 @@ ForgeLoop state. Disabled by default to keep the board clean.
 Engineer instruction on a first start. Use `--start-mode now` explicitly to
 ignore messages already on the board, or `--start-mode history` to replay from
 cursor zero.
+
+Transport liveness and agent-turn liveness are separate concerns:
+
+- `--run-mode daemon` (default, unchanged behavior) is the continuous transport
+  adapter: poll, sleep, repeat until the process is terminated externally.
+- `--run-mode once` performs exactly one cycle over the currently available
+  Bridge delta and exits; it never sleeps.
+- `--run-mode bounded` adds a short grace window and exits after
+  `--max-idle-polls` consecutive polls that deliver no new Engineer
+  instruction (default 2). A handled Engineer instruction resets the counter.
+
+Use `once`/`bounded` for an ephemeral AI Worker turn launched by an Engineer or
+orchestrator: consume the new coordination, do the currently actionable work,
+report `STATUS_UPDATE(state="WAITING")` with `WAITING_FOR_ENGINEER` (or the
+canonical blocker) and exit. Do not poll indefinitely inside a foreground
+Worker process while the Engineer is blocked waiting for that process; that is
+the orchestration deadlock this mode exists to prevent. A bounded exit is
+coordination state only and never canonical ForgeLoop completion.
 """
 
 import argparse
@@ -196,6 +215,8 @@ TYPED_MESSAGE_KINDS = frozenset(
 )
 SUPPORTED_TYPED_SCHEMA_VERSIONS = frozenset({1})
 START_MODES = ("pending", "now", "history")
+RUN_MODES = ("daemon", "once", "bounded")
+DEFAULT_MAX_IDLE_POLLS = 2
 LATEST_PAGE_SIZE = 200
 FORGELOOP_JSON_TIMEOUT_SECONDS = 30
 
@@ -1152,28 +1173,90 @@ def process_polled_messages(messages: list[dict], last_seen: int, auto_ack: bool
     return last_seen
 
 
-def initialize_first_start(start_mode: str, auto_ack: bool = False) -> int:
-    """Initialize a missing cursor without silently losing the current task."""
+def initialize_first_start_cycle(start_mode: str, auto_ack: bool = False) -> tuple[int, int]:
+    """Initialize a missing cursor and report (cursor, instructions_handed_off).
+
+    A fresh Worker turn has no cursor file, so the `pending` bootstrap is the
+    step that delivers the currently open Engineer instruction. Returning that
+    count lets a bounded turn report the work it actually performed instead of
+    looking idle to the launching orchestrator.
+    """
     if start_mode not in START_MODES:
         raise ValueError(f"Unsupported start mode: {start_mode}")
     if start_mode == "history":
-        return 0
+        return 0, 0
 
     if start_mode == "now":
         last_seen = fetch_latest_message_id()
         save_last_seen(last_seen)
-        return last_seen
+        return last_seen, 0
 
     latest_engineer = fetch_latest_engineer_message()
     if latest_engineer is not None:
-        return process_polled_messages([latest_engineer], last_seen=0, auto_ack=auto_ack)
+        last_seen = process_polled_messages([latest_engineer], last_seen=0, auto_ack=auto_ack)
+        return last_seen, 1
 
     last_seen = fetch_latest_message_id()
     save_last_seen(last_seen)
+    return last_seen, 0
+
+
+def initialize_first_start(start_mode: str, auto_ack: bool = False) -> int:
+    """Initialize a missing cursor without silently losing the current task."""
+    last_seen, _handled = initialize_first_start_cycle(start_mode, auto_ack=auto_ack)
     return last_seen
 
 
-def main():
+def poll_once(
+    last_seen: int,
+    *,
+    auto_ack: bool = False,
+) -> tuple[int, int]:
+    """Poll once and return (new_last_seen, engineer_messages_handled).
+
+    One cycle never sleeps and never waits for future coordination: it replays
+    the typed outbox, reads the Bridge delta after the persisted cursor, and
+    hands off the Engineer instructions that are actionable right now. The
+    returned count reports only Engineer-authored instructions that were safely
+    handed off during this cycle, so an unsafe batch raises instead of reporting
+    progress.
+    """
+    retry_pending_typed_messages()
+
+    response = requests.get(
+        f"{BASE_URL}/api/messages",
+        params={"after_id": last_seen},
+        headers={"Authorization": f"Bearer {WORKER_TOKEN}"},
+        timeout=15,
+    )
+    response.raise_for_status()
+    messages = response.json()
+
+    new_last_seen = process_polled_messages(
+        messages,
+        last_seen,
+        auto_ack=auto_ack,
+    )
+    engineer_count = sum(1 for message in messages if message.get("role") == "engineer")
+    return new_last_seen, engineer_count
+
+
+def print_exit_reason(reason: str, last_seen: int, handled: int) -> None:
+    """Print a stable bounded-exit marker for the launching agent/orchestrator.
+
+    The marker only reports Bridge transport coordination: it never claims
+    canonical ForgeLoop completion and never includes authentication material.
+    """
+    print(f"WORKER_POLL_EXIT reason={reason} last_seen={last_seen} handled={handled}")
+
+
+def print_exit_error(exception: BaseException) -> None:
+    """Print a stable bounded-failure marker without leaking credentials."""
+    print(f"[error] {exception}")
+    print(f"WORKER_POLL_ERROR type={exception.__class__.__name__}")
+
+
+def main() -> int:
     parser = argparse.ArgumentParser(description="ForgeLoopBridge worker poller")
     parser.add_argument(
         "--auto-ack",
@@ -1186,32 +1269,83 @@ def main():
         default="pending",
         help="first-start policy: deliver latest Engineer instruction, skip board, or replay history",
     )
+    parser.add_argument(
+        "--run-mode",
+        choices=RUN_MODES,
+        default="daemon",
+        help=(
+            "daemon polls continuously; once processes the currently available "
+            "Bridge delta and exits; bounded adds a finite idle grace window "
+            "before exiting"
+        ),
+    )
+    parser.add_argument(
+        "--max-idle-polls",
+        type=int,
+        default=DEFAULT_MAX_IDLE_POLLS,
+        help=(
+            "bounded run mode only: exit after this many consecutive polls that "
+            "deliver no new Engineer instruction"
+        ),
+    )
     args = parser.parse_args()
+    if args.run_mode == "bounded" and args.max_idle_polls < 1:
+        parser.error("--max-idle-polls must be at least 1 for the bounded run mode")
 
     last_seen = load_last_seen()
     retry_pending_typed_messages()
+    bootstrap_handled = 0
     if not STATE_FILE.exists():
-        last_seen = initialize_first_start(args.start_mode, auto_ack=args.auto_ack)
+        last_seen, bootstrap_handled = initialize_first_start_cycle(
+            args.start_mode, auto_ack=args.auto_ack
+        )
         print(f"First run ({args.start_mode}): starting from message id {last_seen}")
     else:
         print(f"Resuming from message id {last_seen}")
+
+    if args.run_mode == "once":
+        print(f"Bounded single cycle against {BASE_URL} ...")
+        try:
+            last_seen, handled = poll_once(last_seen, auto_ack=args.auto_ack)
+        except Exception as exc:
+            print_exit_error(exc)
+            return 1
+
+        print_exit_reason("ONE_SHOT_COMPLETE", last_seen, bootstrap_handled + handled)
+        return 0
+
+    if args.run_mode == "bounded":
+        print(
+            f"Bounded turn against {BASE_URL}: exiting after "
+            f"{args.max_idle_polls} consecutive idle poll(s) ..."
+        )
+        handled_total = bootstrap_handled
+        idle_polls = 0
+        while idle_polls < args.max_idle_polls:
+            try:
+                last_seen, handled = poll_once(last_seen, auto_ack=args.auto_ack)
+            except Exception as exc:
+                print_exit_error(exc)
+                return 1
+
+            if handled > 0:
+                # New Engineer input is real progress, so the grace window restarts.
+                handled_total += handled
+                idle_polls = 0
+                continue
+
+            idle_polls += 1
+            if idle_polls < args.max_idle_polls:
+                time.sleep(POLL_INTERVAL)
+
+        print_exit_reason("IDLE_BOUND_REACHED", last_seen, handled_total)
+        return 0
 
     print(f"Monitoring {BASE_URL} every {POLL_INTERVAL}s ...")
 
     while True:
         try:
-            retry_pending_typed_messages()
-            r = requests.get(
-                f"{BASE_URL}/api/messages",
-                params={"after_id": last_seen},
-                headers={"Authorization": f"Bearer {WORKER_TOKEN}"},
-                timeout=15,
-            )
-            r.raise_for_status()
-            messages = r.json()
-
-            last_seen = process_polled_messages(messages, last_seen, auto_ack=args.auto_ack)
-
+            last_seen, _handled = poll_once(last_seen, auto_ack=args.auto_ack)
         except Exception as e:
             print(f"[error] {e}")
 
@@ -1219,4 +1353,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -30,6 +30,10 @@ def pending_request(message_key: str = "worker-pending-1", content: str = "Statu
     }
 
 
+def _forbid_sleep(seconds):
+    raise AssertionError(f"bounded polling must not sleep (requested {seconds}s)")
+
+
 def test_fetch_latest_message_id_uses_latest_mode(monkeypatch):
     captured = {}
 
@@ -998,6 +1002,697 @@ def test_first_start_pending_backward_pages_beyond_latest_page(tmp_path, monkeyp
     assert worker_poll.initialize_first_start("pending") == 100
     assert [message["id"] for message in handed_off] == [100]
     assert worker_poll.load_last_seen() == 100
+
+
+def test_poll_once_returns_idle_without_sleeping(monkeypatch, tmp_path):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    calls = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return []
+
+    def fake_get(url, *, params, headers, timeout):
+        calls.append(params)
+        return FakeResponse()
+
+    monkeypatch.setattr(worker_poll.requests, "get", fake_get)
+    monkeypatch.setattr(worker_poll.time, "sleep", _forbid_sleep)
+
+    last_seen, handled = worker_poll.poll_once(17)
+
+    assert last_seen == 17
+    assert handled == 0
+    assert calls == [{"after_id": 17}]
+
+
+def test_poll_once_handles_engineer_message_and_returns_count(monkeypatch, tmp_path):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    handled_ids = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return [
+                {
+                    "id": 18,
+                    "role": "engineer",
+                    "content": "Review requested",
+                }
+            ]
+
+    monkeypatch.setattr(
+        worker_poll.requests,
+        "get",
+        lambda *args, **kwargs: FakeResponse(),
+    )
+    monkeypatch.setattr(
+        worker_poll,
+        "handoff_message",
+        lambda message, auto_ack=False: handled_ids.append(message["id"]),
+    )
+
+    last_seen, handled = worker_poll.poll_once(17)
+
+    assert handled_ids == [18]
+    assert last_seen == 18
+    assert handled == 1
+    assert worker_poll.load_last_seen() == 18
+
+
+def test_poll_once_does_not_count_worker_messages(monkeypatch, tmp_path):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return [
+                {"id": 18, "role": "worker", "content": "own status"},
+                {"id": 19, "role": "engineer", "content": "review"},
+            ]
+
+    monkeypatch.setattr(
+        worker_poll.requests,
+        "get",
+        lambda *args, **kwargs: FakeResponse(),
+    )
+    monkeypatch.setattr(worker_poll, "handoff_message", lambda message, auto_ack=False: None)
+
+    assert worker_poll.poll_once(17) == (19, 1)
+
+
+def test_poll_once_replays_typed_outbox_before_reading_messages(monkeypatch, tmp_path):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    events = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return []
+
+    monkeypatch.setattr(
+        worker_poll,
+        "retry_pending_typed_messages",
+        lambda: events.append("replay") or 0,
+    )
+
+    def fake_get(url, *, params, headers, timeout):
+        events.append("get")
+        return FakeResponse()
+
+    monkeypatch.setattr(worker_poll.requests, "get", fake_get)
+
+    assert worker_poll.poll_once(5) == (5, 0)
+    assert events == ["replay", "get"]
+
+
+def test_poll_once_does_not_count_or_advance_after_failed_handoff(monkeypatch, tmp_path):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    worker_poll.STATE_FILE.write_text("50", encoding="utf-8")
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return [{"id": 51, "role": "engineer", "content": "Review requested"}]
+
+    def fail_handoff(message, auto_ack=False):
+        raise RuntimeError("handoff failed")
+
+    monkeypatch.setattr(
+        worker_poll.requests,
+        "get",
+        lambda *args, **kwargs: FakeResponse(),
+    )
+    monkeypatch.setattr(worker_poll, "handoff_message", fail_handoff)
+
+    with pytest.raises(RuntimeError, match="handoff failed"):
+        worker_poll.poll_once(50)
+
+    assert worker_poll.load_last_seen() == 50
+
+
+def test_run_modes_expose_daemon_and_once():
+    assert "daemon" in worker_poll.RUN_MODES
+    assert "once" in worker_poll.RUN_MODES
+    assert worker_poll.RUN_MODES[0] == "daemon"
+    assert "raise SystemExit(main())" in WORKER_POLL
+
+
+def test_once_mode_performs_single_poll_and_exits(monkeypatch, tmp_path):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    worker_poll.STATE_FILE.write_text("7", encoding="utf-8")
+
+    polls = []
+    sleeps = []
+
+    monkeypatch.setattr(
+        worker_poll,
+        "poll_once",
+        lambda last_seen, auto_ack=False: (polls.append(last_seen) or (last_seen, 0)),
+    )
+    monkeypatch.setattr(
+        worker_poll.time,
+        "sleep",
+        lambda seconds: sleeps.append(seconds),
+    )
+    monkeypatch.setattr(
+        worker_poll,
+        "retry_pending_typed_messages",
+        lambda: 0,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["worker_poll", "--run-mode", "once"],
+    )
+
+    assert worker_poll.main() == 0
+    assert polls == [7]
+    assert sleeps == []
+
+
+def test_once_mode_reports_failure_without_retrying(monkeypatch, tmp_path):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    worker_poll.STATE_FILE.write_text("7", encoding="utf-8")
+    polls = []
+
+    def failing_poll(last_seen, auto_ack=False):
+        polls.append(last_seen)
+        raise worker_poll.requests.ConnectionError("bridge unreachable")
+
+    monkeypatch.setattr(worker_poll, "poll_once", failing_poll)
+    monkeypatch.setattr(worker_poll.time, "sleep", _forbid_sleep)
+    monkeypatch.setattr(worker_poll, "retry_pending_typed_messages", lambda: 0)
+    monkeypatch.setattr(sys, "argv", ["worker_poll", "--run-mode", "once"])
+
+    assert worker_poll.main() == 1
+    assert polls == [7]
+
+
+def test_default_run_mode_remains_a_continuous_daemon(monkeypatch, tmp_path):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    worker_poll.STATE_FILE.write_text("11", encoding="utf-8")
+    polls = []
+    sleeps = []
+
+    class StopDaemon(BaseException):
+        pass
+
+    def fake_poll(last_seen, auto_ack=False):
+        polls.append(last_seen)
+        return last_seen, 0
+
+    def fake_sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) == 2:
+            raise StopDaemon()
+
+    monkeypatch.setattr(worker_poll, "poll_once", fake_poll)
+    monkeypatch.setattr(worker_poll.time, "sleep", fake_sleep)
+    monkeypatch.setattr(worker_poll, "retry_pending_typed_messages", lambda: 0)
+    monkeypatch.setattr(sys, "argv", ["worker_poll"])
+
+    with pytest.raises(StopDaemon):
+        worker_poll.main()
+
+    assert polls == [11, 11]
+    assert sleeps == [worker_poll.POLL_INTERVAL, worker_poll.POLL_INTERVAL]
+
+
+def test_daemon_mode_keeps_polling_after_a_transport_failure(monkeypatch, tmp_path):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    worker_poll.STATE_FILE.write_text("3", encoding="utf-8")
+    polls = []
+    sleeps = []
+
+    class StopDaemon(BaseException):
+        pass
+
+    def fake_poll(last_seen, auto_ack=False):
+        polls.append(last_seen)
+        if len(polls) == 1:
+            raise worker_poll.requests.ConnectionError("temporary bridge failure")
+        return last_seen, 0
+
+    def fake_sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) == 2:
+            raise StopDaemon()
+
+    monkeypatch.setattr(worker_poll, "poll_once", fake_poll)
+    monkeypatch.setattr(worker_poll.time, "sleep", fake_sleep)
+    monkeypatch.setattr(worker_poll, "retry_pending_typed_messages", lambda: 0)
+    monkeypatch.setattr(sys, "argv", ["worker_poll", "--run-mode", "daemon"])
+
+    with pytest.raises(StopDaemon):
+        worker_poll.main()
+
+    assert polls == [3, 3]
+
+
+def test_bounded_mode_is_an_explicit_run_mode():
+    assert worker_poll.RUN_MODES == ("daemon", "once", "bounded")
+    assert worker_poll.DEFAULT_MAX_IDLE_POLLS == 2
+
+
+def test_bounded_mode_exits_after_configured_idle_polls(monkeypatch, tmp_path):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    worker_poll.STATE_FILE.write_text("3", encoding="utf-8")
+
+    polls = []
+    sleeps = []
+
+    def fake_poll(last_seen, auto_ack=False):
+        polls.append(last_seen)
+        return last_seen, 0
+
+    monkeypatch.setattr(worker_poll, "poll_once", fake_poll)
+    monkeypatch.setattr(
+        worker_poll.time,
+        "sleep",
+        lambda seconds: sleeps.append(seconds),
+    )
+    monkeypatch.setattr(
+        worker_poll,
+        "retry_pending_typed_messages",
+        lambda: 0,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "worker_poll",
+            "--run-mode",
+            "bounded",
+            "--max-idle-polls",
+            "2",
+        ],
+    )
+
+    assert worker_poll.main() == 0
+    assert len(polls) == 2
+    assert len(sleeps) == 1
+
+
+def test_bounded_mode_resets_idle_counter_after_engineer_message(monkeypatch, tmp_path):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    worker_poll.STATE_FILE.write_text("60", encoding="utf-8")
+
+    # idle -> Engineer message -> idle -> idle
+    handled_sequence = [0, 1, 0, 0]
+    polls = []
+    sleeps = []
+
+    def fake_poll(last_seen, auto_ack=False):
+        handled = handled_sequence[len(polls)]
+        polls.append(last_seen)
+        return last_seen + handled, handled
+
+    monkeypatch.setattr(worker_poll, "poll_once", fake_poll)
+    monkeypatch.setattr(worker_poll.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(worker_poll, "retry_pending_typed_messages", lambda: 0)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["worker_poll", "--run-mode", "bounded", "--max-idle-polls", "2"],
+    )
+
+    assert worker_poll.main() == 0
+    assert polls == [60, 60, 61, 61]
+    assert len(sleeps) == 2
+
+
+def test_bounded_mode_uses_default_idle_bound_without_explicit_flag(monkeypatch, tmp_path):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    worker_poll.STATE_FILE.write_text("1", encoding="utf-8")
+    polls = []
+
+    monkeypatch.setattr(
+        worker_poll,
+        "poll_once",
+        lambda last_seen, auto_ack=False: (polls.append(last_seen) or (last_seen, 0)),
+    )
+    monkeypatch.setattr(worker_poll.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(worker_poll, "retry_pending_typed_messages", lambda: 0)
+    monkeypatch.setattr(sys, "argv", ["worker_poll", "--run-mode", "bounded"])
+
+    assert worker_poll.main() == 0
+    assert len(polls) == worker_poll.DEFAULT_MAX_IDLE_POLLS
+
+
+@pytest.mark.parametrize("value", ("0", "-1"))
+def test_bounded_mode_rejects_non_positive_idle_bounds(monkeypatch, tmp_path, value):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    worker_poll.STATE_FILE.write_text("1", encoding="utf-8")
+    monkeypatch.setattr(worker_poll.time, "sleep", _forbid_sleep)
+    monkeypatch.setattr(worker_poll, "retry_pending_typed_messages", lambda: 0)
+    monkeypatch.setattr(
+        worker_poll,
+        "poll_once",
+        lambda last_seen, auto_ack=False: pytest.fail("must reject the bound before polling"),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["worker_poll", "--run-mode", "bounded", "--max-idle-polls", value],
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        worker_poll.main()
+
+    assert excinfo.value.code == 2
+
+
+def test_bounded_mode_stops_on_first_transport_failure(monkeypatch, tmp_path):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    worker_poll.STATE_FILE.write_text("9", encoding="utf-8")
+    polls = []
+
+    def failing_poll(last_seen, auto_ack=False):
+        polls.append(last_seen)
+        raise worker_poll.requests.ConnectionError("bridge unreachable")
+
+    monkeypatch.setattr(worker_poll, "poll_once", failing_poll)
+    monkeypatch.setattr(worker_poll.time, "sleep", _forbid_sleep)
+    monkeypatch.setattr(worker_poll, "retry_pending_typed_messages", lambda: 0)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["worker_poll", "--run-mode", "bounded", "--max-idle-polls", "3"],
+    )
+
+    assert worker_poll.main() == 1
+    assert polls == [9]
+
+
+class _FakeBoard:
+    """Minimal Bridge REST double for bounded run-mode regression tests."""
+
+    def __init__(self, messages):
+        self.messages = list(messages)
+        self.requests = []
+
+    def get(self, url, *, params, headers, timeout):
+        self.requests.append(params)
+        after_id = params["after_id"]
+        delta = [message for message in self.messages if int(message["id"]) > after_id]
+        return type(
+            "FakeResponse",
+            (),
+            {"raise_for_status": lambda self: None, "json": lambda self: delta},
+        )()
+
+
+def test_once_mode_persists_cursor_after_safe_handoff(monkeypatch, tmp_path):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    worker_poll.STATE_FILE.write_text("50", encoding="utf-8")
+    board = _FakeBoard([{"id": 51, "role": "engineer", "content": "Review requested"}])
+    handed = []
+
+    monkeypatch.setattr(worker_poll.requests, "get", board.get)
+    monkeypatch.setattr(
+        worker_poll,
+        "handoff_message",
+        lambda message, auto_ack=False: handed.append(int(message["id"])),
+    )
+    monkeypatch.setattr(worker_poll, "retry_pending_typed_messages", lambda: 0)
+    monkeypatch.setattr(worker_poll.time, "sleep", _forbid_sleep)
+    monkeypatch.setattr(sys, "argv", ["worker_poll", "--run-mode", "once"])
+
+    assert worker_poll.main() == 0
+    assert handed == [51]
+    assert board.requests == [{"after_id": 50}]
+    assert worker_poll.load_last_seen() == 51
+
+
+def test_once_mode_does_not_advance_cursor_when_handoff_fails(monkeypatch, tmp_path):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    worker_poll.STATE_FILE.write_text("50", encoding="utf-8")
+    board = _FakeBoard([{"id": 51, "role": "engineer", "content": "Review requested"}])
+
+    def fail_handoff(message, auto_ack=False):
+        raise RuntimeError("worker harness failed")
+
+    monkeypatch.setattr(worker_poll.requests, "get", board.get)
+    monkeypatch.setattr(worker_poll, "handoff_message", fail_handoff)
+    monkeypatch.setattr(worker_poll, "retry_pending_typed_messages", lambda: 0)
+    monkeypatch.setattr(worker_poll.time, "sleep", _forbid_sleep)
+    monkeypatch.setattr(sys, "argv", ["worker_poll", "--run-mode", "once"])
+
+    assert worker_poll.main() == 1
+    assert worker_poll.load_last_seen() == 50
+
+
+def test_bounded_invocations_resume_without_redispatching_consumed_messages(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    worker_poll.STATE_FILE.write_text("50", encoding="utf-8")
+    board = _FakeBoard([{"id": 51, "role": "engineer", "content": "Implement the correction"}])
+    handed = []
+
+    monkeypatch.setattr(worker_poll.requests, "get", board.get)
+    monkeypatch.setattr(
+        worker_poll,
+        "handoff_message",
+        lambda message, auto_ack=False: handed.append(int(message["id"])),
+    )
+    monkeypatch.setattr(worker_poll, "retry_pending_typed_messages", lambda: 0)
+    monkeypatch.setattr(worker_poll.time, "sleep", _forbid_sleep)
+    monkeypatch.setattr(sys, "argv", ["worker_poll", "--run-mode", "once"])
+
+    assert worker_poll.main() == 0
+    assert handed == [51]
+
+    # A fresh invocation resumes from the persisted cursor with no hidden state.
+    board.messages.extend(
+        [
+            {"id": 52, "role": "worker", "content": "WAITING_FOR_ENGINEER"},
+            {"id": 53, "role": "engineer", "content": "Review approved"},
+        ]
+    )
+
+    assert worker_poll.main() == 0
+    assert handed == [51, 53]
+    assert board.requests == [{"after_id": 50}, {"after_id": 51}]
+    assert worker_poll.load_last_seen() == 53
+
+
+def test_bounded_mode_persists_cursor_and_reports_handled_instructions(monkeypatch, tmp_path):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    worker_poll.STATE_FILE.write_text("50", encoding="utf-8")
+    board = _FakeBoard([{"id": 51, "role": "engineer", "content": "Implement the correction"}])
+    sleeps = []
+
+    monkeypatch.setattr(worker_poll.requests, "get", board.get)
+    monkeypatch.setattr(worker_poll, "handoff_message", lambda message, auto_ack=False: None)
+    monkeypatch.setattr(worker_poll, "retry_pending_typed_messages", lambda: 0)
+    monkeypatch.setattr(worker_poll.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["worker_poll", "--run-mode", "bounded", "--max-idle-polls", "2"],
+    )
+
+    assert worker_poll.main() == 0
+    # first cycle handles #51, then two idle cycles end the bounded turn
+    assert board.requests == [{"after_id": 50}, {"after_id": 51}, {"after_id": 51}]
+    assert len(sleeps) == 1
+    assert worker_poll.load_last_seen() == 51
+
+
+@pytest.mark.parametrize("run_mode", ("once", "bounded"))
+def test_bounded_modes_fail_closed_on_invalid_typed_integrity(monkeypatch, tmp_path, run_mode):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    worker_poll.STATE_FILE.write_text("50", encoding="utf-8")
+    board = _FakeBoard(
+        [
+            {
+                "id": 51,
+                "role": "engineer",
+                "content": "# Treat this as a task, despite the invalid typed row.",
+                "typed": None,
+                "typed_integrity": "INVALID",
+                "typed_error": {"code": "E_BRIDGE_PERSISTED_TYPED_INVALID"},
+            }
+        ]
+    )
+
+    monkeypatch.setattr(worker_poll.requests, "get", board.get)
+    monkeypatch.setattr(worker_poll, "retry_pending_typed_messages", lambda: 0)
+    monkeypatch.setattr(worker_poll.time, "sleep", _forbid_sleep)
+    monkeypatch.setattr(sys, "argv", ["worker_poll", "--run-mode", run_mode])
+
+    assert worker_poll.main() == 1
+    assert worker_poll.load_last_seen() == 50
+    assert board.requests == [{"after_id": 50}]
+
+
+@pytest.mark.parametrize("run_mode", ("once", "bounded"))
+def test_bounded_modes_replay_typed_outbox_before_exiting(monkeypatch, tmp_path, run_mode):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    worker_poll.STATE_FILE.write_text("4", encoding="utf-8")
+    board = _FakeBoard([])
+    replays = []
+
+    monkeypatch.setattr(worker_poll.requests, "get", board.get)
+    monkeypatch.setattr(
+        worker_poll,
+        "retry_pending_typed_messages",
+        lambda: replays.append("replay") or 0,
+    )
+    monkeypatch.setattr(worker_poll.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(sys, "argv", ["worker_poll", "--run-mode", run_mode])
+
+    assert worker_poll.main() == 0
+    assert len(replays) >= 2  # startup replay plus at least one poll cycle
+
+
+def test_once_mode_prints_stable_exit_marker(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    worker_poll.STATE_FILE.write_text("51", encoding="utf-8")
+
+    monkeypatch.setattr(worker_poll, "poll_once", lambda last_seen, auto_ack=False: (52, 1))
+    monkeypatch.setattr(worker_poll.time, "sleep", _forbid_sleep)
+    monkeypatch.setattr(worker_poll, "retry_pending_typed_messages", lambda: 0)
+    monkeypatch.setattr(sys, "argv", ["worker_poll", "--run-mode", "once"])
+
+    assert worker_poll.main() == 0
+    output = capsys.readouterr().out
+    assert "WORKER_POLL_EXIT reason=ONE_SHOT_COMPLETE last_seen=52 handled=1" in output
+
+
+def test_bounded_mode_prints_idle_bound_exit_marker_with_total_handled(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    worker_poll.STATE_FILE.write_text("70", encoding="utf-8")
+    handled_sequence = [1, 0, 0]
+    polls = []
+
+    def fake_poll(last_seen, auto_ack=False):
+        handled = handled_sequence[len(polls)]
+        polls.append(last_seen)
+        return last_seen + handled, handled
+
+    monkeypatch.setattr(worker_poll, "poll_once", fake_poll)
+    monkeypatch.setattr(worker_poll.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(worker_poll, "retry_pending_typed_messages", lambda: 0)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["worker_poll", "--run-mode", "bounded", "--max-idle-polls", "2"],
+    )
+
+    assert worker_poll.main() == 0
+    output = capsys.readouterr().out
+    assert "WORKER_POLL_EXIT reason=IDLE_BOUND_REACHED last_seen=71 handled=1" in output
+
+
+@pytest.mark.parametrize("run_mode", ("once", "bounded"))
+def test_bounded_modes_print_error_marker_without_authentication_material(
+    monkeypatch,
+    tmp_path,
+    capsys,
+    run_mode,
+):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    worker_poll.STATE_FILE.write_text("5", encoding="utf-8")
+
+    def failing_poll(last_seen, auto_ack=False):
+        raise worker_poll.requests.ConnectionError("bridge unreachable")
+
+    monkeypatch.setattr(worker_poll, "poll_once", failing_poll)
+    monkeypatch.setattr(worker_poll.time, "sleep", _forbid_sleep)
+    monkeypatch.setattr(worker_poll, "retry_pending_typed_messages", lambda: 0)
+    monkeypatch.setattr(sys, "argv", ["worker_poll", "--run-mode", run_mode])
+
+    assert worker_poll.main() == 1
+    output = capsys.readouterr().out
+    assert "WORKER_POLL_ERROR type=ConnectionError" in output
+    assert "WORKER_POLL_EXIT" not in output
+    assert worker_poll.WORKER_TOKEN not in output
+    assert "Authorization" not in output
+    assert "Bearer" not in output
+
+
+def test_daemon_mode_does_not_print_a_bounded_exit_marker(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    worker_poll.STATE_FILE.write_text("5", encoding="utf-8")
+
+    class StopDaemon(BaseException):
+        pass
+
+    def fake_sleep(seconds):
+        raise StopDaemon()
+
+    monkeypatch.setattr(worker_poll, "poll_once", lambda last_seen, auto_ack=False: (5, 0))
+    monkeypatch.setattr(worker_poll.time, "sleep", fake_sleep)
+    monkeypatch.setattr(worker_poll, "retry_pending_typed_messages", lambda: 0)
+    monkeypatch.setattr(sys, "argv", ["worker_poll"])
+
+    with pytest.raises(StopDaemon):
+        worker_poll.main()
+
+    assert "WORKER_POLL_EXIT" not in capsys.readouterr().out
+
+
+def test_bounded_modes_count_the_first_start_bootstrap_handoff(monkeypatch, tmp_path, capsys):
+    # A fresh Worker turn has no cursor file: the pending Engineer instruction is
+    # delivered by the first-start bootstrap and must still be reported.
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    board = _FakeBoard([{"id": 41, "role": "engineer", "content": "Implement the correction"}])
+    handed = []
+
+    monkeypatch.setattr(worker_poll.requests, "get", board.get)
+    monkeypatch.setattr(
+        worker_poll,
+        "fetch_latest_messages",
+        lambda limit=200: list(board.messages),
+    )
+    monkeypatch.setattr(
+        worker_poll,
+        "handoff_message",
+        lambda message, auto_ack=False: handed.append(int(message["id"])),
+    )
+    monkeypatch.setattr(worker_poll, "retry_pending_typed_messages", lambda: 0)
+    monkeypatch.setattr(worker_poll.time, "sleep", _forbid_sleep)
+    monkeypatch.setattr(sys, "argv", ["worker_poll", "--run-mode", "once"])
+
+    assert worker_poll.main() == 0
+    assert handed == [41]
+    output = capsys.readouterr().out
+    assert "WORKER_POLL_EXIT reason=ONE_SHOT_COMPLETE last_seen=41 handled=1" in output
+
+
+def test_first_start_cycle_reports_bootstrap_handoff_counts(monkeypatch, tmp_path):
+    monkeypatch.setattr(worker_poll, "STATE_FILE", tmp_path / "last-seen")
+    monkeypatch.setattr(
+        worker_poll,
+        "fetch_latest_messages",
+        lambda limit=200: [{"id": 12, "role": "engineer", "message_type": "TASK", "content": "task"}],
+    )
+    monkeypatch.setattr(worker_poll, "handoff_message", lambda message, auto_ack=False: None)
+
+    assert worker_poll.initialize_first_start_cycle("pending") == (12, 1)
+    assert worker_poll.initialize_first_start_cycle("now") == (12, 0)
+    assert worker_poll.initialize_first_start_cycle("history") == (0, 0)
+    # The single-value helper stays backward compatible.
+    assert worker_poll.initialize_first_start("pending") == 12
 
 
 def test_first_start_pending_exhausts_history_when_no_engineer_message(tmp_path, monkeypatch):

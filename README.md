@@ -706,7 +706,9 @@ Mandatory workflow for every instruction from the Engineer:
      the Bridge. The coordination message is not approval.
    - `RESOLVE_ACTION_APPROVAL`: treat resolution as an authority mutation. If a
      trusted execution-host capability is unavailable, post `AUTHORITY_REQUIRED`
-     / `BLOCKED` and keep polling. Board consensus is not canonical approval.
+     / `BLOCKED`; a daemon transport keeps monitoring, a bounded Worker
+     invocation exits after reporting it. Board consensus is not canonical
+     approval.
    - `RECONCILE_ACTION`: `COMMIT_UNKNOWN` is a hard stop. Stop and do not retry;
      use canonical `forgeloop action-reconcile ...` only with qualifying external
      evidence and required trusted authority.
@@ -831,20 +833,41 @@ reference. ForgeLoopBridge does not validate these values.
 Counts and statuses come from canonical ForgeLoop read-only surfaces, not Bridge history.
 No ForgeLoop-owned state was synthesized outside the canonical integration/CLI.
 
+9. Invocation lifetime (bounded Worker turn):
+   If you were launched as an ephemeral/bounded Worker invocation (Codex CLI,
+   OpenCode worker, Claude Code, or a similar one-shot process), do not poll
+   indefinitely. Consume only coordination newer than the persisted Bridge
+   cursor, perform every currently actionable step, then:
+   - if the next step needs an Engineer decision, review, or clarification that
+     is not already on the board, post one `STATUS_UPDATE` with `state=WAITING`
+     and `WAITING_FOR_ENGINEER` in the Markdown summary, then exit successfully;
+   - if canonically blocked, post the exact blocker/reason code and exit after
+     reporting it;
+   - never reread unchanged Bridge messages, rerun `git diff`, requery unchanged
+     canonical state, or repost an identical waiting status merely to keep the
+     process alive.
+   A dedicated daemon transport (`python examples/worker_poll.py --run-mode
+   daemon`) may stay alive instead; a bounded turn uses `--run-mode once` or
+   `--run-mode bounded`. Bridge `WAITING` is coordination state only, a bounded
+   exit is never canonical ForgeLoop completion, and the next invocation resumes
+   from the persisted Bridge cursor plus canonical ForgeLoop state without hidden
+   conversation history.
+
 Never invent results. If you cannot reach VALID or terminal state, do not post
 `State: COMPLETE`; post the appropriate reporting label with the exact canonical
-error/action and keep polling. If `authorityRequired`, `hostActionRequired`,
+error/action. If `authorityRequired`, `hostActionRequired`,
 `reconciliationAuthorityRequired`, or an unresolved approval cannot be handled
 by the current host, post `AUTHORITY_REQUIRED`/`BLOCKED` rather than fabricating
-authority.
+authority. A daemon transport then keeps monitoring the board; a bounded Worker
+invocation exits after reporting and lets the next invocation continue.
 
 --- AUTONOMY CONTRACT (mandatory) ---
 Load and obey examples/AUTONOMY.md. Summary:
 - After this initial prompt, NEVER ask the human user for input, approval or clarification.
-- If a task is ambiguous or requires a decision, post ### DECISION NEEDED on the board and wait for ### DECISION RESOLVED.
+- If a task is ambiguous or requires a decision, post ### DECISION NEEDED on the board and read ### DECISION RESOLVED from the board.
 - Neither agent may convert board agreement into external ForgeLoop authority.
 - Reversible decisions may be taken unilaterally, then documented as ### DECISION TAKEN.
-- Keep the loop alive: read board → act → post result → poll → repeat.
+- Loop shape: read board → act → post result → report status. A daemon transport keeps monitoring; a bounded Worker invocation reports `WAITING`/`BLOCKED` and exits.
 ```
 
 ---
@@ -899,8 +922,9 @@ its returned action. Current actions include `AUTHORIZE_ACTION`,
 Board agreement is never canonical approval or `HOST_ATTESTED` authority. If
 `next` reports `authorityRequired`, `hostActionRequired`,
 `reconciliationAuthorityRequired`, or an approval the current host cannot
-resolve, report `AUTHORITY_REQUIRED`/`BLOCKED` and keep polling. Do not add a
-Bridge approval/authorization/reconciliation endpoint.
+resolve, report `AUTHORITY_REQUIRED`/`BLOCKED`. A daemon transport keeps
+monitoring the board; a bounded Worker invocation exits after reporting it. Do
+not add a Bridge approval/authorization/reconciliation endpoint.
 
 When diagnostic features are advertised, prefer canonical `progress`,
 `history`, `trace`, `reflect`, and `inspect` projections. A Bridge diagnostic
@@ -1213,6 +1237,133 @@ the board and begins with future messages. `--start-mode history` starts at
 cursor zero and redelivers the available history. The state file is only a
 local Bridge transport checkpoint: deleting it changes Bridge redelivery
 behavior, but never changes canonical ForgeLoop tasks or recovery state.
+
+### Daemon transport vs bounded Worker invocation
+
+Transport liveness and agent-turn liveness are separate concerns, so
+`examples/worker_poll.py` exposes both explicitly:
+
+| Mode | Command | Lifetime |
+| --- | --- | --- |
+| Continuous transport daemon | `--run-mode daemon` (default) | poll → sleep → poll until the process is terminated externally |
+| Single bounded cycle | `--run-mode once` | exactly one poll over the currently available delta, then exit; never sleeps |
+| Bounded turn with grace window | `--run-mode bounded [--max-idle-polls N]` | exits after `N` consecutive polls (default `2`) that deliver no new Engineer instruction; a handled instruction resets the counter |
+
+`--run-mode daemon` stays the default, so an existing long-running transport
+adapter is unaffected. Bounded modes never sleep forever and print a stable exit
+marker so the launching agent can distinguish a healthy bounded exit from a
+crash:
+
+```text
+WORKER_POLL_EXIT reason=ONE_SHOT_COMPLETE last_seen=<id> handled=<n>
+WORKER_POLL_EXIT reason=IDLE_BOUND_REACHED last_seen=<id> handled=<n>
+WORKER_POLL_ERROR type=<ExceptionClass>
+```
+
+Bounded modes exit non-zero on an unsafe cycle. A failed Engineer handoff, an
+invalid persisted typed row (`typed_integrity: INVALID`), or a transport failure
+leaves the cursor unadvanced, so that message stays eligible for at-least-once
+redelivery instead of being reported as a quiet idle exit. Cursor persistence,
+typed outbox replay/retry, and secret filtering behave identically in every run
+mode.
+
+`handled=<n>` counts the Engineer-authored instructions this invocation actually
+handed off, including the one delivered by the first-start bootstrap when
+`.worker_last_seen` was absent. A fresh bounded turn that consumes the open
+instruction therefore reports `handled=1`, not `handled=0`, so an orchestrator
+can tell real coordination work apart from an idle exit. The count is Bridge
+transport coordination only: it never asserts canonical ForgeLoop completion.
+
+---
+
+## Ephemeral CLI Worker pattern
+
+A communication channel may be persistent without requiring the AI process
+consuming it to be persistent. ForgeLoopBridge is a long-lived coordination
+transport, while an Engineer-launched coding agent (Codex CLI, OpenCode worker,
+Claude Code, or similar) normally runs as a bounded Worker turn: consume the new
+coordination, do the currently actionable work, report status, and exit.
+
+```text
+OpenCode Engineer
+       |
+       | POST task/review
+       v
+ForgeLoopBridge
+       |
+       | persisted coordination
+       v
+Codex CLI Worker turn
+       |
+       | canonical operations
+       v
+ForgeLoop
+```
+
+Required sequence:
+
+```text
+1. Engineer posts TASK_REQUEST.
+2. Engineer starts a fresh Worker.
+3. Worker consumes Bridge delta.
+4. Worker performs actionable work under ForgeLoop.
+5. Worker posts progress / WAITING / BLOCKED / COMPLETE_REPORTED.
+6. Worker exits when no further action is currently possible.
+7. Engineer reviews.
+8. Engineer posts REVIEW_RESULT / decision.
+9. Engineer launches a fresh Worker.
+10. Worker resumes from Bridge cursor + canonical ForgeLoop state.
+```
+
+Do not launch an ephemeral Worker in the foreground with instructions to
+"keep polling until the Engineer replies" while the same foreground process
+prevents the Engineer from continuing. That is an orchestration deadlock even
+when the Bridge server is healthy, and it inflates tokens by re-reading
+unchanged state.
+
+Either:
+
+- use bounded Worker turns; or
+- run a genuinely long-lived Worker/transport process independently in the
+  background.
+
+A CLI coding agent that is waiting for Engineer input should normally report
+`WAITING` and exit. Do not poll indefinitely.
+
+Worker bootstrap for a bounded turn:
+
+```text
+You are the Worker in a ForgeLoopBridge coordination session.
+
+Use ForgeLoopBridge for Engineer/Worker coordination.
+Use ForgeLoop as canonical engineering authority.
+
+Consume only new coordination from the persisted Bridge cursor.
+
+Perform all currently actionable Worker work.
+
+If further progress requires Engineer review, clarification, or a new Engineer
+decision that is not currently on the board:
+
+- post a STATUS_UPDATE with state WAITING;
+- state WAITING_FOR_ENGINEER in the Markdown summary;
+- do not poll indefinitely;
+- exit successfully.
+
+On the next invocation, reconstruct context from Bridge + ForgeLoop. Do not
+require hidden conversation history.
+```
+
+Within one bounded turn, report a given wait condition once. Identity comes from
+existing coordination fields (`correlation_id` plus the `reply_to_id`/source
+Engineer message id), never from hashing Markdown text, and Bridge stores no new
+authoritative wait state for it.
+
+`STATUS_UPDATE(state="WAITING")` and `COMPLETE_REPORTED` are Bridge coordination
+records. A bounded exit reports that no further Worker action is currently
+possible; it does not decide that the work is done.
+ForgeLoop remains the sole authority for lifecycle, claims, ownership, recovery,
+verification, approvals, completion, and evidence.
 
 ---
 

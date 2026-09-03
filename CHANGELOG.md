@@ -2,7 +2,19 @@
 
 ## Unreleased
 
-Future changes will be recorded here.
+- Add bounded run modes to `examples/worker_poll.py` (`--run-mode once` and
+  `--run-mode bounded [--max-idle-polls N]`) so an Engineer-launched ephemeral
+  CLI Worker can consume the current coordination and exit instead of polling
+  forever; `--run-mode daemon` remains the default and unchanged.
+- Print stable bounded exit markers (`WORKER_POLL_EXIT`, `WORKER_POLL_ERROR`)
+  and exit non-zero on an unsafe cycle, leaving the cursor unadvanced so failed
+  handoffs, `typed_integrity: INVALID` rows, and transport failures stay
+  eligible for at-least-once redelivery.
+- Count the first-start bootstrap handoff in the reported `handled=<n>` so a
+  fresh bounded turn cannot look idle after consuming the open instruction.
+- Document the bounded Worker turn, the `WAITING_FOR_ENGINEER` status
+  convention, and the ephemeral CLI Worker pattern, keeping ForgeLoop the sole
+  authority for lifecycle, verification, and completion.
 
 ## 2.1.3 - 2026-09-02
 
