@@ -1447,6 +1447,13 @@ terminated boundedly with a non-zero exit, and the Worker command is never
 executed a second time. Interrupts and signals also request targeted
 cleanup of exactly the created session.
 
+Exit semantics keep the Worker result separate from launcher conditions:
+Worker exit `N` is propagated unchanged, a child killed by signal `N`
+becomes `128 + N`, `SIGTERM` to the helper is `143`, and Ctrl-C
+(`KeyboardInterrupt`) is `130`. An operator interrupt is never reported as
+success, even when the bounded termination it triggers leaves the child
+with exit `0`.
+
 ```markdown
 ### Live Execution Observer
 

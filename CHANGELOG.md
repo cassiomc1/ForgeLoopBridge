@@ -9,6 +9,10 @@
   E2EE password (operators use shell.online's owner-side `shell list`),
   provider stderr uses a single blocking reader, and post-start security
   violations fail closed with targeted cleanup and no Worker re-execution.
+- Documented and fixed the observed-Worker launcher lifetime contract:
+  task-bound sessions close naturally on a normal exit (no `shell kill`, no
+  false `OBSERVER_STOP_FAILED`), while Ctrl-C exits `130` and `SIGTERM`
+  exits `143` so an interrupt is never reported as a successful Worker turn.
 
 - Publish the post-fix real-world regression audit under
   `docs/audits/post-fix-regression/` (report, improvement plan, evidence

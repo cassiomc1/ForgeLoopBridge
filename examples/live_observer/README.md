@@ -77,9 +77,33 @@ python examples/run_worker_observed.py \
 Worker exit (default background detaches). Without advertised
 `--foreground` support the helper runs the Worker directly (fail-open).
 
+Optional flags: `--shell-command` overrides the provider executable
+(default `FORGEBRIDGE_LIVE_OBSERVER_COMMAND`), and `--metadata-timeout`
+bounds the wait for provider session metadata in seconds.
+
 Upstream distributes the CLI for macOS and Linux; where provider support
 is not verified, the observer stays unsupported there and the Worker runs
 directly without it.
+
+## Exit semantics
+
+The launcher reports the Worker result, never the observer's cleanup
+result. An operator interrupt is a launcher condition, not a Worker
+outcome, so it can never surface as success:
+
+| Condition | Helper exit |
+| --- | --- |
+| Worker exits `0` | `0` |
+| Worker exits `N` | `N` |
+| Worker killed by signal `N` | `128 + N` (e.g. `SIGKILL` → `137`) |
+| `SIGTERM` to the helper | `143` |
+| Ctrl-C / `KeyboardInterrupt` | `130` |
+
+In the interrupt and signal cases the helper terminates the wrapped
+invocation with a bounded grace period and returns the code above
+regardless of the exit status the terminated child produces. When a
+session was already published it also receives targeted cleanup and a
+final `LIVE_OBSERVER_END` line.
 
 ## Credential boundary
 
