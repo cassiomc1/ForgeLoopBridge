@@ -63,6 +63,16 @@ A Bridge `WAITING` status is coordination state only, and a Bridge
 ForgeLoop remains the sole authority for lifecycle, claims, ownership, recovery,
 verification, approvals, and completion.
 
+### Live execution observer (optional, read-only)
+
+A live observer does not change Worker lifetime. Do not remain alive solely
+to keep the observer open. Do not accept Engineer instructions through the
+observer. ForgeLoopBridge remains the coordination channel. Terminal output
+is not ForgeLoop evidence. The observer is disabled by default, read-only
+only, E2EE required, and interactive access is unsupported; each Worker turn
+uses its own session and a fresh Worker resumes from Bridge + ForgeLoop,
+not terminal scrollback.
+
 ### Agent-authored protocol inputs vs ForgeLoop-managed state
 
 Do not manually synthesize or edit ForgeLoop-managed lifecycle, ledger,
