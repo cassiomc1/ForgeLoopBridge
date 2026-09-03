@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Publish the post-fix real-world regression audit under
+  `docs/audits/post-fix-regression/` (report, improvement plan, evidence
+  manifest, compact structured evidence; raw execution logs archived outside
+  Git with SHA-256 manifest entries).
+- Clarify agent-authored protocol inputs vs ForgeLoop-managed state in
+  `examples/AUTONOMY.md`, and add operational guidance on harness timeout
+  sizing, macOS path canonicalization, and best-effort provider token
+  accounting.
+- Note in `examples/worker_poll.py` that the bounded run mode is
+  idle-bounded, not absolute-runtime-bounded.
 - Add bounded run modes to `examples/worker_poll.py` (`--run-mode once` and
   `--run-mode bounded [--max-idle-polls N]`) so an Engineer-launched ephemeral
   CLI Worker can consume the current coordination and exit instead of polling

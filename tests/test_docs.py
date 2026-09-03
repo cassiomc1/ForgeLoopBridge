@@ -576,3 +576,25 @@ def test_worker_prompt_reports_waiting_instead_of_polling_forever():
     assert "bounded" in lowered
     assert "exit" in lowered
     assert "state=waiting" in lowered or "state waiting" in lowered
+
+
+def test_autonomy_distinguishes_authored_inputs_from_managed_state():
+    lowered = AUTONOMY.lower()
+    assert "agent-authored protocol inputs" in lowered
+    assert "forgeloop-managed" in lowered
+    assert "do not manually synthesize or edit forgeloop-managed" in lowered
+    assert "getting_started" in lowered or "getting-started" in lowered or "gettingstarted" in lowered
+
+
+def test_autonomy_covers_timeout_sizing_and_path_canonicalization():
+    lowered = AUTONOMY.lower()
+    assert "harness timeout" in lowered
+    assert "--max-idle-polls 2" in lowered
+    assert "/private/tmp" in AUTONOMY
+    assert "pwd -p" in lowered
+
+
+def test_worker_poll_documents_idle_bound_not_absolute_bound():
+    assert "idle-bounded, not absolute-runtime-bounded" in WORKER_POLL
+    assert "--max-polls" not in WORKER_POLL
+    assert "--max-runtime-seconds" not in WORKER_POLL
