@@ -1431,8 +1431,11 @@ The helper performs bounded preflight (`command -v shell`,
 `shell --read-only --json --foreground -- <worker-command>`, enforces
 read-only + E2EE + HTTPS provider-host URL validation, posts exactly one
 Markdown observer announcement (no password, with an explicit
-non-authoritative notice), preserves the real Worker exit code, and cleans
-up only its own session (`shell kill <session-id>`, never `--all`).
+non-authoritative notice), preserves the real Worker exit code, and emits
+`LIVE_OBSERVER_END` when the turn finishes. Task-bound observer sessions
+normally close with the Worker process, so no `shell kill` is issued on a
+normal exit; targeted `shell kill <session-id>` (never `--all`) is reserved
+for exceptional cleanup.
 A single blocking reader thread drains provider stderr and extracts the
 metadata line; the raw metadata (which carries the password) is never
 forwarded to logs.
@@ -1441,7 +1444,8 @@ Pre-start provider failure fails open: the Worker runs directly, exactly
 once, and the observer is reported unavailable. Post-start security
 violation fails closed: the unsafe session is stopped, the invocation is
 terminated boundedly with a non-zero exit, and the Worker command is never
-executed a second time.
+executed a second time. Interrupts and signals also request targeted
+cleanup of exactly the created session.
 
 ```markdown
 ### Live Execution Observer

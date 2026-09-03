@@ -99,6 +99,11 @@ URL) fails closed: the unsafe session is stopped with
 `shell kill <session-id>`, the invocation is terminated boundedly with a
 non-zero exit, and the Worker command is never executed a second time.
 
+Task-bound observer sessions normally close with the Worker process.
+Targeted `shell kill <session-id>` is reserved for exceptional cleanup
+(security violations, interrupts, signals, abnormal termination) and never
+uses `--all`.
+
 ## Announcement
 
 One Markdown message per Worker invocation over the existing POST path
@@ -125,9 +130,10 @@ Terminal output is not canonical ForgeLoop evidence.
 
 `shell list --json` reconciliation is diagnostic only (`expired` is not
 Worker failure, `unknown` is not proof of death, `online` is not Worker
-health). Cleanup runs `shell kill <session-id>` for the created session
-only (never `--all`); all subprocesses use argv arrays, `shell=False`,
-and bounded timeouts.
+health). Task-bound sessions normally close with the Worker, so no kill is
+issued on a normal exit; exceptional cleanup runs `shell kill <session-id>`
+for the created session only (never `--all`). All subprocesses use argv
+arrays, `shell=False`, and bounded timeouts.
 
 ## Lifetime
 

@@ -782,12 +782,13 @@ def test_observed_success_posts_once_and_preserves_exit(
     assert "share_url" not in result.stderr
     assert "Live observer started." in result.stdout
     assert "shell list" in result.stdout
-    # End-of-turn targeted cleanup of the created session only.
+    # Natural task-bound shutdown: no kill is issued on normal completion.
     record_lines = _read_record(record)
     assert record_lines.count("wrap") == 1
-    assert "kill" in record_lines
-    assert record_lines[record_lines.index("kill") + 1] == "sess-test-001"
+    assert "kill" not in record_lines
     assert "--all" not in record_lines
+    assert "OBSERVER_STOP_FAILED" not in combined
+    assert "LIVE_OBSERVER_END" in result.stdout
     # No password file is created anywhere by the helper run.
     assert not Path("/tmp/forgeloopbridge-observer").exists()
 
@@ -930,7 +931,8 @@ def test_pre_start_provider_failure_runs_worker_directly_once(tmp_path):
 # ─── Bridge announcement (once, non-authoritative, no secret) ────────────────
 
 
-def test_observer_message_posted_once_mocked(monkeypatch):
+def test_normal_worker_exit_does_not_kill_observer_session(monkeypatch, capsys):
+    """Normal exit: announcement once, END emitted, no kill, no STOP_FAILED."""
     from examples import run_worker_observed as helper
 
     posted: list[dict] = []
@@ -988,7 +990,146 @@ def test_observer_message_posted_once_mocked(monkeypatch):
     assert code == 0
     assert len(posted) == 1
     assert "taskvault-mvp" in posted[0]["content"] or posted[0]["task_id"] == "taskvault-mvp"
+    assert stopped == []
+    output = capsys.readouterr().out
+    assert "LIVE_OBSERVER_END" in output
+    assert "OBSERVER_STOP_FAILED" not in output
+
+
+def test_normal_nonzero_worker_exit_skips_cleanup(monkeypatch, capsys):
+    """Worker application failure is not observer cleanup failure."""
+    from examples import run_worker_observed as helper
+
+    stopped: list[str] = []
+
+    class FakeStderr:
+        def __init__(self, lines):
+            self._lines = iter(lines)
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            return next(self._lines)
+
+    class FakeProc:
+        def __init__(self):
+            self.stderr = FakeStderr([json.dumps(dict(FAKE_SAFE_RESPONSE)) + "\n"])
+
+        def wait(self, timeout=None):
+            return 4
+
+        def terminate(self):
+            pass
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(
+        helper, "preflight", lambda cmd=None: {"supports_read_only": True, "supports_json": True}
+    )
+    monkeypatch.setattr(
+        helper,
+        "build_wrapper_argv",
+        lambda worker, cmd=None, foreground=True: ["shell-mock", *worker],
+    )
+    monkeypatch.setattr(helper.subprocess, "Popen", lambda *args, **kwargs: FakeProc())
+    monkeypatch.setattr(helper, "stop_session", lambda session_id, cmd=None: stopped.append(session_id))
+    monkeypatch.setattr(helper, "post_observer_announcement", lambda *args: True)
+    code = helper.run_observed(
+        [sys.executable, "-c", "print(1)"],
+        shell_cmd="shell",
+        bridge_url="http://localhost:8000",
+        worker_token="worker-token",
+        task_id=None,
+        metadata_timeout=5.0,
+    )
+    assert code == 4
+    assert stopped == []
+    output = capsys.readouterr().out
+    assert "LIVE_OBSERVER_END" in output
+    assert "OBSERVER_STOP_FAILED" not in output
+
+
+def test_interrupt_requests_targeted_cleanup_and_bounded_exit(monkeypatch, capsys):
+    """KeyboardInterrupt terminates the Worker and cleans exactly its session."""
+    from examples import run_worker_observed as helper
+
+    stopped: list[str] = []
+    terminated: list[str] = []
+
+    class FakeStderr:
+        def __init__(self, lines):
+            self._lines = iter(lines)
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            return next(self._lines)
+
+    class FakeProc:
+        def __init__(self):
+            self.stderr = FakeStderr([json.dumps(dict(FAKE_SAFE_RESPONSE)) + "\n"])
+            self._waited = False
+
+        def wait(self, timeout=None):
+            if not self._waited:
+                self._waited = True
+                raise KeyboardInterrupt
+            return 0
+
+        def terminate(self):
+            terminated.append("terminate")
+
+        def kill(self):
+            terminated.append("kill")
+
+    monkeypatch.setattr(
+        helper, "preflight", lambda cmd=None: {"supports_read_only": True, "supports_json": True}
+    )
+    monkeypatch.setattr(
+        helper,
+        "build_wrapper_argv",
+        lambda worker, cmd=None, foreground=True: ["shell-mock", *worker],
+    )
+    monkeypatch.setattr(helper.subprocess, "Popen", lambda *args, **kwargs: FakeProc())
+    monkeypatch.setattr(helper, "stop_session", lambda session_id, cmd=None: stopped.append(session_id))
+    monkeypatch.setattr(helper, "post_observer_announcement", lambda *args: True)
+    code = helper.run_observed(
+        [sys.executable, "-c", "print(1)"],
+        shell_cmd="shell",
+        bridge_url="http://localhost:8000",
+        worker_token="worker-token",
+        task_id=None,
+        metadata_timeout=5.0,
+    )
+    assert code == 0
+    assert terminated == ["terminate"]
     assert stopped == ["sess-test-001"]
+    assert "LIVE_OBSERVER_END" in capsys.readouterr().out
+
+
+def test_sigterm_forwarder_marks_cleanup_and_exits_143():
+    from examples import run_worker_observed as helper
+
+    terminated: list[str] = []
+
+    class FakeProc:
+        def terminate(self):
+            terminated.append("terminate")
+
+    flag = {"required": False}
+    previous = helper._install_sigterm_forward(FakeProc(), flag)
+    try:
+        handler = helper.signal.getsignal(helper.signal.SIGTERM)
+        with pytest.raises(SystemExit) as excinfo:
+            handler(15, None)
+        assert excinfo.value.code == 143
+    finally:
+        helper.signal.signal(helper.signal.SIGTERM, previous)
+    assert terminated == ["terminate"]
+    assert flag == {"required": True}
 
 
 def test_fail_closed_never_reruns_worker_mocked(monkeypatch, capsys):

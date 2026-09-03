@@ -284,15 +284,18 @@ def _wait_for_worker(proc):
         return _terminate_bounded(proc)
 
 
-def _install_sigterm_forward(proc):
+def _install_sigterm_forward(proc, cleanup_flag):
     """Forward SIGTERM to the wrapped process, then exit 143 via SystemExit.
 
-    The surrounding finally block still runs targeted session cleanup.
-    Returns the previous SIGTERM disposition for restoration.
+    Marks exceptional cleanup so the surrounding finally block performs
+    targeted session cleanup. The flag is a plain dict so the handler can
+    set it without touching process state. Returns the previous SIGTERM
+    disposition for restoration.
     """
     previous = signal.getsignal(signal.SIGTERM)
 
     def _handler(signum, frame):
+        cleanup_flag["required"] = True
         try:
             proc.terminate()
         except OSError:
@@ -381,9 +384,16 @@ def run_observed(
     metadata_queue: queue.Queue = queue.Queue(maxsize=1)
     pump = _StderrPump(proc.stderr, metadata_queue, sys.stderr)
     pump.start()
-    previous_sigterm = _install_sigterm_forward(proc)
-    # Set only on the fully validated success path; the finally block stops
-    # exactly that session. Fail-closed paths stop their session directly.
+    # Exceptional cleanup is opt-in: task-bound observer sessions normally
+    # close with the Worker process, so a normal exit performs no kill.
+    # Interrupts, signals, and abnormal termination set this flag to request
+    # targeted `shell kill <session-id>` for exactly this session.
+    cleanup_flag = {"required": False}
+    previous_sigterm = _install_sigterm_forward(proc, cleanup_flag)
+    # Set only on the fully validated success path. The finally block emits
+    # LIVE_OBSERVER_END for exactly that session and stops it only when
+    # exceptional cleanup was requested. Fail-closed paths stop their
+    # session directly.
     published_session = None
     exit_code = 1
     try:
@@ -434,15 +444,26 @@ def run_observed(
         posted = post_observer_announcement(bridge_url, worker_token, announcement, task_id)
         if not posted:
             print("observer announcement not delivered; Worker continues")
-        exit_code = _normalize_exit_code(_wait_for_worker(proc))
+        try:
+            returncode = proc.wait()
+        except KeyboardInterrupt:
+            print("run_worker_observed: interrupted; terminating observed Worker invocation")
+            cleanup_flag["required"] = True
+            returncode = _terminate_bounded(proc)
+        if returncode is not None and returncode < 0:
+            # Killed by a signal: abnormal termination where the provider
+            # session may remain active, so request targeted cleanup.
+            cleanup_flag["required"] = True
+        exit_code = _normalize_exit_code(returncode)
         return exit_code
     finally:
         signal.signal(signal.SIGTERM, previous_sigterm)
         if published_session is not None:
-            try:
-                stop_session(published_session.session_id, shell_cmd or get_shell_command())
-            except ObserverError as exc:
-                print(format_error_log(exc.code))
+            if cleanup_flag["required"]:
+                try:
+                    stop_session(published_session.session_id, shell_cmd or get_shell_command())
+                except ObserverError as exc:
+                    print(format_error_log(exc.code))
             print(format_end_log(published_session.session_id))
     return exit_code
 
