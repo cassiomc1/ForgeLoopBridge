@@ -77,6 +77,10 @@ python examples/run_worker_observed.py \
 Worker exit (default background detaches). Without advertised
 `--foreground` support the helper runs the Worker directly (fail-open).
 
+Upstream distributes the CLI for macOS and Linux; where provider support
+is not verified, the observer stays unsupported there and the Worker runs
+directly without it.
+
 ## Credential boundary
 
 ForgeLoopBridge never stores the E2EE password: provider metadata is

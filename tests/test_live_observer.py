@@ -671,6 +671,16 @@ def fake_shell(tmp_path):
     return str(path)
 
 
+# The real shell.online CLI ships for macOS/Linux only (no Windows build),
+# and only POSIX execs a shebang script without an extension. On other
+# platforms the provider is unsupported and the helper correctly fails open
+# to a direct Worker run (covered by test_pre_start_provider_failure).
+needs_posix_shell = pytest.mark.skipif(
+    os.name != "posix",
+    reason="shell.online provider subprocess tests require a POSIX executable",
+)
+
+
 @pytest.fixture
 def bridge_capture():
     posts: list[dict] = []
@@ -743,6 +753,7 @@ def _counter_runs(path: Path) -> int:
     return len(path.read_text(encoding="utf-8")) if path.exists() else 0
 
 
+@needs_posix_shell
 def test_observed_success_posts_once_and_preserves_exit(
     fake_shell, bridge_capture, tmp_path
 ):
@@ -781,6 +792,7 @@ def test_observed_success_posts_once_and_preserves_exit(
     assert not Path("/tmp/forgeloopbridge-observer").exists()
 
 
+@needs_posix_shell
 def test_observed_worker_exit_code_preserved_through_wrapper(
     fake_shell, bridge_capture, tmp_path
 ):
@@ -799,6 +811,7 @@ def test_observed_worker_exit_code_preserved_through_wrapper(
     assert counter.read_text(encoding="utf-8") == "x"
 
 
+@needs_posix_shell
 def test_large_stderr_stream_does_not_deadlock(fake_shell, bridge_capture, tmp_path):
     bridge_url, _ = bridge_capture
     counter = tmp_path / "counter"
@@ -820,6 +833,7 @@ def test_large_stderr_stream_does_not_deadlock(fake_shell, bridge_capture, tmp_p
     assert FAKE_SECRET not in result.stdout + result.stderr
 
 
+@needs_posix_shell
 @pytest.mark.parametrize(
     ("mutate", "reason"),
     (
@@ -857,6 +871,7 @@ def test_post_start_security_failure_is_fail_closed(
     assert FAKE_SECRET not in result.stdout + result.stderr
 
 
+@needs_posix_shell
 def test_security_failure_without_session_id_terminates_without_global_kill(
     fake_shell, bridge_capture, tmp_path
 ):
