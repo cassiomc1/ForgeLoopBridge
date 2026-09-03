@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added an optional read-only Live Execution Observer integration for shell.online.
+  The integration is disabled by default and does not change the Bridge API,
+  Typed Message Schema v1, SQLite schema, or ForgeLoop authority boundary.
+
 - Publish the post-fix real-world regression audit under
   `docs/audits/post-fix-regression/` (report, improvement plan, evidence
   manifest, compact structured evidence; raw execution logs archived outside

@@ -333,6 +333,8 @@ Open: [http://localhost:8000](http://localhost:8000)
 | `SSE_TICKET_TTL`    | `30`                  | Browser SSE ticket lifetime, minimum 1 second      |
 | `MAX_TYPED_ENVELOPE_BYTES` | `65536`         | Maximum normalized typed JSON size in UTF-8 bytes  |
 | `LOG_LEVEL`         | `INFO`                | Logging level                                      |
+| `FORGEBRIDGE_LIVE_OBSERVER` | `none`        | Optional live observer provider: `none` or `shell-online` (disabled by default) |
+| `FORGEBRIDGE_LIVE_OBSERVER_COMMAND` | `shell` | Provider executable for the live observer (no auto-install) |
 
 Generate strong tokens with:
 
@@ -1364,6 +1366,100 @@ records. A bounded exit reports that no further Worker action is currently
 possible; it does not decide that the work is done.
 ForgeLoop remains the sole authority for lifecycle, claims, ownership, recovery,
 verification, approvals, completion, and evidence.
+
+---
+
+## Optional Live Execution Observer (shell.online, read-only)
+
+An optional, disabled-by-default live execution observer lets an Engineer
+watch a Worker terminal in a browser while the Worker performs real work.
+It is an external shell.online dependency, lazy/opt-in, and read-only only
+in Phase 1. Interactive browser control is unsupported.
+
+```text
+Engineer ──coordination──▶ ForgeLoopBridge ◀──coordination── Worker
+                                                  ├──▶ ForgeLoop (canonical authority)
+                                                  └──▶ shell.online (optional read-only live observer) ──▶ Engineer
+```
+
+The Bridge remains the communication record. ForgeLoop remains canonical
+engineering truth. shell.online only exposes a live observational PTY view.
+
+- **Optional**: disabled by default (`FORGEBRIDGE_LIVE_OBSERVER=none`).
+  Set `FORGEBRIDGE_LIVE_OBSERVER=shell-online` to opt in.
+- **External dependency**: ForgeLoopBridge never installs shell.online
+  automatically. When the provider is missing, the Worker continues and the
+  observer is reported unavailable.
+- **Read-only**: Phase 1 publishes only sessions with `read_only == true`.
+  Interactive sessions are rejected, cleaned up where possible, and never
+  presented as an official observer.
+- **E2EE required**: sessions with `encrypted == false` are rejected and
+  never published. The integration never invokes `--no-e2ee`.
+- **Password never persisted by Bridge**: the shell.online E2EE password is
+  a local operator secret. It never appears in Bridge SQLite, Bridge
+  messages, typed messages, SSE history, server logs, final reports, Git,
+  or test snapshots. The Bridge publishes the validated HTTPS share URL
+  only; the operator obtains the password separately. A helper may keep it
+  in a temporary owner-only file under `/tmp/forgeloopbridge-observer/`
+  (directory `0700`, file `0600`) and removes it when the session ends.
+- **Terminal is observational, not evidence**: shell.online output is not
+  canonical ForgeLoop evidence, shell.online state is not Bridge task state
+  and is not ForgeLoop lifecycle state. Terminal says "done" is not
+  canonical `COMPLETE`; tests passing on screen is not `VALID`.
+- **ForgeLoop remains canonical**: the observer helper does not call
+  ForgeLoop, register observer state in `.forgeloop/`, or change the Typed
+  Message Schema v1, REST/SSE contracts, or SQLite schema.
+- **Worker remains bounded/ephemeral**: observer lifetime follows one
+  Worker turn (`observer lifetime <= Worker-turn lifetime`). The observer
+  never keeps the Worker alive; each Worker invocation gets its own session
+  and a fresh Worker resumes from Bridge + ForgeLoop, not terminal
+  scrollback.
+
+Launch one observed Worker turn with the helper (a launcher around a Worker
+command; it does not duplicate `worker_poll.py`):
+
+```bash
+python examples/run_worker_observed.py \
+  --provider shell-online \
+  --bridge-url http://localhost:8000 \
+  --worker-token-env WORKER_TOKEN \
+  --task-id taskvault-mvp \
+  -- codex exec --ephemeral ...
+```
+
+The helper performs bounded preflight (`command -v shell`,
+`shell --version`, `shell help reference`), wraps the Worker with
+`shell --read-only --json --foreground -- <worker-command>`, enforces
+read-only + E2EE + HTTPS provider-host URL validation, posts exactly one
+Markdown observer announcement (no password, with an explicit
+non-authoritative notice), preserves the real Worker exit code, and cleans
+up only its own session (`shell kill <session-id>`, never `--all`).
+
+```markdown
+### Live Execution Observer
+
+The current Worker turn can be observed live.
+
+- Provider: `shell.online`
+- Access: `READ_ONLY`
+- Encryption: `E2EE`
+- Session: `abc123`
+- [Open live terminal](https://...)
+
+This terminal is observational only.
+
+Use ForgeLoopBridge for Engineer ↔ Worker instructions.
+Terminal output is not canonical ForgeLoop evidence.
+```
+
+The Bridge server never fetches observer URLs (no SSRF path); provider
+state is reconciled on the Worker host with `shell list --json`
+(`online`, `reconnecting`, `expired`, `unknown` are observer diagnostics
+only: `expired` is not Worker failure, `unknown` is not proof of death,
+`online` is not Worker health). Live terminal observation can expose
+source code, commands, paths, tests, runtime output, and accidentally
+printed credentials, so observer mode stays intentional opt-in. See
+[`examples/live_observer/README.md`](examples/live_observer/README.md).
 
 ---
 

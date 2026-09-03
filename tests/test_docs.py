@@ -598,3 +598,74 @@ def test_worker_poll_documents_idle_bound_not_absolute_bound():
     assert "idle-bounded, not absolute-runtime-bounded" in WORKER_POLL
     assert "--max-polls" not in WORKER_POLL
     assert "--max-runtime-seconds" not in WORKER_POLL
+
+
+OBSERVER_README = (ROOT / "examples" / "live_observer" / "README.md").read_text(
+    encoding="utf-8"
+)
+ENV_EXAMPLE = (ROOT / ".env.example").read_text(encoding="utf-8")
+CHANGELOG = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+
+
+def test_docs_describe_observer_as_optional_and_disabled_by_default():
+    combined = f"{README}\n{AUTONOMY}\n{OBSERVER_README}".lower()
+    for required in (
+        "disabled by default",
+        "opt-in",
+        "optional",
+        "forgebridge_live_observer",
+        "shell.online",
+    ):
+        assert required in combined
+    assert "FORGEBRIDGE_LIVE_OBSERVER=none" in ENV_EXAMPLE
+    assert "shell-online" in ENV_EXAMPLE
+
+
+def test_docs_require_observer_read_only():
+    combined = f"{README}\n{AUTONOMY}\n{OBSERVER_README}".lower()
+    assert "read-only" in combined
+    assert "read_only" in combined
+    assert "read-only only" in combined
+
+
+def test_docs_require_observer_e2ee_and_secret_boundary():
+    combined = f"{README}\n{OBSERVER_README}".lower()
+    assert "e2ee required" in combined
+    assert "password never persisted" in combined
+    assert "--no-e2ee" in combined
+
+
+def test_docs_keep_forgeloop_canonical_over_observer():
+    combined = f"{README}\n{AUTONOMY}\n{OBSERVER_README}"
+    assert "ForgeLoop remains canonical" in combined
+    lowered = combined.lower()
+    assert "terminal output is not canonical forgeloop evidence" in lowered
+    assert "terminal is observational" in lowered
+
+
+def test_docs_keep_bridge_coordination_only_for_observer():
+    lowered = f"{README}\n{OBSERVER_README}".lower()
+    assert "bridge remains" in lowered
+    assert "coordination" in lowered
+    assert "typed message schema v1" in lowered
+    assert "no database migration" in lowered or "sqlite schema" in lowered
+
+
+def test_docs_keep_observer_bounded_and_non_interactive():
+    combined = f"{README}\n{AUTONOMY}\n{OBSERVER_README}".lower()
+    normalized = " ".join(combined.split())
+    for required in (
+        "bounded",
+        "interactive",
+        "unsupported",
+        "do not remain alive solely to keep the observer open",
+        "do not accept engineer instructions through the observer",
+    ):
+        assert required in normalized
+
+
+def test_changelog_announces_optional_observer_without_version_bump():
+    assert "optional read-only live execution observer" in CHANGELOG.lower()
+    assert "does not change the bridge api" in CHANGELOG.lower()
+    assert "typed message schema v1" in CHANGELOG.lower()
+    assert "forgeloop authority boundary" in CHANGELOG.lower()
