@@ -35,10 +35,14 @@ approval, capability-policy, trajectory, workspace-binding, canonical-handoff,
 responsibility-constraint, differential-verification-scope, code-attestation,
 structural-quality, canonicalHandoffs v2, and advisoryContextProviders v1
 capabilities when the active host advertises them.
-Package version alone is never a compatibility decision; the observed
-ForgeLoop package `1.10.0` is an
-informational baseline only. Capability support still comes from the canonical
-protocol-info or structured integration response.
+Package version alone is never a compatibility decision, so no ForgeLoop package
+version is pinned in this section; the observed baseline is recorded in
+`FORGELOOPBRIDGE_CURRENT_FORGELOOP_SYNC_UPDATE_PLAN.md` as an observation only.
+Capability support still comes from the canonical protocol-info or structured
+integration response, and the supported version set is declared in code at
+`bridge_protocol/forgeloop_context.py`
+(`SUPPORTED_FORGELOOP_PROTOCOL_VERSIONS`, `SUPPORTED_FORGELOOP_INTEGRATION_API_VERSIONS`,
+`SUPPORTED_FORGELOOP_CONTEXT_SCHEMA_VERSIONS`, `SUPPORTED_FORGELOOP_CONTEXT_FEATURE_VERSIONS`).
 
 Before creating or resuming ForgeLoop task state, the active execution host must inspect the installed project's public compatibility boundary with `forgeloop protocol-info --json` (or the equivalent official structured integration capability call).
 
@@ -46,7 +50,7 @@ If the host exposes an official ForgeLoop structured integration (such as `@cass
 
 ### Compatibility dimensions & recovery awareness
 
-- **Protocol-first handshake**: Require `protocolVersion == 1`; when structured integration is used, require a supported Integration API version. Unknown protocol/schema versions fail closed.
+- **Protocol-first handshake**: Require `protocolVersion == 1`; when structured integration is used, require a supported Integration API version. Unknown protocol/schema versions fail closed. Enforced by `forgeloop_boundary_status()` in `bridge_protocol/forgeloop_context.py`: any declared protocol, schema, Integration API or consumed-feature version outside the declared set is `UNSUPPORTED`, and a payload that advertises the canonical `task/context` capability without declaring a protocol version is `UNDECLARED`. Both make `consume_task_context()` return `UNAVAILABLE` with `fallback: NONE` — never the balanced compatibility fallback, which stays reserved for a host that advertises no adaptive capability at all.
 - **Capability detection**: Inspect `protocolInfo.features` (or the equivalent structured capability response) for `diagnostics`, `executionHistory`, `structuredTrace`, `taskInspection`, `reflection`, `durableActions`, `capabilityPolicy`, `durableApprovals`, `trajectoryMetrics`, `trajectoryEvaluation`, `verificationExecutionIsolation`, `observabilityStability`, `adaptiveExecutionProfiles`, `executionProfileContext`, `workspaceBinding`, `canonicalHandoffs`, `responsibilityConstraints`, `differentialVerificationScope`, `codeAttestation`, and `structuralQuality`. Additive features are enabled only when advertised.
 - **No package-version inference**: A package version alone does not imply that a capability is present. Use `features.durableActions.supported`, `features.capabilityPolicy.supported`, and `features.durableApprovals.supported`.
 - **Capability decisions**: Treat canonical `ALLOW`, `DENY`, `REQUIRE_AUTHORITY`, and `REQUIRE_APPROVAL` decisions as ForgeLoop policy output; Bridge messages can report them but cannot satisfy them.
