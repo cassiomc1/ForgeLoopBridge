@@ -270,7 +270,7 @@ async def test_index_served(client):
     assert "purify.min.js" in r.text
 
 
-# ─── Task Metadata & Filtering (ForgeLoop 1.5) ───────────────────────────────
+# ─── Task Metadata & Filtering ────────────────────────────────────────────────
 
 
 async def test_post_roundtrip_with_task_metadata(client):

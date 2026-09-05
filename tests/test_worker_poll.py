@@ -161,13 +161,20 @@ def test_read_forgeloop_context_uses_canonical_host_adapter(monkeypatch, tmp_pat
         calls.append((command, arguments, project_root))
         if arguments[0] == "protocol-info":
             return {
+                "packageVersion": "1.10.1",
+                "protocolVersion": 1,
+                "readsProtocol": [1],
+                "writesProtocol": [1],
                 "features": {
-                    "adaptiveExecutionProfiles": {"supported": True},
-                    "executionProfileContext": {"supported": True},
+                    "integrationApi": {"version": 1},
+                    "adaptiveExecutionProfiles": {"version": 1, "supported": True},
+                    "executionProfileContext": {"version": 1, "supported": True},
                 },
                 "resources": [{"name": "task/context"}],
             }
         return {"data": {
+            "schemaVersion": 1,
+            "protocolVersion": 1,
             "taskId": "task-context-1",
             "executionProfile": {
                 "requested": "light",

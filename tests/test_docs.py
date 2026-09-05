@@ -1,12 +1,20 @@
 import json
+import re
 from pathlib import Path
 
+from bridge_protocol.forgeloop_context import (
+    SUPPORTED_FORGELOOP_INTEGRATION_API_VERSIONS,
+    SUPPORTED_FORGELOOP_PROTOCOL_VERSIONS,
+)
 from bridge_protocol.models import TYPED_MESSAGE_KINDS
 from bridge_protocol.validation import parse_typed_envelope
 
 ROOT = Path(__file__).resolve().parents[1]
 README = (ROOT / "README.md").read_text(encoding="utf-8")
 AUTONOMY = (ROOT / "examples" / "AUTONOMY.md").read_text(encoding="utf-8")
+CURRENT_SYNC_RECORD = (
+    ROOT / "FORGELOOPBRIDGE_CURRENT_FORGELOOP_SYNC_UPDATE_PLAN.md"
+).read_text(encoding="utf-8")
 
 
 def test_readme_requires_protocol_handshake():
@@ -243,7 +251,6 @@ def test_current_sync_record_is_current_for_forgeloop_110():
         "quality-status",
     ):
         assert capability in current
-    assert "Observed synchronization baseline: ForgeLoop package 1.10.0" in current
     assert "package version" in current.lower()
     assert "does not implement, validate, infer, or attest" in current
     assert "trusted scoped checker" in current.lower()
@@ -251,10 +258,44 @@ def test_current_sync_record_is_current_for_forgeloop_110():
     assert "ATTESTED" in current
 
 
+def test_normative_forgeloop_versions_are_read_from_code_not_pinned_as_prose():
+    """The documented contract must agree with the declared supported sets.
+
+    The normative numbers are Protocol and Integration API versions, and they are
+    asserted against `bridge_protocol.forgeloop_context` so documentation cannot
+    drift from the code that enforces them.
+    """
+    protocol = SUPPORTED_FORGELOOP_PROTOCOL_VERSIONS
+    integration_api = SUPPORTED_FORGELOOP_INTEGRATION_API_VERSIONS
+    assert len(protocol) == 1 and len(integration_api) == 1
+
+    for text in (README, CURRENT_SYNC_RECORD):
+        assert f"Protocol v{protocol[0]}" in text
+        assert f"Integration API v{integration_api[0]}" in text
+
+
+def test_observed_package_baseline_is_recorded_without_being_a_contract():
+    """A package version may be recorded as an observation, never enforced as the boundary.
+
+    Only the shape is asserted. Pinning the literal made the informational value
+    the test-enforced one while the normative version set had no enforcement at
+    all, which is the inversion this suite must not reintroduce.
+    """
+    observed = re.search(
+        r"Observed synchronization baseline: ForgeLoop package (\d+\.\d+\.\d+)",
+        CURRENT_SYNC_RECORD,
+    )
+    assert observed is not None
+    normalized = " ".join(CURRENT_SYNC_RECORD.split())
+    assert "package baseline is informational only" in normalized
+    assert "never from a package version comparison" in normalized
+    assert "package version alone" in README.lower()
+
+
 def test_current_docs_cover_forgeloop_110_advisory_and_handoff_boundaries():
     text = f"{README}\n{AUTONOMY}".lower()
     for required in (
-        "forgeloop package `1.10.0`",
+        "package version alone is never a compatibility decision",
         "protocol v1",
         "integration api v1",
         "canonicalhandoffs",

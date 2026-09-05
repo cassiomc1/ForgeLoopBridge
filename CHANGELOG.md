@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Declared the supported ForgeLoop version set in code and made the documented
+  protocol-first handshake executable. `bridge_protocol.forgeloop_context` now
+  exports `SUPPORTED_FORGELOOP_PROTOCOL_VERSIONS`,
+  `SUPPORTED_FORGELOOP_INTEGRATION_API_VERSIONS`,
+  `SUPPORTED_FORGELOOP_CONTEXT_SCHEMA_VERSIONS` and
+  `SUPPORTED_FORGELOOP_CONTEXT_FEATURE_VERSIONS`, and `forgeloop_boundary_status()`
+  fails closed on any declared protocol, schema, Integration API or consumed-feature
+  version outside those sets — and on a host that advertises the canonical
+  `task/context` capability without declaring a protocol version. Previously the
+  only executable gate read capability booleans and no version at all, so a
+  projection from an unknown ForgeLoop protocol generation was consumed as
+  `CANONICAL`. The balanced compatibility fallback stays reserved for a host that
+  advertises no adaptive capability; an unsupported boundary returns `UNAVAILABLE`
+  with `fallback: NONE`. Package version is still never a compatibility decision.
+- Stopped test-pinning the informational ForgeLoop package baseline string. The
+  documentation tests now assert the normative Protocol and Integration API
+  versions against the code constants, and check only the shape of the recorded
+  observation, so the enforced number is the one that governs compatibility.
+
 - Added an optional read-only Live Execution Observer integration for shell.online.
   The integration is disabled by default and does not change the Bridge API,
   Typed Message Schema v1, SQLite schema, or ForgeLoop authority boundary.

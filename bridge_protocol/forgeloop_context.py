@@ -14,6 +14,28 @@ from .models import ContextPolicyProjection, ExecutionProfileProjection
 MAX_CONTEXT_TEXT = 10_000
 MAX_CONTEXT_LIST = 64
 
+# Declared compatibility boundary, in code rather than in prose.
+#
+# ForgeLoop states the reader obligation in its own `protocol-info`:
+# "Readers reject unknown protocol or schema versions; compatibility changes
+# require a new published version." The Bridge repeats it in README's
+# "Protocol-first handshake". These tuples are that obligation's single source of
+# truth, so the documentation and the documentation tests can read the supported
+# set instead of restating a number.
+#
+# A ForgeLoop *package* version is deliberately absent: it is informational and
+# never a compatibility decision.
+SUPPORTED_FORGELOOP_PROTOCOL_VERSIONS = (1,)
+SUPPORTED_FORGELOOP_INTEGRATION_API_VERSIONS = (1,)
+SUPPORTED_FORGELOOP_CONTEXT_SCHEMA_VERSIONS = (1,)
+SUPPORTED_FORGELOOP_CONTEXT_FEATURE_VERSIONS = (1,)
+
+BOUNDARY_SUPPORTED = "SUPPORTED"
+BOUNDARY_UNSUPPORTED = "UNSUPPORTED"
+BOUNDARY_UNDECLARED = "UNDECLARED"
+
+_PROTOCOL_VERSION_LABELS = ("protocolVersion", "compatibility.protocolVersion")
+
 _REQUIRED_INVARIANTS = (
     "lifecyclePhasesPreserved",
     "requiredGatesPreserved",
@@ -63,6 +85,105 @@ def has_adaptive_context_capability(capabilities: dict[str, Any] | None) -> bool
     )
 
 
+def _declared_version(
+    container: Any,
+    key: str,
+    supported: tuple[int, ...],
+    label: str,
+) -> tuple[bool, str | None]:
+    """Check one advertised version field.
+
+    Returns whether the field was declared at all, and a rejection reason when a
+    declared value is not an integer inside `supported`. An absent field is not a
+    rejection on its own: optional capabilities legitimately omit their version.
+    """
+    if not isinstance(container, dict) or key not in container:
+        return False, None
+    value = container[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        return True, f"{label} is not an integer version"
+    if value not in supported:
+        return True, f"{label} {value} is outside the supported set {list(supported)}"
+    return True, None
+
+
+def forgeloop_boundary_status(capabilities: dict[str, Any] | None) -> tuple[str, str | None]:
+    """Classify the ForgeLoop compatibility boundary the host advertises.
+
+    `BOUNDARY_UNSUPPORTED` with a reason when any declared protocol, schema,
+    Integration API or consumed-feature version falls outside the supported set;
+    `BOUNDARY_UNDECLARED` when the payload declares no version at all;
+    `BOUNDARY_SUPPORTED` otherwise. The package version is never consulted.
+    """
+    if not isinstance(capabilities, dict):
+        return BOUNDARY_UNDECLARED, None
+
+    features = capabilities.get("features")
+    if not isinstance(features, dict):
+        features = {}
+    compatibility = capabilities.get("compatibility")
+
+    checks = (
+        (capabilities, "protocolVersion", SUPPORTED_FORGELOOP_PROTOCOL_VERSIONS, "protocolVersion"),
+        (
+            compatibility,
+            "protocolVersion",
+            SUPPORTED_FORGELOOP_PROTOCOL_VERSIONS,
+            "compatibility.protocolVersion",
+        ),
+        (
+            compatibility,
+            "schemaVersion",
+            SUPPORTED_FORGELOOP_CONTEXT_SCHEMA_VERSIONS,
+            "compatibility.schemaVersion",
+        ),
+        (
+            features.get("integrationApi"),
+            "version",
+            SUPPORTED_FORGELOOP_INTEGRATION_API_VERSIONS,
+            "features.integrationApi.version",
+        ),
+        (
+            features.get("adaptiveExecutionProfiles"),
+            "version",
+            SUPPORTED_FORGELOOP_CONTEXT_FEATURE_VERSIONS,
+            "features.adaptiveExecutionProfiles.version",
+        ),
+        (
+            features.get("executionProfileContext"),
+            "version",
+            SUPPORTED_FORGELOOP_CONTEXT_FEATURE_VERSIONS,
+            "features.executionProfileContext.version",
+        ),
+    )
+
+    declared = False
+    for container, key, supported, label in checks:
+        field_declared, reason = _declared_version(container, key, supported, label)
+        if reason is not None:
+            return BOUNDARY_UNSUPPORTED, reason
+        # Only a protocol version counts as declaring the boundary. An advertised
+        # Integration API or feature version does not stand in for it: README's
+        # protocol-first handshake requires the protocol version itself.
+        if field_declared and label in _PROTOCOL_VERSION_LABELS:
+            declared = True
+
+    for key in ("readsProtocol", "writesProtocol"):
+        advertised = capabilities.get(key)
+        if advertised is None:
+            continue
+        declared = True
+        if not isinstance(advertised, list) or not any(
+            not isinstance(entry, bool)
+            and isinstance(entry, int)
+            and entry in SUPPORTED_FORGELOOP_PROTOCOL_VERSIONS
+            for entry in advertised
+        ):
+            return BOUNDARY_UNSUPPORTED, f"{key} declares no supported protocol version"
+
+    return (BOUNDARY_SUPPORTED if declared else BOUNDARY_UNDECLARED), None
+
+
 def _bounded_text(value: Any, label: str, *, nullable: bool = False) -> str | None:
     if value is None and nullable:
         return None
@@ -96,7 +217,25 @@ def _canonical_policy(raw: Any) -> ContextPolicyProjection:
     return ContextPolicyProjection.model_validate(mapped)
 
 
+def _projection_version(task_context: dict[str, Any], key: str, supported: tuple[int, ...]) -> None:
+    """Reject a projection that declares a version the Bridge cannot read.
+
+    ForgeLoop emits both fields unconditionally
+    (`src/core/execution-profile-context.js:143-144`), so an absent or unknown
+    value means the payload is not a projection this Bridge understands.
+    """
+    value = task_context.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"canonical task/context is missing an integer {key}")
+    if value not in supported:
+        raise ValueError(
+            f"canonical task/context {key} {value} is outside the supported set {list(supported)}"
+        )
+
+
 def _canonical_context(task_context: dict[str, Any], expected_task_id: str | None) -> dict[str, Any]:
+    _projection_version(task_context, "schemaVersion", SUPPORTED_FORGELOOP_CONTEXT_SCHEMA_VERSIONS)
+    _projection_version(task_context, "protocolVersion", SUPPORTED_FORGELOOP_PROTOCOL_VERSIONS)
     task_id = _bounded_text(task_context.get("taskId"), "taskId")
     if expected_task_id is not None and task_id != expected_task_id:
         raise ValueError("canonical task/context taskId does not match the requested task")
@@ -200,9 +339,19 @@ def consume_task_context(
     expected_task_id: str | None = None,
 ) -> dict[str, Any]:
     """Consume a canonical projection without deriving a profile locally."""
+    boundary, reason = forgeloop_boundary_status(capabilities)
+    if boundary == BOUNDARY_UNSUPPORTED:
+        return unavailable_context(
+            f"ForgeLoop advertised an unsupported compatibility boundary: {reason}."
+        )
     if not has_adaptive_context_capability(capabilities):
         return balanced_compatibility_context(
             "ForgeLoop did not advertise adaptive execution profiles and task/context."
+        )
+    if boundary == BOUNDARY_UNDECLARED:
+        return unavailable_context(
+            "ForgeLoop advertised the canonical task/context capability without declaring a "
+            "supported protocol version."
         )
     if task_context is None:
         return unavailable_context("The advertised task/context resource returned no projection.")
