@@ -1,0 +1,11 @@
+{
+  "forgeLoopPackageVersion": "1.10.1",
+  "forgeLoopGitCommit": "b6802b8b5d0cb7e8edbf811350d9a94f4cb1942d",
+  "forgeLoopGitTag": "v1.10.1",
+  "taskId": "xrepo-1",
+  "expectedProtocolVersion": 1,
+  "expectedIntegrationApiVersion": 1,
+  "expectedCommandCount": 83,
+  "expectedFeatureCount": 27,
+  "note": "Single source of truth for the pinned canonical revision. Every script under this directory reads it; nothing hard-codes the revision separately."
+}
