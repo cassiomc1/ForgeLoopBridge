@@ -257,7 +257,9 @@ opt-in, provider-neutral, Integration API-only context. Bridge never creates a
 provider, recalls context because a message arrived, turns a message into a
 provider result, or persists raw provider output as ForgeLoop state. A bounded
 host-produced summary remains ordinary, non-authoritative coordination text;
-it is non-evidence and non-executable.
+it is non-evidence and non-executable. The ForgeLoop 1.10.2 Ripwire adapter is
+one such host-injected provider (absolute path plus exact version, explicit
+recall); its ranked signatures are approximate hints only.
 
 When available, use `forgeloop reconcile-continuity --task <id> --json` as a
 read-only resume diagnostic. Lint warnings are operational context only: they

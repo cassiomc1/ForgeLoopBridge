@@ -740,3 +740,33 @@ def test_observer_docs_cover_the_launcher_flag_surface():
         "--metadata-timeout",
     ):
         assert flag in OBSERVER_README
+
+
+def test_current_docs_cover_forgeloop_1102_ripwire_advisory_boundary():
+    combined = f"{README}\n{AUTONOMY}\n{CURRENT_SYNC_RECORD}".lower()
+    for required in (
+        "ripwire",
+        "recalladvisorycontext",
+        "absolute",
+        "exact",
+        "host-injected",
+        "approximate",
+        "non-authoritative",
+        "non-evidence",
+        "non-executable",
+        "bridge never installs",
+        "auto-recall",
+    ):
+        assert required in combined
+    assert "protocol v1" in combined
+    assert "integration api v1" in combined
+
+
+def test_current_sync_record_notes_patch_internal_hardening():
+    text = CURRENT_SYNC_RECORD
+    lowered = text.lower()
+    assert "1.10.2" in text
+    assert "aborted" in lowered
+    assert "protocol v1" in lowered
+    assert "integration api v1" in lowered
+    assert "never reads that file" in lowered or "never reads" in lowered

@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Synced the observed ForgeLoop baseline to package 1.10.2 while keeping
+  Protocol v1, Integration API v1, Bridge API 2.1.3, and Typed Message Schema
+  v1 unchanged. No code, API, schema, or database change; no new ForgeLoop
+  dependency.
+- Documented the ForgeLoop 1.10.2 optional host-injected Ripwire advisory
+  context adapter as one implementation of the existing
+  `advisoryContextProviders` v1 boundary (absolute path plus exact version,
+  explicit `recallAdvisoryContext`, shell-free bounded execution, per-query
+  version check, fail-closed). Bridge still never installs, discovers,
+  contacts, auto-recalls, persists, executes, or treats Ripwire output as
+  lifecycle state, evidence, authority, completion, or next-action truth.
+- Noted that the 1.10.1 transaction/profile hardening (physical project-root
+  binding, terminal `ABORTED`/`ROLLED_BACK`, task-locked recovery, obligation
+  signals, `RESOLVE_BLOCKER` guidance, repo-only `transactions:compact`) is
+  internal ForgeLoop behavior with no Bridge transport change.
+
 - Declared the supported ForgeLoop version set in code and made the documented
   protocol-first handshake executable. `bridge_protocol.forgeloop_context` now
   exports `SUPPORTED_FORGELOOP_PROTOCOL_VERSIONS`,
