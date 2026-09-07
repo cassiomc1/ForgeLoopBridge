@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.png" alt="ForgeLoopBridge — The secure bridge for ForgeLoop: Connect, Validate, Coordinate, Stay in bounds. Bridging real systems to ForgeLoop with protocol fidelity, safety by design, and verifiable boundaries." width="900">
+  <img src="assets/banner.png" alt="ForgeLoopBridge — Coordination Bridge for Verifiable Engineering: minimalist Markdown board for Engineer ↔ Worker coordination, with typed messages, task-aware coordination, SSE stream, SQLite persistence, and ForgeLoop as canonical authority." width="900">
 </p>
 
 <p align="center">
