@@ -15,7 +15,7 @@ or the equivalent official structured integration capability response.
 ```text
 Protocol compatibility target: ForgeLoop Protocol v1
 Integration API compatibility target: Integration API v1
-Observed synchronization baseline: ForgeLoop package 1.10.1
+Observed synchronization baseline: ForgeLoop package 1.10.2
 ```
 
 The package baseline is informational only. Capability support comes from the
@@ -113,7 +113,36 @@ turns a message into a provider result, or persists raw provider output as
 canonical ForgeLoop state. A bounded host-produced summary may be transported
 as ordinary coordination text, but it remains non-authoritative,
 non-evidence, and non-executable. There is no Bridge memory or recall endpoint;
-a provider adapter requires a separate design and release.
+a Bridge-side provider adapter requires a separate design and release.
+
+ForgeLoop 1.10.2 ships one optional host-injected implementation of that
+capability: the Ripwire advisory context adapter
+(`createRipwireAdvisoryContextProvider`, `recallAdvisoryContext`,
+`docs/RIPWIRE_ADAPTER.md`). The host supplies an absolute Ripwire executable
+path plus an exact expected version, registers the provider under the `ripwire`
+key, and explicitly recalls ranked source signatures. The adapter runs the
+qualified binary shell-free with bounded stdout/stderr budgets, validates
+`--version` before each query, rejects unsafe or malformed output, and fails
+closed without changing any task phase or writing `.forgeloop/` state. Its
+output is approximate source-map retrieval only — not lifecycle state,
+evidence, authority, completion truth, or next-action authority. Bridge still
+never installs, discovers, or contacts Ripwire, never auto-recalls it, and
+transports at most a bounded host-produced summary as ordinary coordination
+text.
+
+Patch-release note (1.10.1–1.10.2): both releases keep Protocol v1, schema v1,
+Integration API v1, and Node `>=20` unchanged, and `protocol-info --json`
+differs only by `packageVersion`. The 1.10.1 transaction hardening (physical
+project-root binding, terminal `ABORTED`/`ROLLED_BACK`, task-locked recovery),
+execution-profile obligation-signal derivation, `RESOLVE_BLOCKER`
+`commands`/`commandSpecs` guidance, repository-only `transactions:compact`,
+structural-quality provider-shape widening, exact MCP pin, and receipt-audit
+`NOT_VERIFIED` reporting are internal ForgeLoop behavior. They do not change
+the Bridge transport, Typed Message Schema v1, SQLite schema, or authority
+boundary. A direct `.forgeloop/.txn/<id>/manifest.json` reader must accept the
+optional `lockTaskId`/`compactedAt` fields and the `ABORTED` status; Bridge
+itself never reads that file and only uses the canonical CLI/structured
+integration.
 
 ### Continuity diagnostics
 

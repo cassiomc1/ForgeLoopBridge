@@ -261,6 +261,15 @@ output as canonical ForgeLoop state. A bounded host-produced summary may be
 transported as ordinary coordination text, but remains non-authoritative,
 non-evidence, and non-executable. There is no Bridge memory or recall endpoint.
 
+ForgeLoop 1.10.2 ships one optional host-injected implementation of that
+capability: the Ripwire advisory adapter (absolute executable path plus exact
+expected version, registered under the `ripwire` key, explicit
+`recallAdvisoryContext`, shell-free bounded execution, per-query version
+validation, fail-closed on unsafe or malformed output). Its ranked signatures
+are approximate retrieval hints only — never lifecycle state, evidence,
+authority, completion truth, or next-action authority. Bridge never installs,
+discovers, contacts, or auto-recalls Ripwire.
+
 ### Continuity diagnostics
 
 The Worker may use `forgeloop reconcile-continuity --task <id> --json` as a

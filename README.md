@@ -120,8 +120,8 @@ is actor-reported only.
 
 ### Advisory context and canonical handoffs
 
-ForgeLoop 1.10.0 may advertise the optional `advisoryContextProviders` v1
-capability. Its trust contract is:
+ForgeLoop 1.10.2 may advertise the optional `advisoryContextProviders` v1
+capability (introduced in 1.10.0). Its trust contract is:
 
 ```text
 version: 1
@@ -140,8 +140,18 @@ message arrives, converts a message into a provider result, or persists raw
 provider output as canonical ForgeLoop state. It may transport a bounded
 host-produced summary as ordinary coordination text, but that copy remains
 non-authoritative, non-evidence, and non-executable. Bridge has no memory or
-recall endpoint, and a future provider adapter requires a separate design and
-release.
+recall endpoint, and a Bridge-side provider adapter requires a separate design
+and release.
+
+ForgeLoop 1.10.2 ships one optional host-injected implementation of that
+capability: the Ripwire advisory adapter (`recallAdvisoryContext` with a
+host-qualified absolute Ripwire path plus an exact expected version,
+registered under the `ripwire` key). It runs shell-free with bounded output,
+validates the version before each query, fails closed on unsafe or malformed
+output, and never changes a task phase or writes `.forgeloop/` state. Its
+ranked signatures are approximate retrieval hints only. Bridge never installs,
+discovers, contacts, or auto-recalls Ripwire; a bounded host summary stays
+ordinary coordination text.
 
 When `canonicalHandoffs` is advertised, Bridge understands the v2 capability
 contract and carries only the opaque canonical reference. Handoffs are
@@ -652,6 +662,10 @@ Mandatory workflow for every instruction from the Engineer:
    opt-in, provider-neutral, Integration API-only context. It is not persisted
    by ForgeLoop, authoritative, evidence, or executable. Bridge never creates a
    provider, auto-recalls context, or stores provider output as canonical state.
+   The ForgeLoop 1.10.2 Ripwire adapter is one such host-injected provider
+   (absolute path plus exact expected version, explicit
+   `recallAdvisoryContext`); treat its ranked signatures as approximate
+   non-authoritative hints only.
 
    When available, use `forgeloop reconcile-continuity --task <task-id> --json`
    as a read-only resume diagnostic. Lint warnings are non-authoritative
