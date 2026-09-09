@@ -18,10 +18,10 @@ and interface work. The packaging correction is limited to standard setuptools
 build metadata, declared runtime dependencies, the `main` module, and packaged
 static web assets.
 
-The candidate is release-ready subject to the exact-head hosted CI gate and the
-non-blocking absence of a configured Python package registry policy. No public
-behavior was changed to make packaging green. No production deployment was
-performed.
+The candidate is release-ready: the required hosted checks passed for PR #44 at
+exact head `e4f40d4`, with only the non-blocking absence of a configured Python
+package registry policy remaining. No public behavior was changed to make
+packaging green. No production deployment was performed.
 
 ## Baseline and version
 
@@ -212,8 +212,9 @@ passed
 ```
 
 Configured CI matrix: Ubuntu Python 3.12, Ubuntu Python 3.13, Windows Python
-3.12, and macOS Python 3.12. Exact-head hosted CI for this packaging candidate
-is the remaining gate after its release PR is opened.
+3.12, and macOS Python 3.12. For PR #44 at exact head `e4f40d4`, all required
+checks passed: the four CI matrix jobs, CodeQL actions analysis, CodeQL Python
+analysis, and the CodeQL aggregate check.
 
 ## Required answers
 
@@ -232,7 +233,7 @@ is the remaining gate after its release PR is opened.
 13. Is the architecture image accurate? **Yes; committed/reference and authority boundaries align.**
 14. Are README and CHANGELOG current? **Yes; current release-facing claims align.**
 15. Are there any P0/P1/P2 blockers? **No.**
-16. Is 2.2.0 ready for publication? **Yes, after exact-head hosted CI passes.**
+16. Is 2.2.0 ready for publication? **Yes; exact-head hosted CI passed.**
 
 ## Release controls
 
@@ -241,9 +242,9 @@ is the remaining gate after its release PR is opened.
 - P2: none.
 - P3: Python registry publication is not configured or authorized; publish only
   the GitHub Release and report `PYTHON REGISTRY PUBLICATION: NOT CONFIGURED`.
-- Not verified at report creation: hosted exact-head CI for candidate `7d36356`,
-  tag existence, GitHub Release publication, and registry clean-install (the
-  registry is not configured). These are delivery gates, not source failures.
+- Not verified at report creation: tag existence, GitHub Release publication,
+  and registry clean-install (the registry is not configured). These are
+  delivery gates, not source failures.
 - Python registry: **NOT CONFIGURED**; no PyPI or other registry publication is
   planned.
 - Production deployment: explicitly not applicable and not performed.
