@@ -1469,7 +1469,7 @@ def test_database_schema_is_unchanged():
 
 def test_bridge_rest_and_sse_contracts_are_unchanged():
     text = (ROOT / "main.py").read_text(encoding="utf-8")
-    assert 'BRIDGE_API_VERSION = "2.1.3"' in text
+    assert 'BRIDGE_API_VERSION = "2.2.0"' in text
     assert '@app.get("/api/messages"' in text
     assert '@app.post("/api/messages"' in text
     assert '@app.get("/api/stream")' in text

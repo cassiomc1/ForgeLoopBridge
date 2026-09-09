@@ -457,8 +457,9 @@ def test_worker_poller_documents_adaptive_context_boundary():
 
 def test_pyproject_version_matches_app_version():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'version = "2.1.3"' in pyproject
+    assert 'version = "2.2.0"' in pyproject
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "## 2.2.0 - 2026-09-09" in changelog
     assert "## 2.1.3 - 2026-09-02" in changelog
     assert "## 2.1.2 - 2026-08-30" in changelog
     assert "## 2.1.1 - 2026-08-30" in changelog
@@ -470,7 +471,7 @@ def test_current_sync_record_documents_stream_close_before_rest_recovery():
     )
     assert "explicitly closes the affected stream" in current
     assert "fresh SSE ticket" in current
-    assert "bridge_api_version: 2.1.3" in current
+    assert "bridge_api_version: 2.2.0" in current
 
 
 def test_readme_documents_realtime_topology_and_worker_start_policy():
@@ -759,19 +760,20 @@ def test_docs_keep_observer_bounded_and_non_interactive():
         assert required in normalized
 
 
-def test_changelog_announces_optional_observer_without_version_bump():
-    assert "optional read-only live execution observer" in CHANGELOG.lower()
-    assert "does not change the bridge api" in CHANGELOG.lower()
-    assert "typed message schema v1" in CHANGELOG.lower()
-    assert "forgeloop authority boundary" in CHANGELOG.lower()
+def test_changelog_announces_optional_observer_and_preserves_boundaries():
+    lowered = " ".join(CHANGELOG.lower().split())
+    assert "optional, read-only live execution observer" in lowered
+    assert "bridge api `2.2.0`" in lowered
+    assert "typed message schema v1" in lowered
+    assert "forgeloop authority boundary" in lowered
 
 
 def test_changelog_records_forgeloop_111_repository_index_sync():
-    unreleased = " ".join(
-        CHANGELOG.split("## Unreleased", 1)[1].split("## 2.1.3", 1)[0].split()
+    release_notes = " ".join(
+        CHANGELOG.split("## 2.2.0", 1)[1].split("## 2.1.3", 1)[0].split()
     ).lower()
     for required in (
-        "baseline to package 1.11.1",
+        "baseline to package `1.11.1`",
         "protocol v1",
         "integration api v1",
         "repositoryindex",
@@ -781,7 +783,7 @@ def test_changelog_records_forgeloop_111_repository_index_sync():
         "no tgrep dependency",
         "no new bridge authority",
     ):
-        assert required in unreleased
+        assert required in release_notes
 
 
 def test_docs_define_the_observer_launcher_exit_contract():
@@ -797,9 +799,8 @@ def test_docs_define_the_observer_launcher_exit_contract():
 
 def test_changelog_records_natural_shutdown_and_interrupt_semantics():
     lowered = " ".join(CHANGELOG.lower().split())
-    assert "observer_stop_failed" in lowered
-    assert "ctrl-c exits `130`" in lowered
-    assert "`sigterm` exits `143`" in lowered
+    assert "normal exits no longer trigger false observer-stop failures" in lowered
+    assert "ctrl-c and sigterm return `130` and `143`" in lowered
 
 
 def test_observer_docs_cover_the_launcher_flag_surface():

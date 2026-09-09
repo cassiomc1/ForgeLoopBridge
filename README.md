@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.png" alt="ForgeLoopBridge — Coordination Bridge for Verifiable Engineering: minimalist Markdown board for Engineer ↔ Worker coordination, with typed messages, task-aware coordination, SSE stream, SQLite persistence, and ForgeLoop as canonical authority." width="900">
+  <img src="assets/banner.png" alt="ForgeLoopBridge current architecture showing Engineer and Worker coordination, Bridge transport, the execution host, ForgeLoop structured API and CLI paths, Repository Search, and Repository Index, with ForgeLoop retaining canonical lifecycle and evidence authority." width="900">
 </p>
 
 <p align="center">
@@ -15,7 +15,7 @@
 
 Designed to coordinate alongside [ForgeLoop](https://github.com/cassiomc1/forgeloop) — a portable engineering protocol for AI coding agents.
 
-Current Bridge release: **2.1.3**. The typed message schema remains v1, and
+Current Bridge release: **2.2.0**. The typed message schema remains v1, and
 ForgeLoop compatibility remains Protocol v1 / Integration API v1.
 
 - **Engineer** (e.g. Grok / LLM) → defines intent, acceptance criteria, reviews PRs, and performs read-only canonical verification.
@@ -299,6 +299,7 @@ does not add recovery behavior for these codes.
 - SQLite with WAL mode (zero extra configuration, automatic backward-compatible schema migration)
 - Message pagination (`after_id` / `before_id` / `limit`), delete by author, `/api/whoami`
 - Capability-aware coordination with current ForgeLoop protocol surfaces
+- shadcn-inspired light/dark web interface theme with an accessible toggle
 - Optional Bridge Typed Message Schema v1 with strict payloads, correlation,
   replies, role-scoped idempotency, opaque canonical references, and REST/SSE parity
 - Test suite (pytest) and CI (GitHub Actions: ruff + pytest)
@@ -1317,7 +1318,7 @@ also advertises the Bridge transport contract:
 
 ```json
 {
-  "bridge_api_version": "2.1.3",
+  "bridge_api_version": "2.2.0",
   "typed_message_versions": [1],
   "typed_features": {
     "idempotency": true,

@@ -292,7 +292,7 @@ artifacts, or treat Bridge agreement as trusted adapter evidence.
 
 ForgeLoopBridge additionally exposes **Bridge Typed Message Schema v1**. This
 is separate from ForgeLoop Protocol v1 and is advertised as
-`bridge_api_version: 2.1.3` with `typed_message_versions: [1]` and the
+`bridge_api_version: 2.2.0` with `typed_message_versions: [1]` and the
 `typed_features` capability map in the public status response. Typed messages
 retain mandatory Markdown content and carry typed coordination intent,
 correlation/reply metadata, idempotency keys, and opaque canonical references.
