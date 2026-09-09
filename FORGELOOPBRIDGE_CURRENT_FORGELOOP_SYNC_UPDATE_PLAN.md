@@ -15,12 +15,83 @@ or the equivalent official structured integration capability response.
 ```text
 Protocol compatibility target: ForgeLoop Protocol v1
 Integration API compatibility target: Integration API v1
-Observed synchronization baseline: ForgeLoop package 1.10.2
+Observed synchronization baseline: ForgeLoop package 1.11.1
 ```
 
 The package baseline is informational only. Capability support comes from the
 canonical protocol-info or structured integration response, never from a
 package version comparison.
+
+## ForgeLoop 1.11.x — Repository Index and Persistent Search Transport
+
+The published ForgeLoop `1.11.1` public boundary remains Protocol v1 and
+Integration API v1. ForgeLoop `1.11.0` introduced the functional Repository
+Index, provider-neutral Repository Search, managed tgrep backend, search and
+`index-*` CLI commands, Integration API search/status operations, the MCP
+search/status projections, managed binary/integrity validation, the live
+working-tree watcher, versioned local IPC, ownership-safe recovery, idle
+shutdown, path/privacy hardening, and native platform validation. ForgeLoop
+`1.11.1` is an architecture/documentation refresh; it did not introduce the
+Repository Index.
+
+Current compatibility matrix:
+
+| Dimension | Bridge boundary | Current ForgeLoop observation |
+| --- | --- | --- |
+| ForgeLoop Protocol | v1 | v1 |
+| Integration API | v1 | v1 |
+| `task/context` schema | v1 | v1 |
+| `repositoryIndex` | additive documented capability | v1 |
+| `canonicalHandoffs` | v2 | v2 |
+| `advisoryContextProviders` | v1 | v1 |
+| ForgeLoop package | informational only | 1.11.1 |
+| Bridge Typed Message Schema | v1 | unchanged |
+
+ForgeLoop owns the required operational Repository Index and its
+provider-neutral Repository Search. ForgeLoopBridge remains a coordination
+transport: it does not own, initialize, repair, validate, or attest the index;
+download, start, stop, or inspect tgrep; read native index/cache formats; infer
+readiness from filesystem presence; or treat index health as lifecycle state.
+Search output is bounded discovery context, not evidence, approval, ownership,
+verification truth, or completion.
+
+The canonical access paths are:
+
+- CLI: `forgeloop search` and `forgeloop index-status`.
+- Integration API: direct `repositorySearch(...)` and
+  `repositoryIndexStatus(...)`.
+- MCP: `forgeloop_search` and the direct
+  `forgeloop://repository/index-status` resource.
+
+The CLI may use ForgeLoop's Persistent Search Transport as an optimization:
+the CLI client reaches a ForgeLoop-owned local search host through versioned
+IPC. Integration API and MCP call the canonical Repository Search service
+directly; neither should be routed through CLI IPC. Bridge and Worker must not
+connect to the private socket/named pipe, store its nonce/PID, mirror its frame
+protocol, or manage its startup, recovery, ownership proof, idle shutdown, or
+termination.
+
+If ForgeLoop reports a required Repository Index blocker, report the exact
+canonical status/reason and follow ForgeLoop index/doctor guidance. An
+`rg`/`grep` fallback is not canonical index readiness or a canonical Repository
+Search result. Public projections must remain path-safe: transport only
+project-relative paths and never repository roots, managed binary/index paths,
+socket paths, or temporary home paths. An index becoming unhealthy later does
+not rewrite historical task evidence or completion truth.
+
+Independent process lifetimes:
+
+```text
+ForgeLoopBridge transport lifetime
+Worker process/invocation lifetime
+ForgeLoop persistent search-host lifetime
+Repository Index/tgrep server and watcher lifetime
+```
+
+These lifetimes are related operationally but are not identity-equivalent.
+ForgeLoop owns the search host PID, nonce, IPC endpoint, startup lock,
+ownership proof, recovery, and shutdown. Bridge reports an operational problem;
+it never kills or restarts ForgeLoop's search host or tgrep server.
 
 The Bridge accepts additive coordination references such as `task_id`,
 `message_type`, `action_id`, `approval_id`, `next_action`, and `reason_code`.
@@ -93,8 +164,9 @@ Relevant failures include `E_HANDOFF_INVALID`,
 
 ### Advisory context providers
 
-ForgeLoop 1.10.0 may advertise the optional `advisoryContextProviders` v1
-capability with this trust contract:
+ForgeLoop 1.10.0 introduced the optional `advisoryContextProviders` v1
+capability, which current 1.11.x hosts may continue to advertise with this
+trust contract:
 
 ```text
 version: 1
@@ -115,8 +187,8 @@ as ordinary coordination text, but it remains non-authoritative,
 non-evidence, and non-executable. There is no Bridge memory or recall endpoint;
 a Bridge-side provider adapter requires a separate design and release.
 
-ForgeLoop 1.10.2 ships one optional host-injected implementation of that
-capability: the Ripwire advisory context adapter
+The Ripwire advisory context adapter was introduced in ForgeLoop 1.10.2 and
+remains one optional host-injected implementation in the current 1.11.x line
 (`createRipwireAdvisoryContextProvider`, `recallAdvisoryContext`,
 `docs/RIPWIRE_ADAPTER.md`). The host supplies an absolute Ripwire executable
 path plus an exact expected version, registers the provider under the `ripwire`

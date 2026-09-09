@@ -16,13 +16,18 @@ from bridge_protocol.forgeloop_context import (
 def capabilities() -> dict:
     """Mirror the version-bearing shape of a real `protocol-info --json` payload."""
     return {
-        "packageVersion": "1.10.1",
+        "packageVersion": "1.11.1",
         "protocolVersion": 1,
         "readsProtocol": [1],
         "writesProtocol": [1],
         "compatibility": {"protocolVersion": 1, "schemaVersion": 1},
         "features": {
             "integrationApi": {"version": 1},
+            "repositoryIndex": {
+                "version": 1,
+                "required": True,
+                "providerNeutral": True,
+            },
             "adaptiveExecutionProfiles": {"version": 1, "supported": True},
             "executionProfileContext": {
                 "version": 1,
@@ -135,6 +140,26 @@ def test_supported_forgeloop_version_sets_are_declared_in_code():
 
 def test_real_published_boundary_is_supported():
     assert forgeloop_boundary_status(capabilities()) == (BOUNDARY_SUPPORTED, None)
+
+
+def test_repository_index_is_an_additive_unconsumed_capability():
+    info = capabilities()
+    info["packageVersion"] = "1.11.1"
+    info["features"]["repositoryIndex"] = {
+        "version": 1,
+        "required": True,
+        "providerNeutral": True,
+    }
+
+    assert forgeloop_boundary_status(info) == (BOUNDARY_SUPPORTED, None)
+
+
+def test_unknown_repository_index_or_future_additive_feature_does_not_invalidate_boundary():
+    info = capabilities()
+    info["features"]["repositoryIndex"]["version"] = 99
+    info["features"]["futureAdditiveFeature"] = {"version": 1, "supported": True}
+
+    assert forgeloop_boundary_status(info) == (BOUNDARY_SUPPORTED, None)
 
 
 def test_package_version_alone_is_never_a_compatibility_decision():

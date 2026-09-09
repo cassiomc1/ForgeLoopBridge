@@ -30,6 +30,11 @@ SUPPORTED_FORGELOOP_INTEGRATION_API_VERSIONS = (1,)
 SUPPORTED_FORGELOOP_CONTEXT_SCHEMA_VERSIONS = (1,)
 SUPPORTED_FORGELOOP_CONTEXT_FEATURE_VERSIONS = (1,)
 
+# The Bridge structurally consumes the canonical `task/context` projection,
+# not Repository Index state. `repositoryIndex` and other unrelated additive
+# ForgeLoop capabilities therefore remain outside this consumed-feature gate;
+# their presence or future version must not invalidate task/context support.
+
 BOUNDARY_SUPPORTED = "SUPPORTED"
 BOUNDARY_UNSUPPORTED = "UNSUPPORTED"
 BOUNDARY_UNDECLARED = "UNDECLARED"

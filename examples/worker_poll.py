@@ -14,9 +14,9 @@ workflow:
 1. Prefer official ForgeLoop structured integration when exposed by the host;
    otherwise use the project-local ForgeLoop CLI.
 2. Inspect `forgeloop protocol-info --json` and feature-detect capabilities;
-   include `verificationExecutionIsolation` and `structuralQuality` when
-   advertised; never infer capabilities from a package version alone or
-   self-attest a trusted isolation boundary.
+   include `repositoryIndex`, `verificationExecutionIsolation`, and
+   `structuralQuality` when advertised; never infer capabilities from a package
+   version alone or self-attest a trusted isolation boundary.
 3. When `FORGELOOP_CONTEXT_COMMAND` is configured, read the canonical
    `task/context` projection through that host adapter; use its resolved profile
    and bounded policy, and never classify the task locally.
@@ -44,6 +44,10 @@ ignore messages already on the board, or `--start-mode history` to replay from
 cursor zero.
 
 Transport liveness and agent-turn liveness are separate concerns:
+
+- ForgeLoopBridge server lifetime, Worker invocation lifetime, and ForgeLoop's
+  persistent search-host lifetime are independent. A bounded Worker may exit
+  while Bridge and the ForgeLoop search host remain alive.
 
 - `--run-mode daemon` (default, unchanged behavior) is the continuous transport
   adapter: poll, sleep, repeat until the process is terminated externally.
@@ -252,14 +256,31 @@ responsibilityConstraints is supported, use responsibility-set/status and stop
 on canonical scope or frozen-input violations. Never infer responsibility from
 Markdown.
 
+When repositoryIndex is advertised, preserve ForgeLoop's canonical operational
+readiness and use the official Repository Search surface when discovery is
+useful. Select the host-appropriate path: direct `repositorySearch()` and
+`repositoryIndexStatus()` through Integration API, `forgeloop_search` and
+`forgeloop://repository/index-status` through MCP, or `forgeloop search` and
+`forgeloop index-status` through the CLI. Do not inspect tgrep cache files,
+download or start/kill tgrep directly, or connect to the CLI persistent-search
+socket/named pipe. Do not claim that `rg`/`grep` fallback satisfies canonical
+Repository Index readiness. Search output is discovery context, never evidence
+or completion. If ForgeLoop reports an index blocker, report the exact
+canonical status/reason and follow ForgeLoop index/doctor guidance. Initial
+setup may require network access for the exact pinned managed asset; an
+unavailable network is not permission to use an unmanaged engine. The host and
+ForgeLoop, not this poller, own project-root validation and native-platform
+support.
+
 When advisoryContextProviders is advertised, treat it as optional, lazy,
 opt-in, provider-neutral, Integration API-only context. Bridge never creates a
 provider, recalls context because a message arrived, turns a message into a
 provider result, or persists raw provider output as ForgeLoop state. A bounded
 host-produced summary remains ordinary, non-authoritative coordination text;
-it is non-evidence and non-executable. The ForgeLoop 1.10.2 Ripwire adapter is
-one such host-injected provider (absolute path plus exact version, explicit
-recall); its ranked signatures are approximate hints only.
+it is non-evidence and non-executable. The Ripwire advisory adapter was
+introduced in ForgeLoop 1.10.2 and remains one optional host-injected provider
+in the current 1.11.x line (absolute path plus exact version, explicit recall);
+its ranked signatures are approximate hints only.
 
 When available, use `forgeloop reconcile-continuity --task <id> --json` as a
 read-only resume diagnostic. Lint warnings are operational context only: they
