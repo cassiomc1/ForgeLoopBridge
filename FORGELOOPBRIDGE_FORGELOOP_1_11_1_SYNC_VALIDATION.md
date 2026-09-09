@@ -7,8 +7,23 @@ The plan was treated as the implementation specification after the user's
 explicit request to execute it. Historical documents and historical release
 facts were preserved; they were not treated as current operating instructions.
 
-No commit, push, pull request, merge, Bridge release, or ForgeLoop release was
-performed. The working tree remains available for review.
+At validation time, no commit, push, pull request, merge, Bridge release, or
+ForgeLoop release had yet been performed. The working tree remained available
+for review.
+
+## Delivery status
+
+The following delivery occurred after the validation recorded above:
+
+- PR: `#40`
+- PR status: `MERGED`
+- PR head: `9d3f666`
+- Merge commit: `898716f`
+- Hosted CI: `VERIFIED` — 7/7 exact-head checks passed
+
+This post-delivery status does not change the validation-time chronology or the
+technical synchronization findings below. No Bridge or ForgeLoop release or
+publication is claimed here.
 
 ## Exact baselines
 
@@ -252,9 +267,10 @@ historical 1.10.x facts were retained and explicitly labeled.
 
 - A live MCP invocation was not available because the documented separate MCP
   package was not installed and was not found in the public npm registry query.
-- Hosted GitHub Actions matrix results were not run in this local working-tree
-  execution. The local suite and the repository's configured command set were
-  run; exact-head CI remains a delivery follow-up if a PR is opened.
+- At validation time, hosted GitHub Actions matrix results were not run in this
+  local working-tree execution. The local suite and the repository's configured
+  command set were run; exact-head CI was a delivery follow-up at that time.
+  Post-delivery, PR `#40` exact-head checks are verified: 7/7 passed.
 
 ## Required explicit answers
 
@@ -290,4 +306,5 @@ historical 1.10.x facts were retained and explicitly labeled.
 
 Keep ForgeLoopBridge `2.1.3` as the current release. Review the Unreleased
 documentation synchronization as part of the next planned Bridge release if
-one is desired. No PR or hosted release action is claimed by this report.
+one is desired. No Bridge or ForgeLoop release/publication is claimed by this
+report; PR delivery is recorded in the Delivery status section.
