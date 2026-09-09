@@ -14,7 +14,7 @@ Version-introduction baseline: `a0cd35f853df52f4dcc55ca2d001627de75b138e`
 
 **PASS WITH FOLLOW-UPS**
 
-The 2.2.0 candidate is internally consistent and ready for a release pull request. The remaining follow-ups are hosted exact-head CI and package-artifact smoke validation. No tag, package publication, GitHub Release, or deployment was performed.
+The 2.2.0 candidate is internally consistent and ready for release consideration. The required hosted checks passed for the exact PR head; package-artifact smoke remains a documented follow-up. No tag, package publication, GitHub Release, or deployment was performed.
 
 ## Baseline and version decision
 
@@ -90,13 +90,15 @@ passed
 
 The focused documentation and frontend invariant suite also passed before the final full-suite run. The configured hosted CI matrix remains the authoritative check for Python 3.12/3.13 across Ubuntu, Windows, and macOS.
 
+For PR #43 at exact head `5e628cc`, all required hosted checks passed: CI on Ubuntu 3.12, Ubuntu 3.13, Windows 3.12, and macOS 3.12, plus CodeQL actions and Python analyses.
+
 ## Follow-ups and release controls
 
 - **P0:** none found.
 - **P1:** none found.
 - **P2:** none found.
 - **P3:** package artifact/build smoke is not verified because the repository has no configured build backend or release workflow and the local environment does not provide the `build` module. This is a release-process follow-up, not a runtime regression.
-- **Not verified:** hosted CI for the final pull-request head; package artifact build/publication.
-- **Verified:** local tests, lint, frontend syntax, documentation invariants, compatibility boundary, authority-boundary review, security review, and working-tree diff hygiene.
+- **Not verified:** package artifact build/publication.
+- **Verified:** local tests, lint, frontend syntax, documentation invariants, compatibility boundary, authority-boundary review, security review, working-tree diff hygiene, and all required hosted checks for the exact PR head recorded above.
 
 The release pull request may be opened after this report is committed. Merge should be considered only after every required check reports success for the exact final PR head. Publication, tagging, GitHub Release creation, and deployment remain explicitly out of scope for this validation.
