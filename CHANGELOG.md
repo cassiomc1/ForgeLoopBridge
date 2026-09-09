@@ -2,12 +2,15 @@
 
 ## Unreleased
 
-- Synced the observed ForgeLoop baseline to package 1.10.2 while keeping
+- Synced the observed ForgeLoop baseline to package 1.11.1 while keeping
   Protocol v1, Integration API v1, Bridge API 2.1.3, and Typed Message Schema
-  v1 unchanged. No code, API, schema, or database change; no new ForgeLoop
-  dependency.
-- Documented the ForgeLoop 1.10.2 optional host-injected Ripwire advisory
-  context adapter as one implementation of the existing
+  v1 unchanged. Documented additive `repositoryIndex` v1, provider-neutral
+  Repository Search, and the ForgeLoop Persistent Search Transport boundary.
+  No Bridge API, typed-schema, SQLite, or runtime dependency change; no tgrep
+  dependency and no new Bridge authority.
+- Documented ForgeLoop 1.10.2 as the introduction point for the optional
+  host-injected Ripwire advisory context adapter, which remains one
+  implementation of the existing
   `advisoryContextProviders` v1 boundary (absolute path plus exact version,
   explicit `recallAdvisoryContext`, shell-free bounded execution, per-query
   version check, fail-closed). Bridge still never installs, discovers,

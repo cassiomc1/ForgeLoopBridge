@@ -192,6 +192,48 @@ feature-detected from canonical `protocol-info --json` or structured
 integration. ForgeLoopBridge coordinates them but does not implement, validate,
 infer, or attest them.
 
+### Repository Index and Repository Search
+
+When `features.repositoryIndex` is advertised, ForgeLoop owns the required
+operational Repository Index and provider-neutral Repository Search. The Bridge
+cannot attest `READY`, repair the index, manage its managed tgrep backend, read
+native cache files, or infer canonical readiness from filesystem presence.
+
+Use the official host surface when repository discovery is needed:
+
+- Integration API: direct `repositorySearch(...)` and
+  `repositoryIndexStatus(...)`.
+- MCP: `forgeloop_search` and
+  `forgeloop://repository/index-status` directly.
+- CLI: `forgeloop search` and `forgeloop index-status`; the CLI may use its
+  ForgeLoop-owned persistent search host as an internal optimization.
+
+Integration API and MCP do not use the CLI persistent-search socket or named
+pipe. The Worker and Bridge must never connect to that private IPC, store its
+nonce/PID, mirror its frame protocol, or kill/restart the ForgeLoop host or
+tgrep server. Bridge transport lifetime, Worker process lifetime, ForgeLoop
+persistent-search-host lifetime, and Repository Index/tgrep watcher lifetime
+are independent.
+
+Repository Search is read-only discovery context, not evidence, approval,
+ownership, verification truth, or completion. A fallback `rg`/`grep` search
+does not satisfy canonical Repository Index readiness and must not be reported
+as a canonical Repository Search result. If ForgeLoop reports a canonical
+index blocker, report the exact status/reason code, follow ForgeLoop's
+index/doctor guidance, and use only authorized host capabilities. Do not
+download an unmanaged engine, edit `engine-state.json`, inspect private cache
+formats, or reinterpret Engineer approval as host authority. A search request
+does not bypass the canonical project root or host policy (for example,
+`search /etc` remains constrained by ForgeLoop validation). First-time setup
+may need network access for the exact pinned asset; an unavailable network is
+not permission to use an unmanaged engine, and Bridge does not define a native
+platform allowlist.
+
+If the search infrastructure later becomes unhealthy, that may block current
+ForgeLoop operational discovery, but it does not invalidate previously valid
+task evidence or historical completion. Keep current readiness and historical
+truth separate.
+
 ### Workspace binding
 
 Workspace identity and binding come only from ForgeLoop. Board agreement cannot
@@ -261,14 +303,14 @@ output as canonical ForgeLoop state. A bounded host-produced summary may be
 transported as ordinary coordination text, but remains non-authoritative,
 non-evidence, and non-executable. There is no Bridge memory or recall endpoint.
 
-ForgeLoop 1.10.2 ships one optional host-injected implementation of that
-capability: the Ripwire advisory adapter (absolute executable path plus exact
-expected version, registered under the `ripwire` key, explicit
-`recallAdvisoryContext`, shell-free bounded execution, per-query version
-validation, fail-closed on unsafe or malformed output). Its ranked signatures
-are approximate retrieval hints only — never lifecycle state, evidence,
-authority, completion truth, or next-action authority. Bridge never installs,
-discovers, contacts, or auto-recalls Ripwire.
+The Ripwire advisory adapter was introduced in ForgeLoop 1.10.2 and remains
+one optional host-injected implementation in the current 1.11.x line (absolute
+executable path plus exact expected version, registered under the `ripwire` key,
+explicit `recallAdvisoryContext`, shell-free bounded execution, per-query
+version validation, fail-closed on unsafe or malformed output). Its ranked
+signatures are approximate retrieval hints only — never lifecycle state,
+evidence, authority, completion truth, or next-action authority. Bridge never
+installs, discovers, contacts, or auto-recalls Ripwire.
 
 ### Continuity diagnostics
 

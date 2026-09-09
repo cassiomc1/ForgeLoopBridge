@@ -93,6 +93,25 @@ def test_worker_poller_uses_capability_discovery_and_safe_dispatch_language():
     assert "authorization" in text
 
 
+def test_worker_poller_feature_detects_repository_index_without_owning_it():
+    text = " ".join(WORKER_POLL.lower().split())
+    for required in (
+        "repositoryindex",
+        "repositorysearch()",
+        "repositoryindexstatus()",
+        "forgeloop_search",
+        "forgeloop://repository/index-status",
+        "forgeloop search",
+        "forgeloop index-status",
+        "persistent-search socket/named pipe",
+        "rg`/`grep` fallback satisfies canonical",
+        "never evidence",
+        "or completion",
+    ):
+        assert required in text
+    assert "start/kill tgrep directly" in text
+
+
 def test_worker_poller_feature_detects_structural_quality_without_version_inference():
     text = WORKER_POLL.lower()
     assert "structuralquality" in text
@@ -161,12 +180,17 @@ def test_read_forgeloop_context_uses_canonical_host_adapter(monkeypatch, tmp_pat
         calls.append((command, arguments, project_root))
         if arguments[0] == "protocol-info":
             return {
-                "packageVersion": "1.10.1",
+                "packageVersion": "1.11.1",
                 "protocolVersion": 1,
                 "readsProtocol": [1],
                 "writesProtocol": [1],
                 "features": {
                     "integrationApi": {"version": 1},
+                    "repositoryIndex": {
+                        "version": 1,
+                        "required": True,
+                        "providerNeutral": True,
+                    },
                     "adaptiveExecutionProfiles": {"version": 1, "supported": True},
                     "executionProfileContext": {"version": 1, "supported": True},
                 },

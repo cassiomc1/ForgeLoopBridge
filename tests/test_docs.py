@@ -56,6 +56,53 @@ def test_readme_feature_detects_all_forgeloop_164_capabilities():
         assert capability in README
 
 
+def test_current_docs_cover_repository_index_and_search_boundaries():
+    text = f"{README}\n{AUTONOMY}\n{CURRENT_SYNC_RECORD}".lower()
+    for required in (
+        "repositoryindex",
+        "repository index",
+        "repository search",
+        "provider-neutral",
+        "derived",
+        "not evidence",
+        "not completion",
+        "repositorysearch()",
+        "repositoryindexstatus()",
+        "forgeloop_search",
+        "forgeloop://repository/index-status",
+        "persistent-search",
+        "directly",
+        "rg`/`grep`",
+        "independent",
+        "project root",
+        "host policy",
+        "unmanaged engine",
+    ):
+        assert required in text
+
+
+def test_bridge_runtime_does_not_own_repository_search_infrastructure():
+    runtime_files = [ROOT / "main.py", *sorted((ROOT / "bridge_protocol").glob("*.py"))]
+    runtime = "\n".join(path.read_text(encoding="utf-8") for path in runtime_files).lower()
+    for forbidden in (
+        "tgrep",
+        ".forgeloop/repository-index",
+        "engine-state.json",
+        "persistent-transport",
+        "transport.shutdown",
+        "forgeloop socket",
+        "forgeloop named pipe",
+    ):
+        assert forbidden not in runtime
+
+    dependencies = "\n".join(
+        (ROOT / name).read_text(encoding="utf-8")
+        for name in ("requirements.txt", "requirements-dev.txt")
+    ).lower()
+    assert "tgrep" not in dependencies
+    assert "modelcontextprotocol" not in dependencies
+
+
 def test_readme_documents_optional_extension_trust_boundaries():
     text = f"{README}\n{AUTONOMY}".lower()
     for required in (
@@ -87,6 +134,13 @@ def test_readme_rejects_new_bridge_authority_claims():
         "bridge approval creates attested status",
         "engineer approval overrides responsibility scope",
         "package 1.6.4 implies feature support",
+        "bridge manages tgrep",
+        "bridge owns the repository index",
+        "bridge validates repository index",
+        "search results are verification evidence",
+        "search results prove completion",
+        "bridge owns the forgeloop persistent host",
+        "bridge kills forgeloop host",
     ):
         assert forbidden not in text
 
@@ -236,7 +290,7 @@ def test_current_sync_record_documents_verification_isolation():
     assert "execution cwd" in text
 
 
-def test_current_sync_record_is_current_for_forgeloop_110():
+def test_current_sync_record_covers_optional_extension_boundaries():
     current = (ROOT / "FORGELOOPBRIDGE_CURRENT_FORGELOOP_SYNC_UPDATE_PLAN.md").read_text(
         encoding="utf-8"
     )
@@ -292,7 +346,7 @@ def test_observed_package_baseline_is_recorded_without_being_a_contract():
     assert "package version alone" in README.lower()
 
 
-def test_current_docs_cover_forgeloop_110_advisory_and_handoff_boundaries():
+def test_current_docs_cover_advisory_and_handoff_boundaries():
     text = f"{README}\n{AUTONOMY}".lower()
     for required in (
         "package version alone is never a compatibility decision",
@@ -712,6 +766,24 @@ def test_changelog_announces_optional_observer_without_version_bump():
     assert "forgeloop authority boundary" in CHANGELOG.lower()
 
 
+def test_changelog_records_forgeloop_111_repository_index_sync():
+    unreleased = " ".join(
+        CHANGELOG.split("## Unreleased", 1)[1].split("## 2.1.3", 1)[0].split()
+    ).lower()
+    for required in (
+        "baseline to package 1.11.1",
+        "protocol v1",
+        "integration api v1",
+        "repositoryindex",
+        "repository search",
+        "persistent search transport",
+        "no bridge api",
+        "no tgrep dependency",
+        "no new bridge authority",
+    ):
+        assert required in unreleased
+
+
 def test_docs_define_the_observer_launcher_exit_contract():
     """Interrupt semantics are a documented contract, not incidental behavior."""
     for text in (README.lower(), OBSERVER_README.lower()):
@@ -742,7 +814,7 @@ def test_observer_docs_cover_the_launcher_flag_surface():
         assert flag in OBSERVER_README
 
 
-def test_current_docs_cover_forgeloop_1102_ripwire_advisory_boundary():
+def test_current_docs_cover_ripwire_advisory_boundary():
     combined = f"{README}\n{AUTONOMY}\n{CURRENT_SYNC_RECORD}".lower()
     for required in (
         "ripwire",
@@ -762,7 +834,7 @@ def test_current_docs_cover_forgeloop_1102_ripwire_advisory_boundary():
     assert "integration api v1" in combined
 
 
-def test_current_sync_record_notes_patch_internal_hardening():
+def test_current_sync_record_preserves_historical_patch_internal_hardening():
     text = CURRENT_SYNC_RECORD
     lowered = text.lower()
     assert "1.10.2" in text

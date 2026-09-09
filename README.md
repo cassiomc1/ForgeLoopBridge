@@ -34,7 +34,8 @@ The Bridge supports current ForgeLoop observability, diagnostic, durable-action,
 approval, capability-policy, trajectory, workspace-binding, canonical-handoff,
 responsibility-constraint, differential-verification-scope, code-attestation,
 structural-quality, canonicalHandoffs v2, and advisoryContextProviders v1
-capabilities when the active host advertises them.
+capabilities, plus the additive `repositoryIndex` v1 capability, when the
+active host advertises them.
 Package version alone is never a compatibility decision, so no ForgeLoop package
 version is pinned in this section; the observed baseline is recorded in
 `FORGELOOPBRIDGE_CURRENT_FORGELOOP_SYNC_UPDATE_PLAN.md` as an observation only.
@@ -47,6 +48,75 @@ integration response, and the supported version set is declared in code at
 Before creating or resuming ForgeLoop task state, the active execution host must inspect the installed project's public compatibility boundary with `forgeloop protocol-info --json` (or the equivalent official structured integration capability call).
 
 If the host exposes an official ForgeLoop structured integration (such as `@cassiomc1/forgeloop/integration` or the official MCP adapter), prefer it for protocol operations. Otherwise resolve and use the project-local ForgeLoop CLI. Never manually synthesize ForgeLoop-managed lifecycle, claim, recovery, ledger, ownership, or completion state.
+
+### Current compatibility matrix
+
+| Dimension | Bridge boundary | Current ForgeLoop observation |
+| --- | --- | --- |
+| ForgeLoop Protocol | v1 | v1 |
+| Integration API | v1 | v1 |
+| `task/context` schema | v1 | v1 |
+| `repositoryIndex` | additive documented capability | v1 |
+| `canonicalHandoffs` | v2 | v2 |
+| `advisoryContextProviders` | v1 | v1 |
+| ForgeLoop package | informational only | 1.11.1 |
+| Bridge Typed Message Schema | v1 | unchanged |
+
+The package row is an observation, not a compatibility requirement. A current
+host may advertise `repositoryIndex` v1 without changing the Bridge's Protocol
+v1 or Integration API v1 boundary.
+
+### Repository Index and Repository Search
+
+ForgeLoop's `repositoryIndex` v1 is a required operational capability for
+supported Git repositories. It is provider-neutral: ForgeLoop owns the
+canonical Repository Index and its managed backend, while the Bridge remains a
+coordination transport. The Bridge never initializes or repairs index files,
+downloads or starts/stops tgrep, reads native cache formats, infers readiness
+from filesystem presence, or treats index state as lifecycle state.
+
+ForgeLoop exposes one canonical Repository Search contract through multiple
+host-specific surfaces:
+
+- CLI hosts use `forgeloop search` and `forgeloop index-status`.
+- Integration API hosts use direct `repositorySearch(...)` and
+  `repositoryIndexStatus(...)` calls.
+- MCP hosts use `forgeloop_search` and the direct
+  `forgeloop://repository/index-status` resource.
+
+The CLI may optimize search with ForgeLoop's persistent local search host and
+versioned IPC. Integration API and MCP calls use the canonical search service
+directly; they do not need to traverse the CLI's private persistent-search
+transport. Bridge and Worker processes must never connect to that socket or
+named pipe, store its nonce/PID, or manage its ownership, startup, recovery, or
+shutdown. The Bridge server lifetime, a Worker invocation lifetime, the
+ForgeLoop persistent search-host lifetime, and the Repository Index/tgrep
+server lifetime are related but independent.
+
+Repository Search is bounded read-only discovery context, not verification
+evidence, approval, ownership, lifecycle state, or completion authority. A
+`READY` index means operational discovery is available; it does not prove a
+task is complete. A Bridge or harness-side `rg`/`grep` fallback must not be
+represented as satisfying ForgeLoop's canonical Repository Index readiness or
+as a canonical Repository Search result. If ForgeLoop reports an index blocker,
+report the exact canonical status/reason and follow ForgeLoop's index/doctor
+guidance; do not silently fall back, edit managed state, or claim ForgeLoop is
+ready.
+
+The public projections are path-safe. When bounded search summaries or status
+copies are transported through Bridge, keep project-relative paths and omit
+repository roots, managed binary paths, index paths, socket/named-pipe paths,
+and temporary home-directory paths. An unhealthy current index does not rewrite
+historical task evidence or completion truth.
+
+Bridge carries bounded search intent; it is not an arbitrary filesystem-search
+authority. A message such as `search /etc` must still be constrained by the
+canonical ForgeLoop project root, host policy, and ForgeLoop request validation.
+First-time Repository Index setup may need network access for the exact pinned
+managed asset. An unavailable network is a canonical setup blocker, not
+permission to download or invoke an unmanaged search engine. ForgeLoop also
+owns native platform support; Bridge must not turn the current managed asset
+set into its own platform allowlist.
 
 ### Compatibility dimensions & recovery awareness
 
@@ -120,8 +190,9 @@ is actor-reported only.
 
 ### Advisory context and canonical handoffs
 
-ForgeLoop 1.10.2 may advertise the optional `advisoryContextProviders` v1
-capability (introduced in 1.10.0). Its trust contract is:
+ForgeLoop 1.10.0 introduced the optional `advisoryContextProviders` v1
+capability, which current 1.11.x hosts may continue to advertise. Its trust
+contract is:
 
 ```text
 version: 1
@@ -143,15 +214,15 @@ non-authoritative, non-evidence, and non-executable. Bridge has no memory or
 recall endpoint, and a Bridge-side provider adapter requires a separate design
 and release.
 
-ForgeLoop 1.10.2 ships one optional host-injected implementation of that
-capability: the Ripwire advisory adapter (`recallAdvisoryContext` with a
-host-qualified absolute Ripwire path plus an exact expected version,
-registered under the `ripwire` key). It runs shell-free with bounded output,
-validates the version before each query, fails closed on unsafe or malformed
-output, and never changes a task phase or writes `.forgeloop/` state. Its
-ranked signatures are approximate retrieval hints only. Bridge never installs,
-discovers, contacts, or auto-recalls Ripwire; a bounded host summary stays
-ordinary coordination text.
+The Ripwire advisory adapter was introduced in ForgeLoop 1.10.2 and remains
+one optional host-injected implementation of that capability in the current
+1.11.x line (`recallAdvisoryContext` with a host-qualified absolute Ripwire
+path plus an exact expected version, registered under the `ripwire` key). It
+runs shell-free with bounded output, validates the version before each query,
+fails closed on unsafe or malformed output, and never changes a task phase or
+writes `.forgeloop/` state. Its ranked signatures are approximate retrieval
+hints only. Bridge never installs, discovers, contacts, or auto-recalls
+Ripwire; a bounded host summary stays ordinary coordination text.
 
 When `canonicalHandoffs` is advertised, Bridge understands the v2 capability
 contract and carries only the opaque canonical reference. Handoffs are
@@ -307,6 +378,32 @@ Those answers originate solely from canonical ForgeLoop operations.
 ForgeLoop's official Model Context Protocol (MCP) adapter is an optional, local-first execution interface.
 - ForgeLoop MCP HTTP is strictly loopback-only (`127.0.0.1`) and must never be exposed remotely.
 - ForgeLoopBridge is a coordination server that can be deployed on local networks or behind a reverse proxy with HTTPS.
+
+### Repository discovery workflow
+
+The Worker first reads `protocol-info`, then feature-detects the optional
+discovery capability when it needs repository search:
+
+```text
+protocol-info
+     |
+     +--> repositoryIndex advertised?
+              |
+              +--> canonical index status/search when needed
+```
+
+This is an optional discovery branch, not a lifecycle dependency for every
+Bridge phase. The three process lifetimes remain independent:
+
+```text
+ForgeLoopBridge server ── coordination transport lifetime
+Worker invocation      ── bounded implementation/review lifetime
+ForgeLoop search host  ── ForgeLoop-owned CLI search optimization lifetime
+```
+
+The Worker may exit while the Bridge server and ForgeLoop search host remain
+alive. ForgeLoop owns the search host PID, nonce, IPC endpoint, ownership
+proof, recovery, idle shutdown, and process termination.
 
 ---
 
@@ -537,12 +634,19 @@ Read-only verification sequence (when your host exposes read capabilities):
 1. Protocol compatibility: `forgeloop protocol-info --json`
 2. Task identity: `forgeloop task-show --task <task-id> --json`
 3. Task status: `forgeloop status --task <task-id> --json`
-4. Contract, continuity, and canonical ownership projection when relevant
-5. When advertised, read-only action/approval/policy projections and metrics/evaluations
-6. Diagnostic projections when relevant: `inspect`, `history`, `trace`, `reflect`
-7. Audit/completion result: `forgeloop audit --task <task-id> --json`
-8. Terminal next action: `forgeloop next --task <task-id> --json`
-9. PR contents, contract compliance, and publication expectations
+4. When `repositoryIndex` is advertised and discovery is relevant, inspect
+   `forgeloop index-status --json` or the equivalent official structured status
+   resource; use canonical Repository Search for review context only
+5. Contract, continuity, and canonical ownership projection when relevant
+6. When advertised, read-only action/approval/policy projections and metrics/evaluations
+7. Diagnostic projections when relevant: `inspect`, `history`, `trace`, `reflect`
+8. Audit/completion result: `forgeloop audit --task <task-id> --json`
+9. Terminal next action: `forgeloop next --task <task-id> --json`
+10. PR contents, contract compliance, and publication expectations
+
+An index status or search hit is operational/discovery context, not verification
+evidence. A `READY` Repository Index does not prove acceptance criteria, and an
+unhealthy index does not retroactively invalidate a previously valid task.
 
 When reviewing verification evidence:
 - Inspect whether `verificationExecutionIsolation` is advertised.
@@ -640,10 +744,26 @@ Mandatory workflow for every instruction from the Engineer:
    integration, and feature-detect diagnostics, durable actions, capability policy,
    durable approvals, `verificationExecutionIsolation`, `workspaceBinding`,
    `canonicalHandoffs` v2, `advisoryContextProviders` v1,
+   `repositoryIndex` v1,
    `responsibilityConstraints`,
    `differentialVerificationScope`, and `codeAttestation`. Do not infer any
    feature from the package version alone.
    Fail closed if the installed compatibility boundary cannot safely read/write protocol state.
+
+   When `repositoryIndex` is advertised, preserve ForgeLoop's canonical
+   operational-readiness boundary. Use the official Repository Search surface
+   when discovery is useful, and use the host-appropriate path: direct
+   `repositorySearch()`/`repositoryIndexStatus()` through Integration API,
+   `forgeloop_search`/`forgeloop://repository/index-status` through MCP, or
+   `forgeloop search`/`forgeloop index-status` through the CLI. Do not inspect
+   tgrep cache files, download or start/kill tgrep directly, or connect to the
+   CLI persistent-search socket/named pipe. Do not claim that `rg`/`grep`
+   fallback satisfies canonical Repository Index readiness. Search results are
+   discovery context, never evidence or completion.
+
+   If ForgeLoop reports a required Repository Index blocker, report the exact
+   canonical status/reason and follow its index/doctor guidance. Do not repair
+   managed state or reinterpret a fallback search as ForgeLoop readiness.
 
    When `workspaceBinding` is advertised, inspect `workspace-status` for bound
    tasks and use canonical `workspace-bind` only when the workflow requires it.
@@ -662,10 +782,10 @@ Mandatory workflow for every instruction from the Engineer:
    opt-in, provider-neutral, Integration API-only context. It is not persisted
    by ForgeLoop, authoritative, evidence, or executable. Bridge never creates a
    provider, auto-recalls context, or stores provider output as canonical state.
-   The ForgeLoop 1.10.2 Ripwire adapter is one such host-injected provider
-   (absolute path plus exact expected version, explicit
-   `recallAdvisoryContext`); treat its ranked signatures as approximate
-   non-authoritative hints only.
+   The Ripwire advisory adapter was introduced in ForgeLoop 1.10.2 and remains
+   one optional host-injected provider in the current 1.11.x line (absolute
+   path plus exact expected version, explicit `recallAdvisoryContext`); treat
+   its ranked signatures as approximate non-authoritative hints only.
 
    When available, use `forgeloop reconcile-continuity --task <task-id> --json`
    as a read-only resume diagnostic. Lint warnings are non-authoritative
