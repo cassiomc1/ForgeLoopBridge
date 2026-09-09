@@ -160,3 +160,14 @@ def test_browser_has_no_host_authority_secret_controls():
     assert "host_grant_token" not in lowered
     assert "authority_secret" not in lowered
     assert "approval_secret" not in lowered
+
+
+def test_frontend_exposes_accessible_persistent_light_dark_theme_toggle():
+    assert 'id="theme-toggle"' in INDEX
+    assert "localStorage.getItem('flb_theme')" in INDEX
+    assert "localStorage.setItem('flb_theme', nextTheme)" in INDEX
+    assert "prefers-color-scheme: dark" in INDEX
+    assert ":root.dark" in INDEX
+    assert "aria-pressed" in INDEX
+    assert "Switch to" in INDEX
+    assert "applyTheme(document.documentElement.dataset.theme || 'light', false)" in INDEX

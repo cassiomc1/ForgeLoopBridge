@@ -8,14 +8,62 @@
   <script src="/static/vendor/purify.min.js"></script>
   <style>
     :root {
-      --bg: #0d1117;
-      --surface: #161b22;
-      --border: #30363d;
-      --text: #e6edf3;
-      --text-muted: #8b949e;
-      --engineer: #58a6ff;
-      --worker: #3fb950;
-      --accent: #f78166;
+      --background: #fafafa;
+      --foreground: #18181b;
+      --card: #ffffff;
+      --card-foreground: #18181b;
+      --muted: #f4f4f5;
+      --muted-foreground: #71717a;
+      --border: #e4e4e7;
+      --input: #e4e4e7;
+      --ring: #a1a1aa;
+      --primary: #18181b;
+      --primary-foreground: #fafafa;
+      --accent: #2563eb;
+      --accent-foreground: #eff6ff;
+      --destructive: #dc2626;
+      --engineer: #2563eb;
+      --worker: #16a34a;
+      --purple: #7c3aed;
+      --warning: #c2410c;
+      --info: #0369a1;
+      --typed: #0369a1;
+      --bg: var(--background);
+      --surface: var(--card);
+      --text: var(--foreground);
+      --text-muted: var(--muted-foreground);
+      --header: rgba(24, 24, 27, 0.03);
+      --pre: #f4f4f5;
+      --overlay: rgba(250, 250, 250, 0.95);
+      --radius: 0.625rem;
+      color-scheme: light;
+    }
+
+    :root.dark {
+      --background: #09090b;
+      --foreground: #fafafa;
+      --card: #18181b;
+      --card-foreground: #fafafa;
+      --muted: #27272a;
+      --muted-foreground: #a1a1aa;
+      --border: #27272a;
+      --input: #3f3f46;
+      --ring: #71717a;
+      --primary: #fafafa;
+      --primary-foreground: #18181b;
+      --accent: #60a5fa;
+      --accent-foreground: #172554;
+      --destructive: #f87171;
+      --engineer: #60a5fa;
+      --worker: #4ade80;
+      --purple: #c4b5fd;
+      --warning: #fdba74;
+      --info: #7dd3fc;
+      --typed: #93c5fd;
+      --header: rgba(255, 255, 255, 0.04);
+      --pre: #09090b;
+      --overlay: rgba(9, 9, 11, 0.95);
+      color-scheme: dark;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -28,6 +76,7 @@
       min-height: 100vh;
       display: flex;
       flex-direction: column;
+      transition: background-color 160ms ease, color 160ms ease;
     }
 
     header {
@@ -73,28 +122,29 @@
     .badge.worker { color: var(--worker); border-color: var(--worker); }
     .badge.task { color: var(--text-muted); border-color: var(--border); font-family: ui-monospace, monospace; text-transform: none; }
     .badge.type { color: var(--accent); border-color: var(--accent); }
-    .badge.action { color: #d2a8ff; border-color: #d2a8ff; font-family: ui-monospace, monospace; text-transform: none; }
-    .badge.approval { color: #ffa657; border-color: #ffa657; font-family: ui-monospace, monospace; text-transform: none; }
-    .badge.next { color: #79c0ff; border-color: #79c0ff; font-family: ui-monospace, monospace; text-transform: none; }
-    .badge.reason { color: #ff7b72; border-color: #ff7b72; font-family: ui-monospace, monospace; text-transform: none; }
-    .badge.typed { color: #a5d6ff; border-color: #a5d6ff; }
-    .badge.integrity-invalid { color: #ff7b72; border-color: #ff7b72; font-family: ui-monospace, monospace; text-transform: none; }
-    .badge.correlation { color: #d2a8ff; border-color: #d2a8ff; font-family: ui-monospace, monospace; text-transform: none; }
-    .badge.reply { color: #ffa657; border-color: #ffa657; font-family: ui-monospace, monospace; text-transform: none; }
+    .badge.action { color: var(--purple); border-color: var(--purple); font-family: ui-monospace, monospace; text-transform: none; }
+    .badge.approval { color: var(--warning); border-color: var(--warning); font-family: ui-monospace, monospace; text-transform: none; }
+    .badge.next { color: var(--info); border-color: var(--info); font-family: ui-monospace, monospace; text-transform: none; }
+    .badge.reason { color: var(--destructive); border-color: var(--destructive); font-family: ui-monospace, monospace; text-transform: none; }
+    .badge.typed { color: var(--typed); border-color: var(--typed); }
+    .badge.integrity-invalid { color: var(--destructive); border-color: var(--destructive); font-family: ui-monospace, monospace; text-transform: none; }
+    .badge.correlation { color: var(--purple); border-color: var(--purple); font-family: ui-monospace, monospace; text-transform: none; }
+    .badge.reply { color: var(--warning); border-color: var(--warning); font-family: ui-monospace, monospace; text-transform: none; }
     .hidden { display: none !important; }
 
     .task-filter {
       background: var(--bg);
       color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 6px;
+      border: 1px solid var(--input);
+      border-radius: var(--radius);
       padding: 3px 8px;
       font-size: 0.75rem;
       font-family: inherit;
     }
     .task-filter:focus {
       outline: none;
-      border-color: var(--engineer);
+      border-color: var(--ring);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 25%, transparent);
     }
 
     .filter-input {
@@ -112,15 +162,16 @@
     .meta-input {
       background: var(--bg);
       color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 6px;
+      border: 1px solid var(--input);
+      border-radius: var(--radius);
       padding: 4px 8px;
       font-size: 0.8rem;
       font-family: inherit;
     }
     .meta-input:focus {
       outline: none;
-      border-color: var(--engineer);
+      border-color: var(--ring);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 25%, transparent);
     }
 
     .typed-composer {
@@ -188,7 +239,7 @@
       align-items: center;
       justify-content: space-between;
       padding: 8px 14px;
-      background: rgba(255,255,255,0.03);
+      background: var(--header);
       border-bottom: 1px solid var(--border);
       font-size: 0.8rem;
     }
@@ -251,7 +302,7 @@
     }
 
     .message-body pre {
-      background: #0d1117;
+      background: var(--pre);
       border: 1px solid var(--border);
       border-radius: 6px;
       padding: 12px;
@@ -281,7 +332,7 @@
     .unlock-overlay {
       position: fixed;
       inset: 0;
-      background: rgba(13,17,23,0.95);
+      background: var(--overlay);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -290,7 +341,7 @@
     .unlock-box {
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 12px;
+      border-radius: calc(var(--radius) + 0.25rem);
       padding: 32px;
       width: min(420px, 90vw);
       display: flex;
@@ -302,17 +353,18 @@
       background: var(--bg);
       color: var(--text);
       border: 1px solid var(--border);
-      border-radius: 6px;
+      border-radius: var(--radius);
       padding: 10px 12px;
       font-size: 0.95rem;
       font-family: ui-monospace, monospace;
     }
     .unlock-box input:focus {
       outline: none;
-      border-color: var(--engineer);
+      border-color: var(--ring);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 25%, transparent);
     }
     .unlock-error {
-      color: #f85149;
+      color: var(--destructive);
       font-size: 0.85rem;
       min-height: 1.2em;
     }
@@ -356,7 +408,7 @@
       background: var(--bg);
       color: var(--text);
       border: 1px solid var(--border);
-      border-radius: 6px;
+      border-radius: var(--radius);
       padding: 10px 12px;
       resize: vertical;
       line-height: 1.4;
@@ -364,14 +416,15 @@
 
     textarea:focus {
       outline: none;
-      border-color: var(--engineer);
+      border-color: var(--ring);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 25%, transparent);
     }
 
     button.primary {
-      background: var(--accent);
-      color: #0d1117;
+      background: var(--primary);
+      color: var(--primary-foreground);
       border: none;
-      border-radius: 6px;
+      border-radius: var(--radius);
       padding: 8px 18px;
       font-weight: 600;
       cursor: pointer;
@@ -401,7 +454,7 @@
       background: var(--surface);
       color: var(--text-muted);
       border: 1px solid var(--border);
-      border-radius: 6px;
+      border-radius: var(--radius);
       padding: 6px 16px;
       font-size: 0.8rem;
       cursor: pointer;
@@ -415,6 +468,35 @@
       opacity: 0.5;
       cursor: not-allowed;
     }
+
+    .theme-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 5px 9px;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+    }
+    .theme-toggle:hover {
+      background: var(--muted);
+      color: var(--text);
+      border-color: var(--ring);
+    }
+    .theme-toggle:focus-visible,
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible,
+    textarea:focus-visible,
+    summary:focus-visible {
+      outline: 2px solid var(--ring);
+      outline-offset: 2px;
+    }
+    .theme-icon { font-size: 0.9rem; line-height: 1; }
 
     @media (max-width: 600px) {
       header { padding: 10px 12px; }
@@ -482,6 +564,10 @@
       <span>Msgs: <strong id="total">0</strong></span>
       <span>Last: <strong id="last-role">—</strong></span>
       <span class="conn-status polling" id="conn-status">connecting…</span>
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-pressed="false" aria-label="Switch to dark theme" title="Switch to dark theme">
+        <span class="theme-icon" aria-hidden="true">☾</span>
+        <span class="theme-label">Light</span>
+      </button>
       <button class="delete-btn" id="lock-btn" title="Disconnect (forget token)">⏏</button>
     </div>
   </header>
@@ -552,6 +638,19 @@
   </div>
 
   <script>
+    (() => {
+      try {
+        const stored = localStorage.getItem('flb_theme');
+        const theme = stored === 'light' || stored === 'dark'
+          ? stored
+          : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.classList.toggle('dark', theme === 'dark');
+      } catch (_) {
+        document.documentElement.dataset.theme = 'light';
+      }
+    })();
+
     const board = document.getElementById('board');
     const emptyState = document.getElementById('empty-state');
     let token = sessionStorage.getItem('flb_token') || '';
@@ -567,6 +666,25 @@
     let currentApprovalFilter = '';
     let currentTypedKindFilter = '';
     let currentCorrelationFilter = '';
+
+    function applyTheme(theme, persist = true) {
+      const nextTheme = theme === 'dark' ? 'dark' : 'light';
+      document.documentElement.dataset.theme = nextTheme;
+      document.documentElement.classList.toggle('dark', nextTheme === 'dark');
+      if (persist) {
+        try {
+          localStorage.setItem('flb_theme', nextTheme);
+        } catch (_) { /* Theme still applies when storage is unavailable. */ }
+      }
+      const toggle = document.getElementById('theme-toggle');
+      if (!toggle) return;
+      const targetTheme = nextTheme === 'dark' ? 'light' : 'dark';
+      toggle.setAttribute('aria-pressed', String(nextTheme === 'dark'));
+      toggle.setAttribute('aria-label', `Switch to ${targetTheme} theme`);
+      toggle.title = `Switch to ${targetTheme} theme`;
+      toggle.querySelector('.theme-icon').textContent = nextTheme === 'dark' ? '☀' : '☾';
+      toggle.querySelector('.theme-label').textContent = nextTheme === 'dark' ? 'Dark' : 'Light';
+    }
 
     const authHeaders = () => ({ 'Authorization': 'Bearer ' + token });
 
@@ -1181,6 +1299,9 @@
       if (e.key === 'Enter') document.getElementById('unlock-btn').click();
     });
     document.getElementById('lock-btn').addEventListener('click', lock);
+    document.getElementById('theme-toggle').addEventListener('click', () => {
+      applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+    });
     document.getElementById('post-btn').addEventListener('click', postMessage);
     document.getElementById('load-older').addEventListener('click', loadOlder);
     document.getElementById('content').addEventListener('keydown', (e) => {
@@ -1210,6 +1331,8 @@
       currentCorrelationFilter = e.target.value.trim().toLowerCase();
       applyFilters();
     });
+
+    applyTheme(document.documentElement.dataset.theme || 'light', false);
 
     // Boot: resume session or wait for unlock
     if (token && myRole) {
