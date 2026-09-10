@@ -15,16 +15,31 @@ or the equivalent official structured integration capability response.
 ```text
 Protocol compatibility target: ForgeLoop Protocol v1
 Integration API compatibility target: Integration API v1
-Observed synchronization baseline: ForgeLoop package 1.11.1
+Observed synchronization baseline: ForgeLoop package 1.12.0
 ```
 
 The package baseline is informational only. Capability support comes from the
 canonical protocol-info or structured integration response, never from a
 package version comparison.
 
-## ForgeLoop 1.11.x — Repository Index and Persistent Search Transport
+## ForgeLoop 1.12.0 — Flutter specialist and deterministic project routing
 
-The published ForgeLoop `1.11.1` public boundary remains Protocol v1 and
+The published ForgeLoop `1.12.0` public boundary remains Protocol v1 and
+Integration API v1. ForgeLoop now owns deterministic Flutter project
+detection and the canonical `flutter` specialist guide. ForgeLoop emits the
+selected guide IDs in canonical route/task context; Bridge accepts and
+transports those ordered bounded string IDs, including future additive IDs.
+
+Bridge does not detect Flutter projects, inspect the Flutter SDK or Dart
+toolchain, select or reorder guides, or infer verification, authority,
+evidence, release readiness, or completion from a selected guide. A
+`flutter` ID means only that canonical ForgeLoop routing selected that guide;
+the active host and ForgeLoop remain responsible for the guide content and
+all lifecycle and verification decisions.
+
+## Historical ForgeLoop 1.11.x — Repository Index and Persistent Search Transport
+
+The published ForgeLoop `1.11.1` public boundary remained Protocol v1 and
 Integration API v1. ForgeLoop `1.11.0` introduced the functional Repository
 Index, provider-neutral Repository Search, managed tgrep backend, search and
 `index-*` CLI commands, Integration API search/status operations, the MCP
@@ -44,7 +59,7 @@ Current compatibility matrix:
 | `repositoryIndex` | additive documented capability | v1 |
 | `canonicalHandoffs` | v2 | v2 |
 | `advisoryContextProviders` | v1 | v1 |
-| ForgeLoop package | informational only | 1.11.1 |
+| ForgeLoop package | informational only | 1.12.0 |
 | Bridge Typed Message Schema | v1 | unchanged |
 
 ForgeLoop owns the required operational Repository Index and its
@@ -165,7 +180,7 @@ Relevant failures include `E_HANDOFF_INVALID`,
 ### Advisory context providers
 
 ForgeLoop 1.10.0 introduced the optional `advisoryContextProviders` v1
-capability, which current 1.11.x hosts may continue to advertise with this
+capability, which current 1.12.0 hosts may continue to advertise with this
 trust contract:
 
 ```text
@@ -188,7 +203,7 @@ non-evidence, and non-executable. There is no Bridge memory or recall endpoint;
 a Bridge-side provider adapter requires a separate design and release.
 
 The Ripwire advisory context adapter was introduced in ForgeLoop 1.10.2 and
-remains one optional host-injected implementation in the current 1.11.x line
+remains one optional host-injected implementation in the current 1.12.0 line
 (`createRipwireAdvisoryContextProvider`, `recallAdvisoryContext`,
 `docs/RIPWIRE_ADAPTER.md`). The host supplies an absolute Ripwire executable
 path plus an exact expected version, registers the provider under the `ripwire`

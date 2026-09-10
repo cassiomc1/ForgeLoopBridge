@@ -457,7 +457,7 @@ def test_worker_poller_documents_adaptive_context_boundary():
 
 def test_pyproject_version_matches_app_version():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'version = "2.2.0"' in pyproject
+    assert 'version = "2.2.1"' in pyproject
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     assert "## 2.2.0 - 2026-09-09" in changelog
     assert "## 2.1.3 - 2026-09-02" in changelog
@@ -472,6 +472,9 @@ def test_current_sync_record_documents_stream_close_before_rest_recovery():
     assert "explicitly closes the affected stream" in current
     assert "fresh SSE ticket" in current
     assert "bridge_api_version: 2.2.0" in current
+    assert "Observed synchronization baseline: ForgeLoop package 1.12.0" in current
+    assert "deterministic Flutter project" in current
+    assert "selected guide IDs" in current
 
 
 def test_readme_documents_realtime_topology_and_worker_start_policy():
@@ -784,6 +787,26 @@ def test_changelog_records_forgeloop_111_repository_index_sync():
         "no new bridge authority",
     ):
         assert required in release_notes
+
+
+def test_changelog_records_forgeloop_120_flutter_routing_boundary():
+    changelog = " ".join(
+        (ROOT / "CHANGELOG.md").read_text(encoding="utf-8").lower().split()
+    )
+    unreleased = changelog.split("## 2.2.0", 1)[0]
+    for required in (
+        "baseline to package `1.12.0`",
+        "ea362768dacfe885b1cc2729dd32ee661d60008f",
+        "protocol v1",
+        "integration api v1",
+        "deterministic flutter guide selection",
+        "selectedguideids",
+        "unknown additive ids",
+        "without detecting projects",
+        "bridge api `2.2.0`",
+        "typed message schema v1",
+    ):
+        assert required in unreleased
 
 
 def test_docs_define_the_observer_launcher_exit_contract():

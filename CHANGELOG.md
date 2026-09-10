@@ -2,7 +2,21 @@
 
 ## Unreleased
 
-Future changes will be recorded here.
+### Changed
+
+- Synchronized the current observed ForgeLoop baseline to package `1.12.0` at
+  commit `ea362768dacfe885b1cc2729dd32ee661d60008f` while preserving Protocol
+  v1, Integration API v1, Bridge API `2.2.0`, and Typed Message Schema v1.
+- Documented ForgeLoop-owned deterministic Flutter guide selection. Bridge
+  transports canonical ordered `selectedGuideIds` values, including unknown
+  additive IDs, without detecting projects, selecting guides, or treating a
+  selected guide as evidence, authority, verification, or completion.
+
+### Fixed
+
+- Validate canonical `selectedGuideIds` as a bounded list of non-empty strings
+  before exposing it to Worker coordination code. No ForgeLoop or Flutter
+  runtime dependency was added.
 
 ## 2.2.0 - 2026-09-09
 

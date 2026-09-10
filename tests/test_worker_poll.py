@@ -180,7 +180,7 @@ def test_read_forgeloop_context_uses_canonical_host_adapter(monkeypatch, tmp_pat
         calls.append((command, arguments, project_root))
         if arguments[0] == "protocol-info":
             return {
-                "packageVersion": "1.11.1",
+                "packageVersion": "1.12.0",
                 "protocolVersion": 1,
                 "readsProtocol": [1],
                 "writesProtocol": [1],
@@ -212,7 +212,7 @@ def test_read_forgeloop_context_uses_canonical_host_adapter(monkeypatch, tmp_pat
             "objective": "Build the page.",
             "deliverables": ["index.html"],
             "constraints": ["No external services."],
-            "selectedGuideIds": ["clean"],
+            "selectedGuideIds": ["flutter", "clean", "future-specialist"],
             "verificationRequirements": [{"id": "html"}],
             "contextPolicy": {
                 "contextDepth": "relevant",
@@ -245,6 +245,11 @@ def test_read_forgeloop_context_uses_canonical_host_adapter(monkeypatch, tmp_pat
 
     assert consumed["status"] == "CANONICAL"
     assert consumed["execution_profile"]["resolved"] == "balanced"
+    assert consumed["context"]["selected_guide_ids"] == [
+        "flutter",
+        "clean",
+        "future-specialist",
+    ]
     assert calls[0][0] == ["forgeloop", "--local"]
     assert calls[0][1][:2] == ["protocol-info", "--json"]
     assert calls[1][0] == ["context-adapter", "--fixed"]

@@ -1,3 +1,5 @@
+import pytest
+
 from bridge_protocol.forgeloop_context import (
     BOUNDARY_SUPPORTED,
     BOUNDARY_UNDECLARED,
@@ -16,7 +18,7 @@ from bridge_protocol.forgeloop_context import (
 def capabilities() -> dict:
     """Mirror the version-bearing shape of a real `protocol-info --json` payload."""
     return {
-        "packageVersion": "1.11.1",
+        "packageVersion": "1.12.0",
         "protocolVersion": 1,
         "readsProtocol": [1],
         "writesProtocol": [1],
@@ -103,6 +105,53 @@ def test_consumer_uses_resolved_profile_and_bounded_policy():
     assert consumed["invariants"]["lifecyclePhaseSkippingAllowed"] is False
 
 
+def test_selected_guide_ids_preserve_canonical_flutter_and_unknown_ordered_values():
+    context = canonical_context()
+    context["selectedGuideIds"] = ["flutter", "clean", "future-specialist"]
+
+    consumed = consume_task_context(capabilities(), context, expected_task_id="task-context-1")
+
+    assert consumed["status"] == "CANONICAL"
+    assert consumed["context"]["selected_guide_ids"] == [
+        "flutter",
+        "clean",
+        "future-specialist",
+    ]
+
+
+def test_selected_guide_ids_do_not_change_authority_or_verification_boundary():
+    baseline = consume_task_context(capabilities(), canonical_context())
+    context = canonical_context()
+    context["selectedGuideIds"] = ["flutter"]
+
+    consumed = consume_task_context(capabilities(), context)
+
+    assert consumed["status"] == baseline["status"] == "CANONICAL"
+    assert consumed["source"] == baseline["source"] == "FORGELOOP_CANONICAL"
+    assert consumed["execution_profile"] == baseline["execution_profile"]
+    assert consumed["context_policy"] == baseline["context_policy"]
+    assert consumed["phase"] == baseline["phase"]
+    assert consumed["next_action"] == baseline["next_action"]
+    assert consumed["context"]["verification_requirements"] == baseline["context"][
+        "verification_requirements"
+    ]
+    assert consumed["invariants"] == baseline["invariants"]
+
+
+@pytest.mark.parametrize(
+    "selected_guide_ids",
+    [[123], [""], ["x" * 10_001]],
+)
+def test_malformed_selected_guide_ids_fail_closed(selected_guide_ids):
+    context = canonical_context()
+    context["selectedGuideIds"] = selected_guide_ids
+
+    consumed = consume_task_context(capabilities(), context)
+
+    assert consumed["status"] == "UNAVAILABLE"
+    assert "selectedGuideIds" in consumed["reason"]
+
+
 def test_older_forgeloop_falls_back_to_balanced_compatibility_only():
     consumed = consume_task_context({}, canonical_context())
     assert consumed == balanced_compatibility_context(
@@ -144,7 +193,7 @@ def test_real_published_boundary_is_supported():
 
 def test_repository_index_is_an_additive_unconsumed_capability():
     info = capabilities()
-    info["packageVersion"] = "1.11.1"
+    info["packageVersion"] = "1.12.0"
     info["features"]["repositoryIndex"] = {
         "version": 1,
         "required": True,

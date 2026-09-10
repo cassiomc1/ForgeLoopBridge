@@ -15,8 +15,9 @@
 
 Designed to coordinate alongside [ForgeLoop](https://github.com/cassiomc1/forgeloop) — a portable engineering protocol for AI coding agents.
 
-Current Bridge release: **2.2.0**. The typed message schema remains v1, and
-ForgeLoop compatibility remains Protocol v1 / Integration API v1.
+Current Bridge release: **2.2.1**. The Bridge API remains **2.2.0**, the typed
+message schema remains v1, and ForgeLoop compatibility remains Protocol v1 /
+Integration API v1.
 
 - **Engineer** (e.g. Grok / LLM) → defines intent, acceptance criteria, reviews PRs, and performs read-only canonical verification.
 - **Worker** (e.g. OpenCode / Cursor / local agent) → discovers tasks, executes implementation following the ForgeLoop protocol, opens PRs, and reports status.
@@ -59,7 +60,7 @@ If the host exposes an official ForgeLoop structured integration (such as `@cass
 | `repositoryIndex` | additive documented capability | v1 |
 | `canonicalHandoffs` | v2 | v2 |
 | `advisoryContextProviders` | v1 | v1 |
-| ForgeLoop package | informational only | 1.11.1 |
+| ForgeLoop package | informational only | 1.12.0 |
 | Bridge Typed Message Schema | v1 | unchanged |
 
 The package row is an observation, not a compatibility requirement. A current
@@ -177,7 +178,13 @@ invariants; the Bridge does not classify work, lower a safety floor, skip a
 lifecycle phase, or treat the Engineer's Markdown as authority. Older hosts
 receive the explicit balanced compatibility projection. An advertised but
 unavailable or malformed projection is reported as unavailable and does not
-become a guessed light profile.
+become a guessed light profile. When ForgeLoop 1.12.0 selects the canonical
+`flutter` specialist guide, the Bridge preserves the ordered
+`selectedGuideIds` values in the task/context projection, including unknown
+future additive IDs. The Bridge does not detect Flutter projects, inspect the
+Flutter SDK or Dart toolchain, select or reorder guides, or infer verification,
+authority, evidence, release readiness, or completion from a selected guide.
+`flutter` means only that canonical ForgeLoop routing selected that guide.
 
 Typed `STATUS_UPDATE` payloads may carry `execution_profile`,
 `context_policy`, and `context_usage`. Context usage is optional host
@@ -191,7 +198,7 @@ is actor-reported only.
 ### Advisory context and canonical handoffs
 
 ForgeLoop 1.10.0 introduced the optional `advisoryContextProviders` v1
-capability, which current 1.11.x hosts may continue to advertise. Its trust
+capability, which current 1.12.0 hosts may continue to advertise. Its trust
 contract is:
 
 ```text
@@ -216,7 +223,7 @@ and release.
 
 The Ripwire advisory adapter was introduced in ForgeLoop 1.10.2 and remains
 one optional host-injected implementation of that capability in the current
-1.11.x line (`recallAdvisoryContext` with a host-qualified absolute Ripwire
+1.12.0 line (`recallAdvisoryContext` with a host-qualified absolute Ripwire
 path plus an exact expected version, registered under the `ripwire` key). It
 runs shell-free with bounded output, validates the version before each query,
 fails closed on unsafe or malformed output, and never changes a task phase or
@@ -784,7 +791,7 @@ Mandatory workflow for every instruction from the Engineer:
    by ForgeLoop, authoritative, evidence, or executable. Bridge never creates a
    provider, auto-recalls context, or stores provider output as canonical state.
    The Ripwire advisory adapter was introduced in ForgeLoop 1.10.2 and remains
-   one optional host-injected provider in the current 1.11.x line (absolute
+   one optional host-injected provider in the current 1.12.0 line (absolute
    path plus exact expected version, explicit `recallAdvisoryContext`); treat
    its ranked signatures as approximate non-authoritative hints only.
 
