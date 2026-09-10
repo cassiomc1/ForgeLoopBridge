@@ -1,5 +1,6 @@
 import json
 import re
+from hashlib import sha256
 from pathlib import Path
 
 from bridge_protocol.forgeloop_context import (
@@ -15,6 +16,13 @@ AUTONOMY = (ROOT / "examples" / "AUTONOMY.md").read_text(encoding="utf-8")
 CURRENT_SYNC_RECORD = (
     ROOT / "FORGELOOPBRIDGE_CURRENT_FORGELOOP_SYNC_UPDATE_PLAN.md"
 ).read_text(encoding="utf-8")
+HISTORICAL_220_SHA256 = "2a866876e20513fcf520a0608231af615f848ec92a46c7bd5d1fa956f2e60889"
+
+
+def changelog_section(text: str, heading: str) -> str:
+    start = text.index(heading)
+    next_heading = text.find("\n## ", start + len(heading))
+    return text[start:] if next_heading == -1 else text[start:next_heading]
 
 
 def test_readme_requires_protocol_handshake():
@@ -459,6 +467,8 @@ def test_pyproject_version_matches_app_version():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'version = "2.2.1"' in pyproject
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "## Unreleased" in changelog
+    assert "## 2.2.1 - 2026-09-10" in changelog
     assert "## 2.2.0 - 2026-09-09" in changelog
     assert "## 2.1.3 - 2026-09-02" in changelog
     assert "## 2.1.2 - 2026-08-30" in changelog
@@ -790,10 +800,10 @@ def test_changelog_records_forgeloop_111_repository_index_sync():
 
 
 def test_changelog_records_forgeloop_120_flutter_routing_boundary():
-    changelog = " ".join(
-        (ROOT / "CHANGELOG.md").read_text(encoding="utf-8").lower().split()
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    release = " ".join(
+        changelog_section(changelog, "## 2.2.1 - 2026-09-10").lower().split()
     )
-    unreleased = changelog.split("## 2.2.0", 1)[0]
     for required in (
         "baseline to package `1.12.0`",
         "ea362768dacfe885b1cc2729dd32ee661d60008f",
@@ -806,7 +816,19 @@ def test_changelog_records_forgeloop_120_flutter_routing_boundary():
         "bridge api `2.2.0`",
         "typed message schema v1",
     ):
-        assert required in unreleased
+        assert required in release
+
+
+def test_changelog_keeps_unreleased_for_future_work_and_220_historical():
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    unreleased = changelog_section(changelog, "## Unreleased")
+    release = changelog_section(changelog, "## 2.2.1 - 2026-09-10")
+    historical = changelog_section(changelog, "## 2.2.0 - 2026-09-09")
+
+    assert "Future changes will be recorded here." in unreleased
+    assert "1.12.0" not in unreleased
+    assert "1.12.0" in release
+    assert sha256(historical.encode()).hexdigest() == HISTORICAL_220_SHA256
 
 
 def test_docs_define_the_observer_launcher_exit_contract():
