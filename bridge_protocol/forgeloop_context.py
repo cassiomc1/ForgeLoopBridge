@@ -205,6 +205,20 @@ def _bounded_list(value: Any, label: str) -> list[Any]:
     return deepcopy(value)
 
 
+def _bounded_string_list(value: Any, label: str) -> list[str]:
+    """Copy a bounded ordered list whose entries are canonical string IDs."""
+    if not isinstance(value, list) or len(value) > MAX_CONTEXT_LIST:
+        raise ValueError(f"{label} must be a bounded list")
+    if any(
+        not isinstance(entry, str)
+        or not entry.strip()
+        or len(entry) > MAX_CONTEXT_TEXT
+        for entry in value
+    ):
+        raise ValueError(f"{label} must contain only bounded non-empty strings")
+    return deepcopy(value)
+
+
 def _canonical_policy(raw: Any) -> ContextPolicyProjection:
     if not isinstance(raw, dict):
         raise ValueError("canonical task/context is missing contextPolicy")
@@ -251,7 +265,10 @@ def _canonical_context(task_context: dict[str, Any], expected_task_id: str | Non
     objective = _bounded_text(task_context.get("objective"), "objective", nullable=True)
     deliverables = _bounded_list(task_context.get("deliverables", []), "deliverables")
     constraints = _bounded_list(task_context.get("constraints", []), "constraints")
-    selected_guides = _bounded_list(task_context.get("selectedGuideIds", []), "selectedGuideIds")
+    selected_guides = _bounded_string_list(
+        task_context.get("selectedGuideIds", []),
+        "selectedGuideIds",
+    )
     requirements = _bounded_list(
         task_context.get("verificationRequirements", []),
         "verificationRequirements",

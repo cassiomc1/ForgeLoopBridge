@@ -20,15 +20,21 @@ workflow:
 3. When `FORGELOOP_CONTEXT_COMMAND` is configured, read the canonical
    `task/context` projection through that host adapter; use its resolved profile
    and bounded policy, and never classify the task locally.
-4. Discover existing tasks (`forgeloop task-list --json`) before creating a new one.
-5. Treat canonical `forgeloop next` as the dispatcher after every meaningful
+4. Preserve the canonical ordered `selectedGuideIds` values from that projection
+   and follow the selected ForgeLoop-provided guides. In ForgeLoop 1.12.0,
+   `flutter` means only that canonical routing selected the Flutter specialist;
+   do not detect Flutter projects, inspect the SDK/Dart toolchain, select or
+   reorder guides, or infer verification, authority, evidence, release
+   readiness, or completion from a selected guide.
+5. Discover existing tasks (`forgeloop task-list --json`) before creating a new one.
+6. Treat canonical `forgeloop next` as the dispatcher after every meaningful
    protocol mutation. The example lifecycle is a happy-path illustration only.
-6. Respect canonical action, approval, policy, diagnostic, and reconciliation
+7. Respect canonical action, approval, policy, diagnostic, and reconciliation
    guidance. `COMMIT_UNKNOWN` is a hard stop: do not retry the action.
-7. Reach VALID completion with `forgeloop complete --task <task-id> --json` and
+8. Reach VALID completion with `forgeloop complete --task <task-id> --json` and
    verify terminal `nextAction: NONE` before posting a COMPLETE status;
    otherwise report the exact blocked/partial state.
-8. Open PR and report structured Markdown status on ForgeLoopBridge.
+9. Open PR and report structured Markdown status on ForgeLoopBridge.
 
 Usage:
     python worker_poll.py [--auto-ack] [--start-mode pending|now|history]
@@ -279,7 +285,7 @@ provider result, or persists raw provider output as ForgeLoop state. A bounded
 host-produced summary remains ordinary, non-authoritative coordination text;
 it is non-evidence and non-executable. The Ripwire advisory adapter was
 introduced in ForgeLoop 1.10.2 and remains one optional host-injected provider
-in the current 1.11.x line (absolute path plus exact version, explicit recall);
+in the current 1.12.0 line (absolute path plus exact version, explicit recall);
 its ranked signatures are approximate hints only.
 
 When available, use `forgeloop reconcile-continuity --task <id> --json` as a

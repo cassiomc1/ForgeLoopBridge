@@ -234,6 +234,17 @@ ForgeLoop operational discovery, but it does not invalidate previously valid
 task evidence or historical completion. Keep current readiness and historical
 truth separate.
 
+### Canonical guide routing
+
+ForgeLoop 1.12.0 owns deterministic project detection and canonical guide
+selection. When the `task/context` projection includes `selectedGuideIds`,
+preserve the ordered bounded string IDs and follow the ForgeLoop-provided
+guidance. A `flutter` ID means only that canonical ForgeLoop routing selected
+the Flutter specialist guide. Neither Engineer nor Worker may detect Flutter
+projects, inspect the Flutter SDK or Dart toolchain, select or reorder guides,
+or infer verification, authority, evidence, release readiness, or completion
+from a selected guide.
+
 ### Workspace binding
 
 Workspace identity and binding come only from ForgeLoop. Board agreement cannot
@@ -304,7 +315,7 @@ transported as ordinary coordination text, but remains non-authoritative,
 non-evidence, and non-executable. There is no Bridge memory or recall endpoint.
 
 The Ripwire advisory adapter was introduced in ForgeLoop 1.10.2 and remains
-one optional host-injected implementation in the current 1.11.x line (absolute
+one optional host-injected implementation in the current 1.12.0 line (absolute
 executable path plus exact expected version, registered under the `ripwire` key,
 explicit `recallAdvisoryContext`, shell-free bounded execution, per-query
 version validation, fail-closed on unsafe or malformed output). Its ranked
