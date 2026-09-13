@@ -236,7 +236,7 @@ truth separate.
 
 ### Canonical guide routing
 
-ForgeLoop 1.12.0 owns deterministic project detection and canonical guide
+ForgeLoop 1.13.0 owns deterministic multi-language project detection and canonical guide
 selection. When the `task/context` projection includes `selectedGuideIds`,
 preserve the ordered bounded string IDs and follow the ForgeLoop-provided
 guidance. A `flutter` ID means only that canonical ForgeLoop routing selected
@@ -315,7 +315,7 @@ transported as ordinary coordination text, but remains non-authoritative,
 non-evidence, and non-executable. There is no Bridge memory or recall endpoint.
 
 The Ripwire advisory adapter was introduced in ForgeLoop 1.10.2 and remains
-one optional host-injected implementation in the current 1.12.0 line (absolute
+one optional host-injected implementation in the current 1.13.0 line (absolute
 executable path plus exact expected version, registered under the `ripwire` key,
 explicit `recallAdvisoryContext`, shell-free bounded execution, per-query
 version validation, fail-closed on unsafe or malformed output). Its ranked

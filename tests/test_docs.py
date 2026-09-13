@@ -482,8 +482,10 @@ def test_current_sync_record_documents_stream_close_before_rest_recovery():
     assert "explicitly closes the affected stream" in current
     assert "fresh SSE ticket" in current
     assert "bridge_api_version: 2.2.0" in current
-    assert "Observed synchronization baseline: ForgeLoop package 1.12.0" in current
+    assert "Observed synchronization baseline: ForgeLoop package 1.13.0" in current
+    assert "4fbc9f1463c66f0250f46cb76bc4d0c389c8c83c" in current
     assert "deterministic Flutter project" in current
+    assert "multi-language project detection" in current
     assert "selected guide IDs" in current
 
 
@@ -819,14 +821,31 @@ def test_changelog_records_forgeloop_120_flutter_routing_boundary():
         assert required in release
 
 
+def test_changelog_records_forgeloop_130_project_detection_boundary():
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    unreleased = " ".join(changelog_section(changelog, "## Unreleased").lower().split())
+    for required in (
+        "@cassiomc1/forgeloop@1.13.0",
+        "4fbc9f1463c66f0250f46cb76bc4d0c389c8c83c",
+        "multi-language",
+        "nested-project",
+        "ownership detection",
+        "protocol v1",
+        "integration api v1",
+        "selectedguideids",
+        "without adding bridge-side project detection",
+    ):
+        assert required in unreleased
+
+
 def test_changelog_keeps_unreleased_for_future_work_and_220_historical():
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     unreleased = changelog_section(changelog, "## Unreleased")
     release = changelog_section(changelog, "## 2.2.1 - 2026-09-10")
     historical = changelog_section(changelog, "## 2.2.0 - 2026-09-09")
 
-    assert "Future changes will be recorded here." in unreleased
-    assert "1.12.0" not in unreleased
+    assert "@cassiomc1/forgeloop@1.13.0" in unreleased
+    assert "1.13.0" not in changelog_section(changelog, "## 2.2.1 - 2026-09-10")
     assert "1.12.0" in release
     assert sha256(historical.encode()).hexdigest() == HISTORICAL_220_SHA256
 
