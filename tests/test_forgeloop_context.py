@@ -18,7 +18,7 @@ from bridge_protocol.forgeloop_context import (
 def capabilities() -> dict:
     """Mirror the version-bearing shape of a real `protocol-info --json` payload."""
     return {
-        "packageVersion": "1.12.0",
+        "packageVersion": "1.13.0",
         "protocolVersion": 1,
         "readsProtocol": [1],
         "writesProtocol": [1],
@@ -105,16 +105,40 @@ def test_consumer_uses_resolved_profile_and_bounded_policy():
     assert consumed["invariants"]["lifecyclePhaseSkippingAllowed"] is False
 
 
-def test_selected_guide_ids_preserve_canonical_flutter_and_unknown_ordered_values():
+def test_selected_guide_ids_preserve_forgeloop_113_specialists_and_unknown_ordered_values():
     context = canonical_context()
-    context["selectedGuideIds"] = ["flutter", "clean", "future-specialist"]
+    context["selectedGuideIds"] = [
+        "flutter",
+        "dotnet",
+        "nodejs",
+        "rust",
+        "c",
+        "cpp",
+        "java",
+        "sql",
+        "go",
+        "typescript",
+        "php",
+        "swift",
+        "future-specialist",
+    ]
 
     consumed = consume_task_context(capabilities(), context, expected_task_id="task-context-1")
 
     assert consumed["status"] == "CANONICAL"
     assert consumed["context"]["selected_guide_ids"] == [
         "flutter",
-        "clean",
+        "dotnet",
+        "nodejs",
+        "rust",
+        "c",
+        "cpp",
+        "java",
+        "sql",
+        "go",
+        "typescript",
+        "php",
+        "swift",
         "future-specialist",
     ]
 
@@ -193,7 +217,7 @@ def test_real_published_boundary_is_supported():
 
 def test_repository_index_is_an_additive_unconsumed_capability():
     info = capabilities()
-    info["packageVersion"] = "1.12.0"
+    info["packageVersion"] = "1.13.0"
     info["features"]["repositoryIndex"] = {
         "version": 1,
         "required": True,

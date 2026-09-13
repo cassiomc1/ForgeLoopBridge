@@ -2,7 +2,23 @@
 
 ## Unreleased
 
-Future changes will be recorded here.
+### Changed
+
+- Revalidated the Bridge against the published
+  `@cassiomc1/forgeloop@1.13.0` package at git head
+  `4fbc9f1463c66f0250f46cb76bc4d0c389c8c83c`.
+- Documented ForgeLoop-owned multi-language, nested-project, and ownership
+  detection changes while preserving the Protocol v1, Integration API v1,
+  `task/context` schema v1, and Bridge Typed Message Schema v1 boundaries.
+- Preserved all canonical ordered `selectedGuideIds` values, including the
+  new language specialist IDs, without adding Bridge-side project detection or
+  a duplicate ForgeLoop project/graph model.
+
+### Fixed
+
+- Kept package version informational: compatibility remains capability-first
+  and fails closed on unknown declared protocol, integration, or consumed
+  context versions.
 
 ## 2.2.1 - 2026-09-10
 

@@ -21,11 +21,13 @@ workflow:
    `task/context` projection through that host adapter; use its resolved profile
    and bounded policy, and never classify the task locally.
 4. Preserve the canonical ordered `selectedGuideIds` values from that projection
-   and follow the selected ForgeLoop-provided guides. In ForgeLoop 1.12.0,
+   and follow the selected ForgeLoop-provided guides. In ForgeLoop 1.13.0,
    `flutter` means only that canonical routing selected the Flutter specialist;
-   do not detect Flutter projects, inspect the SDK/Dart toolchain, select or
-   reorder guides, or infer verification, authority, evidence, release
-   readiness, or completion from a selected guide.
+   do not detect projects, inspect the SDK/toolchains, select or reorder guides,
+   or infer verification, authority, evidence, release readiness, or completion
+   from a selected guide. The same applies to new specialist IDs such as
+   `dotnet`, `nodejs`, `rust`, `c`, `cpp`, `java`, `sql`, `go`, `typescript`,
+   `php`, and `swift`.
 5. Discover existing tasks (`forgeloop task-list --json`) before creating a new one.
 6. Treat canonical `forgeloop next` as the dispatcher after every meaningful
    protocol mutation. The example lifecycle is a happy-path illustration only.
@@ -285,7 +287,7 @@ provider result, or persists raw provider output as ForgeLoop state. A bounded
 host-produced summary remains ordinary, non-authoritative coordination text;
 it is non-evidence and non-executable. The Ripwire advisory adapter was
 introduced in ForgeLoop 1.10.2 and remains one optional host-injected provider
-in the current 1.12.0 line (absolute path plus exact version, explicit recall);
+in the current 1.13.0 line (absolute path plus exact version, explicit recall);
 its ranked signatures are approximate hints only.
 
 When available, use `forgeloop reconcile-continuity --task <id> --json` as a
