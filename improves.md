@@ -1,15 +1,10 @@
-# ForgeLoopBridge — Historical Audit & Improvements Log (v2.0)
+# AgentBridge — Historical Audit & Improvements Log (v2.0)
 
 > **ARCHIVE / HISTORICAL RECORD**
 >
-> This document preserves the original v2.0 audit. Major items were addressed,
-> but the individual implementation suggestions below are historical and must
-> not be read as exact descriptions of the current source tree.
->
-> Active project alignment follows the capability-aware ForgeLoop Protocol v1 /
-> Integration API v1 contract documented in [README.md](README.md) and
-> [examples/AUTONOMY.md](examples/AUTONOMY.md). Check the current source and
-> tests before applying any suggestion from this archive.
+> This document preserves the original v2.0 audit and security improvements.
+> All critical security items (DOMPurify HTML sanitization, secure token comparison,
+> rate limiting, and mandatory authentication) were implemented and remain active in v3.0.0.
 
 
 ---

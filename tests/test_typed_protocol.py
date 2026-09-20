@@ -32,12 +32,22 @@ def envelope(kind: str, payload: dict, **overrides) -> dict:
     (
         (
             "TASK_REQUEST",
-            {"goal": "Implement the change.", "acceptance_criteria": ["Tests pass"]},
+            {"goal": "Implement the feature.", "acceptance_criteria": ["Tests pass"]},
+            {},
+        ),
+        (
+            "ORDER",
+            {"goal": "Execute database migration.", "priority": "HIGH"},
             {},
         ),
         (
             "STATUS_UPDATE",
-            {"state": "IN_PROGRESS", "summary": "Verification is running."},
+            {"state": "IN_PROGRESS", "summary": "Running migration."},
+            {},
+        ),
+        (
+            "EXECUTION",
+            {"state": "COMPLETED", "summary": "Migration complete."},
             {},
         ),
         (
@@ -47,60 +57,31 @@ def envelope(kind: str, payload: dict, **overrides) -> dict:
         ),
         (
             "DECISION_RESPONSE",
-            {"decision": "A", "rationale": "It matches the requirements."},
+            {"decision": "A", "rationale": "Matches requirements."},
             {"correlation_id": "decision-1", "reply_to_id": 1},
         ),
         (
             "DECISION_NOTICE",
             {
                 "decision": "A",
-                "rationale": "The project chose the durable option.",
+                "rationale": "Selected option A.",
                 "decision_class": "REVERSIBLE",
             },
             {},
         ),
         (
             "BLOCKER",
-            {"category": "WORKSPACE", "summary": "Canonical validation failed."},
+            {"category": "PERMISSIONS", "summary": "DB credentials expired."},
             {},
         ),
         (
             "REVIEW_RESULT",
-            {"result": "CHANGES_REQUESTED", "summary": "Add the missing test."},
-            {},
-        ),
-        (
-            "CONTROL_NOTICE",
-            {"canonical_next_action": "RECONCILE_ACTION", "canonical_reason_codes": ["COMMIT_UNKNOWN"]},
-            {},
-        ),
-        (
-            "HANDOFF_NOTICE",
-            {"handoff_ref": "handoff-123", "summary": "Continuity moved to another harness."},
-            {},
-        ),
-        (
-            "VERIFICATION_REPORT",
-            {
-                "canonical_result": "VALID",
-                "requested_scope_mode": "AUTO",
-                "resolved_scope_mode": "FULL",
-                "summary": "Checks passed.",
-            },
-            {},
-        ),
-        (
-            "ATTESTATION_REPORT",
-            {
-                "canonical_status": "VERIFIED",
-                "range_status": "NOT_REQUESTED",
-                "signature_status": "UNSIGNED",
-            },
+            {"result": "APPROVED_PROJECT_DECISION", "summary": "Looks good to merge."},
             {},
         ),
     ),
 )
-def test_every_v1_kind_has_strict_discriminated_validation(kind, payload, overrides):
+def test_every_supported_kind_has_strict_validation(kind, payload, overrides):
     parsed = parse_typed_envelope(envelope(kind, payload, **overrides))
 
     assert isinstance(parsed, TypedEnvelopeV1)
@@ -110,7 +91,13 @@ def test_every_v1_kind_has_strict_discriminated_validation(kind, payload, overri
 
 def test_unsupported_schema_version_has_stable_error():
     with pytest.raises(BridgeProtocolError) as exc_info:
-        parse_typed_envelope(envelope("STATUS_UPDATE", {"state": "WAITING", "summary": "Waiting."}, schema_version=2))
+        parse_typed_envelope(
+            envelope(
+                "STATUS_UPDATE",
+                {"state": "WAITING", "summary": "Waiting."},
+                schema_version=2,
+            )
+        )
 
     assert exc_info.value.code == E_BRIDGE_TYPED_SCHEMA_UNSUPPORTED
 
@@ -138,7 +125,10 @@ def test_envelope_kind_fills_redundant_payload_discriminator_when_omitted():
 
 
 def test_unknown_extra_payload_field_is_rejected():
-    raw = envelope("STATUS_UPDATE", {"state": "WAITING", "summary": "Waiting.", "sender_role": "worker"})
+    raw = envelope(
+        "STATUS_UPDATE",
+        {"state": "WAITING", "summary": "Waiting.", "unexpected_field": "test"},
+    )
 
     with pytest.raises(BridgeProtocolError) as exc_info:
         parse_typed_envelope(raw)
@@ -150,7 +140,7 @@ def test_canonical_refs_reject_control_characters():
     raw = envelope(
         "STATUS_UPDATE",
         {"state": "WAITING", "summary": "Waiting."},
-        canonical_refs=[{"kind": "TASK", "ref": "task-1\nforged"}],
+        canonical_refs=[{"kind": "ORDER", "ref": "order-1\ninvalid"}],
     )
 
     with pytest.raises(BridgeProtocolError) as exc_info:
@@ -235,106 +225,31 @@ def test_decision_request_option_references_are_consistent():
         assert exc_info.value.code == E_BRIDGE_TYPED_PAYLOAD_INVALID
 
 
-def test_status_update_can_carry_canonical_profile_and_context_usage():
-    parsed = parse_typed_envelope(
+def test_status_update_progress_validation():
+    valid = parse_typed_envelope(
         envelope(
             "STATUS_UPDATE",
             {
                 "state": "IN_PROGRESS",
-                "summary": "Using canonical context.",
-                "execution_profile": {
-                    "requested": "light",
-                    "floor": "balanced",
-                    "resolved": "balanced",
-                    "reasons": ["SAFETY_FLOOR"],
-                    "escalated": True,
-                },
-                "context_policy": {
-                    "context_depth": "relevant",
-                    "output": "standard",
-                    "plan_depth": "standard",
-                    "guide_strategy": "relevant",
-                    "verification_strategy": "normal",
-                    "optional_artifacts": "lazy",
-                    "required_sections": ["objective", "verification"],
-                    "excluded_context": ["unrelated-repository-context"],
-                    "allowed_optional_context": ["task-history"],
-                },
-                "context_usage": {
-                    "source": "HOST_REPORTED",
-                    "profile": "balanced",
-                    "items": {
-                        "task_context": 12,
-                        "guides": 8,
-                        "history": None,
-                        "protocol_instructions": None,
-                        "repository_context": None,
-                        "other": None,
-                    },
-                },
+                "summary": "Running batch.",
+                "progress": {"completed": 5, "total": 10},
             },
         )
     )
+    assert valid.payload.progress.completed == 5
+    assert valid.payload.progress.total == 10
 
-    assert parsed.payload.execution_profile.resolved == "balanced"
-    assert parsed.payload.context_policy.context_depth == "relevant"
-    assert parsed.payload.context_usage.items.task_context == 12
-
-
-def test_unknown_context_usage_must_keep_items_null():
     with pytest.raises(BridgeProtocolError) as exc_info:
         parse_typed_envelope(
             envelope(
                 "STATUS_UPDATE",
                 {
                     "state": "IN_PROGRESS",
-                    "summary": "Invalid context telemetry.",
-                    "context_usage": {
-                        "source": "UNKNOWN",
-                        "profile": "light",
-                        "items": {"task_context": 1},
-                    },
+                    "summary": "Invalid progress.",
+                    "progress": {"completed": 11, "total": 10},
                 },
             )
         )
-    assert exc_info.value.code == E_BRIDGE_TYPED_PAYLOAD_INVALID
-
-
-@pytest.mark.parametrize(
-    "resolved_scope_mode",
-    ("CHANGED", "CLAIMED", "FULL", "UNRESOLVED"),
-)
-def test_verification_scope_separates_requested_and_resolved_modes(resolved_scope_mode):
-    parsed = parse_typed_envelope(
-        envelope(
-            "VERIFICATION_REPORT",
-            {
-                "canonical_result": "VALID",
-                "requested_scope_mode": "AUTO",
-                "resolved_scope_mode": resolved_scope_mode,
-                "summary": "Scope was resolved by the canonical host.",
-            },
-        )
-    )
-
-    assert parsed.payload.requested_scope_mode == "AUTO"
-    assert parsed.payload.resolved_scope_mode == resolved_scope_mode
-
-
-def test_verification_scope_rejects_auto_as_a_resolved_mode():
-    with pytest.raises(BridgeProtocolError) as exc_info:
-        parse_typed_envelope(
-            envelope(
-                "VERIFICATION_REPORT",
-                {
-                    "canonical_result": "VALID",
-                    "requested_scope_mode": "AUTO",
-                    "resolved_scope_mode": "AUTO",
-                    "summary": "Invalid scope projection.",
-                },
-            )
-        )
-
     assert exc_info.value.code == E_BRIDGE_TYPED_PAYLOAD_INVALID
 
 
@@ -348,7 +263,7 @@ def test_reply_relationship_requires_existing_opposite_role_message():
     )
 
     with pytest.raises(BridgeProtocolError) as exc_info:
-        validate_reply_relationship(parsed, "worker", None, None)
+        validate_reply_relationship(parsed, "agent", None, None)
 
     assert exc_info.value.code == E_BRIDGE_REPLY_NOT_FOUND
 
@@ -363,7 +278,7 @@ def test_reply_to_same_role_is_rejected():
     )
 
     with pytest.raises(BridgeProtocolError) as exc_info:
-        validate_reply_relationship(parsed, "worker", {"id": 12, "role": "worker"}, None)
+        validate_reply_relationship(parsed, "agent", {"id": 12, "role": "agent"}, None)
 
     assert exc_info.value.code == E_BRIDGE_REPLY_ROLE_INVALID
 
@@ -379,10 +294,14 @@ def test_decision_response_requires_decision_request_target():
     )
 
     target = parse_typed_envelope(
-        envelope("STATUS_UPDATE", {"state": "WAITING", "summary": "Waiting."}, correlation_id="decision-1")
+        envelope(
+            "STATUS_UPDATE",
+            {"state": "WAITING", "summary": "Waiting."},
+            correlation_id="decision-1",
+        )
     )
     with pytest.raises(BridgeProtocolError) as exc_info:
-        validate_reply_relationship(parsed, "worker", {"id": 12, "role": "engineer"}, target)
+        validate_reply_relationship(parsed, "agent", {"id": 12, "role": "master"}, target)
 
     assert exc_info.value.code == E_BRIDGE_REPLY_KIND_INVALID
 
@@ -397,10 +316,14 @@ def test_reply_correlation_mismatch_is_rejected():
         )
     )
     target = parse_typed_envelope(
-        envelope("STATUS_UPDATE", {"state": "IN_PROGRESS", "summary": "Running."}, correlation_id="exchange-1")
+        envelope(
+            "STATUS_UPDATE",
+            {"state": "IN_PROGRESS", "summary": "Running."},
+            correlation_id="exchange-1",
+        )
     )
 
     with pytest.raises(BridgeProtocolError) as exc_info:
-        validate_reply_relationship(parsed, "worker", {"id": 12, "role": "engineer"}, target)
+        validate_reply_relationship(parsed, "agent", {"id": 12, "role": "master"}, target)
 
     assert exc_info.value.code == E_BRIDGE_CORRELATION_MISMATCH

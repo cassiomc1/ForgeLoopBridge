@@ -1,6 +1,7 @@
-"""
-ForgeLoopBridge — Minimalist Markdown communication board
-between Engineer and Worker agents.
+"""Master-Agent Bridge — High-reliability communication hub
+
+Designed for stable and reliable exchange of orders and executions between
+Master and Agent.
 """
 
 import asyncio
@@ -36,37 +37,45 @@ from bridge_protocol.validation import (
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = Path(os.getenv("FORGEBRIDGE_DB", str(BASE_DIR / "data" / "forgebridge.db")))
+DB_PATH = Path(
+    os.getenv(
+        "BRIDGE_DB",
+        os.getenv("FORGEBRIDGE_DB", str(BASE_DIR / "data" / "bridge.db")),
+    )
+)
 STATIC_DIR = BASE_DIR / "static"
 HOST = os.getenv("HOST", "0.0.0.0")
 RELOAD = os.getenv("RELOAD") == "1"
 
-ENGINEER_TOKEN = os.getenv("ENGINEER_TOKEN")
-WORKER_TOKEN = os.getenv("WORKER_TOKEN")
+MASTER_TOKEN = os.getenv("MASTER_TOKEN") or os.getenv("ENGINEER_TOKEN")
+AGENT_TOKEN = os.getenv("AGENT_TOKEN") or os.getenv("WORKER_TOKEN")
 
-if not ENGINEER_TOKEN or not WORKER_TOKEN:
+# Keep legacy names mapped for backward compatibility:
+ENGINEER_TOKEN = os.getenv("ENGINEER_TOKEN") or MASTER_TOKEN
+WORKER_TOKEN = os.getenv("WORKER_TOKEN") or AGENT_TOKEN
+
+if not MASTER_TOKEN or not AGENT_TOKEN:
     raise RuntimeError(
-        "ENGINEER_TOKEN and WORKER_TOKEN must be set in the environment. "
+        "MASTER_TOKEN and AGENT_TOKEN (or ENGINEER_TOKEN and WORKER_TOKEN) must be set in the environment. "
         "Generate strong tokens with: openssl rand -hex 32"
     )
-if ENGINEER_TOKEN == WORKER_TOKEN:
-    raise RuntimeError("ENGINEER_TOKEN and WORKER_TOKEN must be different")
-if len(ENGINEER_TOKEN) < 16 or len(WORKER_TOKEN) < 16:
-    logging.getLogger("forgebridge").warning(
+if MASTER_TOKEN == AGENT_TOKEN:
+    raise RuntimeError("MASTER_TOKEN and AGENT_TOKEN must be different")
+if len(MASTER_TOKEN) < 16 or len(AGENT_TOKEN) < 16:
+    logging.getLogger("bridge").warning(
         "Tokens shorter than 16 chars are easy to brute-force; "
         "use `openssl rand -hex 32` to generate strong ones."
     )
 
 MAX_PAGE_SIZE = 1000
-BRIDGE_API_VERSION = "2.2.0"
+BRIDGE_API_VERSION = "3.0.0"
 TYPED_MESSAGE_VERSIONS = [1]
 TYPED_FEATURES = {
     "idempotency": True,
     "correlation": True,
     "reply_linkage": True,
-    "canonical_refs": True,
     "outbox_safe_retry": True,
-    "typed_integrity_status": True,
+    "orders_and_executions": True,
 }
 
 
@@ -104,12 +113,12 @@ def _env_float(
 
 
 PORT = _env_int("PORT", 8000, 1, 65535)
-RATE_LIMIT_POSTS = _env_int("RATE_LIMIT_POSTS", 30, 1)
+RATE_LIMIT_POSTS = _env_int("RATE_LIMIT_POSTS", 60, 1)
 RATE_LIMIT_WINDOW = _env_float("RATE_LIMIT_WINDOW", 60, 0)
 DEFAULT_PAGE_SIZE = _env_int("DEFAULT_PAGE_SIZE", 200, 1, MAX_PAGE_SIZE)
 SSE_QUEUE_SIZE = _env_int("SSE_QUEUE_SIZE", 256, 16, 10000)
 SSE_TICKET_TTL = _env_float("SSE_TICKET_TTL", 30, 1, 300, minimum_inclusive=True)
-SSE_TICKET_RATE_LIMIT = _env_int("SSE_TICKET_RATE_LIMIT", 30, 1)
+SSE_TICKET_RATE_LIMIT = _env_int("SSE_TICKET_RATE_LIMIT", 60, 1)
 SSE_TICKET_RATE_WINDOW = _env_float("SSE_TICKET_RATE_WINDOW", 60, 0)
 MAX_TYPED_ENVELOPE_BYTES = _env_int("MAX_TYPED_ENVELOPE_BYTES", 65536, 1)
 
@@ -117,7 +126,7 @@ logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
-logger = logging.getLogger("forgebridge")
+logger = logging.getLogger("bridge")
 
 # ─── Rate limiting (in-memory sliding window) ────────────────────────────────
 _post_timestamps: dict[str, deque[float]] = defaultdict(deque)
@@ -127,7 +136,6 @@ _sse_ticket_rl_lock = asyncio.Lock()
 
 
 def _retry_after_seconds(window: deque[float], now: float, window_seconds: float) -> int:
-    """Return bounded integer delta-seconds for a full sliding-window budget."""
     if not window:
         return 1
     elapsed = max(0.0, now - window[0])
@@ -180,7 +188,6 @@ SSE_DISCONNECT = object()
 
 
 def create_sse_queue() -> asyncio.Queue:
-    """Create a bounded queue so one stalled client cannot grow memory forever."""
     return asyncio.Queue(maxsize=SSE_QUEUE_SIZE)
 
 
@@ -228,7 +235,6 @@ def broadcast(message: "MessageOut") -> None:
         try:
             q.put_nowait(message)
         except asyncio.QueueFull:
-            # Disconnect slow subscribers; they recover through GET /api/messages?after_id=.
             disconnect_slow_subscriber(q)
         except Exception:
             disconnect_slow_subscriber(q)
@@ -236,14 +242,24 @@ def broadcast(message: "MessageOut") -> None:
 
 # ─── Models ───────────────────────────────────────────────────────────────────
 VALID_MESSAGE_TYPES = frozenset({
-    "TASK",
+    "ORDER",
+    "EXECUTION",
     "STATUS",
+    "PROGRESS",
+    "RESULT",
+    "BLOCKER",
+    "INSTRUCTION",
+    "DECISION",
+    "CANCEL",
+    "MESSAGE",
+    "GENERAL",
+    # Backward compatibility aliases:
+    "TASK",
     "DECISION_NEEDED",
     "DECISION_RESOLVED",
     "DECISION_TAKEN",
     "BLOCKED",
     "REVIEW",
-    "GENERAL",
     "ACTION_REQUIRED",
     "APPROVAL_REQUIRED",
     "AUTHORITY_REQUIRED",
@@ -253,9 +269,10 @@ VALID_MESSAGE_TYPES = frozenset({
     "POLICY_BLOCKED",
 })
 
+VALID_STATUSES = frozenset({"PENDING", "RUNNING", "COMPLETED", "FAILED", "BLOCKED"})
 
-def normalize_optional_reference(value):
-    """Trim optional coordination references without interpreting ForgeLoop state."""
+
+def normalize_optional_reference(value: Any) -> str | None:
     if value is None:
         return None
     stripped = str(value).strip()
@@ -269,15 +286,31 @@ def normalize_optional_reference(value):
 class MessageCreate(BaseModel):
     token: str = ""
     content: str = Field(..., min_length=1, max_length=50000)
+    order_id: str | None = Field(default=None, min_length=1, max_length=200)
     task_id: str | None = Field(default=None, min_length=1, max_length=200)
     message_type: str | None = Field(default=None, min_length=1, max_length=40)
+    status: str | None = Field(default=None, min_length=1, max_length=40)
+    message_key: str | None = Field(default=None, min_length=4, max_length=200)
+    reply_to_id: int | None = Field(default=None, ge=1)
+    payload: dict[str, Any] | None = None
+    typed: Any | None = None
+
+    # Legacy fields
     action_id: str | None = Field(default=None, min_length=1, max_length=200)
     approval_id: str | None = Field(default=None, min_length=1, max_length=200)
     next_action: str | None = Field(default=None, min_length=1, max_length=100)
     reason_code: str | None = Field(default=None, min_length=1, max_length=160)
-    typed: Any | None = None
 
-    @field_validator("task_id", "action_id", "approval_id", "next_action", "reason_code", mode="before")
+    @field_validator(
+        "order_id",
+        "task_id",
+        "action_id",
+        "approval_id",
+        "next_action",
+        "reason_code",
+        "message_key",
+        mode="before",
+    )
     @classmethod
     def normalize_references(cls, value):
         return normalize_optional_reference(value)
@@ -288,29 +321,50 @@ class MessageCreate(BaseModel):
         normalized = normalize_optional_reference(value)
         return normalized.upper() if normalized else None
 
+    @field_validator("status", mode="before")
+    @classmethod
+    def normalize_status(cls, value):
+        normalized = normalize_optional_reference(value)
+        return normalized.upper() if normalized else None
+
 
 class MessageOut(BaseModel):
     id: int
     role: str
     content: str
     created_at: float
+    order_id: str | None = None
     task_id: str | None = None
     message_type: str | None = None
-    action_id: str | None = None
-    approval_id: str | None = None
-    next_action: str | None = None
-    reason_code: str | None = None
+    status: str | None = None
+    reply_to_id: int | None = None
+    message_key: str | None = None
+    payload: dict[str, Any] | None = None
     typed: dict[str, Any] | None = None
     typed_integrity: Literal["INVALID", "NOT_APPLICABLE", "VALID"] = "NOT_APPLICABLE"
     typed_error: dict[str, str] | None = None
 
+    # Legacy compatibility fields
+    action_id: str | None = None
+    approval_id: str | None = None
+    next_action: str | None = None
+    reason_code: str | None = None
+
 
 # ─── Auth helpers ─────────────────────────────────────────────────────────────
 def resolve_role(token: str) -> str:
-    if secrets.compare_digest(token, ENGINEER_TOKEN):
-        return "engineer"
-    if secrets.compare_digest(token, WORKER_TOKEN):
-        return "worker"
+    """Resolve token to role ('master' or 'agent').
+
+    Supports MASTER_TOKEN / AGENT_TOKEN and legacy ENGINEER_TOKEN / WORKER_TOKEN.
+    """
+    if MASTER_TOKEN and secrets.compare_digest(token, MASTER_TOKEN):
+        return "master"
+    if AGENT_TOKEN and secrets.compare_digest(token, AGENT_TOKEN):
+        return "agent"
+    if ENGINEER_TOKEN and secrets.compare_digest(token, ENGINEER_TOKEN):
+        return "master"
+    if WORKER_TOKEN and secrets.compare_digest(token, WORKER_TOKEN):
+        return "agent"
     raise HTTPException(status_code=401, detail="Invalid token")
 
 
@@ -322,7 +376,6 @@ def extract_bearer_token(request: Request) -> str:
 
 
 async def require_reader(request: Request, token: str | None) -> str:
-    """Authenticate read access via Bearer header or ?token= query param."""
     candidate = extract_bearer_token(request) or (token or "")
     if not candidate:
         raise HTTPException(status_code=401, detail="Missing token")
@@ -354,8 +407,10 @@ async def init_db():
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
                 created_at REAL NOT NULL,
+                order_id TEXT,
                 task_id TEXT,
                 message_type TEXT,
+                status TEXT,
                 action_id TEXT,
                 approval_id TEXT,
                 next_action TEXT,
@@ -370,22 +425,18 @@ async def init_db():
                 canonical_refs_json TEXT
             )
         """)
-        # Safe schema migration for existing databases:
         cursor = await db.execute("PRAGMA table_info(messages)")
         columns = {row["name"] for row in await cursor.fetchall()}
-        legacy_columns = (
-            "task_id",
-            "message_type",
-            "action_id",
-            "approval_id",
-            "next_action",
-            "reason_code",
-        )
-        for column in legacy_columns:
-            if column not in columns:
-                await db.execute(f"ALTER TABLE messages ADD COLUMN {column} TEXT")
 
-        typed_columns = {
+        schema_columns = {
+            "order_id": "TEXT",
+            "task_id": "TEXT",
+            "message_type": "TEXT",
+            "status": "TEXT",
+            "action_id": "TEXT",
+            "approval_id": "TEXT",
+            "next_action": "TEXT",
+            "reason_code": "TEXT",
             "typed_schema_version": "INTEGER",
             "typed_kind": "TEXT",
             "message_key": "TEXT",
@@ -395,42 +446,24 @@ async def init_db():
             "typed_payload_json": "TEXT",
             "canonical_refs_json": "TEXT",
         }
-        for column, column_type in typed_columns.items():
-            if column not in columns:
-                await db.execute(f"ALTER TABLE messages ADD COLUMN {column} {column_type}")
+        for col_name, col_type in schema_columns.items():
+            if col_name not in columns:
+                await db.execute(f"ALTER TABLE messages ADD COLUMN {col_name} {col_type}")
 
-        await db.execute("""
-            CREATE INDEX IF NOT EXISTS idx_messages_created_at
-            ON messages(created_at)
-        """)
-        await db.execute("""
-            CREATE INDEX IF NOT EXISTS idx_messages_task_id
-            ON messages(task_id)
-        """)
-        await db.execute("""
-            CREATE INDEX IF NOT EXISTS idx_messages_action_id
-            ON messages(action_id)
-        """)
-        await db.execute("""
-            CREATE INDEX IF NOT EXISTS idx_messages_approval_id
-            ON messages(approval_id)
-        """)
-        await db.execute("""
-            CREATE INDEX IF NOT EXISTS idx_messages_message_type
-            ON messages(message_type)
-        """)
-        await db.execute("""
-            CREATE INDEX IF NOT EXISTS idx_messages_typed_kind
-            ON messages(typed_kind)
-        """)
-        await db.execute("""
-            CREATE INDEX IF NOT EXISTS idx_messages_correlation_id
-            ON messages(correlation_id)
-        """)
-        await db.execute("""
-            CREATE INDEX IF NOT EXISTS idx_messages_reply_to_id
-            ON messages(reply_to_id)
-        """)
+        indexes = [
+            ("idx_messages_created_at", "messages(created_at)"),
+            ("idx_messages_order_id", "messages(order_id)"),
+            ("idx_messages_task_id", "messages(task_id)"),
+            ("idx_messages_role", "messages(role)"),
+            ("idx_messages_message_type", "messages(message_type)"),
+            ("idx_messages_status", "messages(status)"),
+            ("idx_messages_typed_kind", "messages(typed_kind)"),
+            ("idx_messages_correlation_id", "messages(correlation_id)"),
+            ("idx_messages_reply_to_id", "messages(reply_to_id)"),
+        ]
+        for idx_name, idx_target in indexes:
+            await db.execute(f"CREATE INDEX IF NOT EXISTS {idx_name} ON {idx_target}")
+
         await db.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_role_message_key
             ON messages(role, message_key)
@@ -450,8 +483,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="ForgeLoopBridge",
-    description="Minimalist Markdown communication hub between Engineer and Worker agents",
+    title="Master-Agent Bridge",
+    description="High-reliability communication hub for orders and executions between Master and Agent",
     version=BRIDGE_API_VERSION,
     lifespan=lifespan,
 )
@@ -459,7 +492,6 @@ app = FastAPI(
 
 @app.exception_handler(BridgeProtocolError)
 async def bridge_protocol_error_handler(_request: Request, exc: BridgeProtocolError):
-    """Keep Bridge transport errors separate from ForgeLoop reason codes."""
     return JSONResponse(
         status_code=exc.status_code,
         content={"error": {"code": exc.code, "message": exc.message}},
@@ -467,7 +499,7 @@ async def bridge_protocol_error_handler(_request: Request, exc: BridgeProtocolEr
 
 
 MESSAGE_SELECT = """
-    id, role, content, created_at, task_id, message_type,
+    id, role, content, created_at, order_id, task_id, message_type, status,
     action_id, approval_id, next_action, reason_code,
     typed_schema_version, typed_kind, message_key, correlation_id,
     reply_to_id, expects_reply, typed_payload_json, canonical_refs_json
@@ -523,7 +555,6 @@ def _typed_row_state(row) -> tuple[Any, str, dict[str, str] | None]:
     )
     if data.get("typed_schema_version") is None:
         if any(value is not None for value in typed_values[1:]):
-            logger.warning("Partial typed representation for message id=%s", data.get("id"))
             return (
                 None,
                 "INVALID",
@@ -536,7 +567,7 @@ def _typed_row_state(row) -> tuple[Any, str, dict[str, str] | None]:
 
     try:
         payload = json.loads(data["typed_payload_json"])
-        canonical_refs = json.loads(data["canonical_refs_json"])
+        canonical_refs = json.loads(data["canonical_refs_json"]) if data.get("canonical_refs_json") else []
         stored_expects_reply = data["expects_reply"]
         if isinstance(stored_expects_reply, bool):
             expects_reply = stored_expects_reply
@@ -556,7 +587,6 @@ def _typed_row_state(row) -> tuple[Any, str, dict[str, str] | None]:
         }
         return parse_typed_envelope(raw), "VALID", None
     except Exception:
-        logger.warning("Malformed typed representation for message id=%s", data.get("id"))
         return (
             None,
             "INVALID",
@@ -574,28 +604,47 @@ def _typed_envelope_from_row(row):
 def _message_out_from_row(row) -> MessageOut:
     data = dict(row)
     envelope, typed_integrity, typed_error = _typed_row_state(data)
+    order_id = data.get("order_id") or data.get("task_id")
+    task_id = data.get("task_id") or data.get("order_id")
+
+    payload_val = None
+    if envelope is not None:
+        payload_val = envelope.payload.model_dump(mode="json", exclude_none=False)
+    elif data.get("typed_payload_json"):
+        try:
+            payload_val = json.loads(data["typed_payload_json"])
+        except Exception:
+            pass
+
     return MessageOut(
         id=int(data["id"]),
         role=data["role"],
         content=data["content"],
         created_at=data["created_at"],
-        task_id=data.get("task_id"),
+        order_id=order_id,
+        task_id=task_id,
         message_type=data.get("message_type"),
+        status=data.get("status"),
+        reply_to_id=data.get("reply_to_id"),
+        message_key=data.get("message_key"),
+        payload=payload_val,
+        typed=envelope_to_dict(envelope) if envelope is not None else None,
+        typed_integrity=typed_integrity,
+        typed_error=typed_error,
         action_id=data.get("action_id"),
         approval_id=data.get("approval_id"),
         next_action=data.get("next_action"),
         reason_code=data.get("reason_code"),
-        typed=envelope_to_dict(envelope) if envelope is not None else None,
-        typed_integrity=typed_integrity,
-        typed_error=typed_error,
     )
 
 
 def _submission_fingerprint(
     *,
     content: str,
+    order_id: str | None,
     task_id: str | None,
     message_type: str | None,
+    status: str | None,
     action_id: str | None,
     approval_id: str | None,
     next_action: str | None,
@@ -605,8 +654,10 @@ def _submission_fingerprint(
     return _json_dumps(
         {
             "content": content,
+            "order_id": order_id,
             "task_id": task_id,
             "message_type": message_type,
+            "status": status,
             "action_id": action_id,
             "approval_id": approval_id,
             "next_action": next_action,
@@ -620,13 +671,15 @@ def _row_submission_fingerprint(row) -> str | None:
     data = dict(row)
     envelope, typed_integrity, _typed_error = _typed_row_state(data)
     if typed_integrity == "INVALID" or (
-        data.get("message_key") is not None and envelope is None
+        data.get("message_key") is not None and envelope is None and data.get("typed_schema_version") is not None
     ):
         return None
     return _submission_fingerprint(
         content=data["content"],
+        order_id=data.get("order_id"),
         task_id=data.get("task_id"),
         message_type=data.get("message_type"),
+        status=data.get("status"),
         action_id=data.get("action_id"),
         approval_id=data.get("approval_id"),
         next_action=data.get("next_action"),
@@ -648,13 +701,16 @@ async def _find_message_by_key(db, role: str, message_key: str):
     return await cursor.fetchone()
 
 
-# ─── API ──────────────────────────────────────────────────────────────────────
+# ─── API Endpoints ────────────────────────────────────────────────────────────
 @app.get("/api/messages", response_model=list[MessageOut])
 async def get_messages(
     request: Request,
     token: str | None = None,
+    order_id: str | None = None,
     task_id: str | None = None,
+    role_filter: str | None = None,
     message_type: str | None = None,
+    status: str | None = None,
     action_id: str | None = None,
     approval_id: str | None = None,
     typed_kind: str | None = None,
@@ -665,21 +721,8 @@ async def get_messages(
     latest: bool = False,
     limit: int = DEFAULT_PAGE_SIZE,
 ):
-    """Return messages ordered by id ASC. Requires a valid token.
-
-    - `task_id`: filter by task identity (exact match)
-    - `message_type`: filter by normalized coordination type
-    - `action_id`: filter by action reference (exact match)
-    - `approval_id`: filter by approval reference (exact match)
-    - `typed_kind`: filter by typed message kind
-    - `correlation_id`: filter by typed exchange correlation
-    - `reply_to_id`: filter by concrete replied-to message id
-    - `after_id`: only messages with id > after_id (live updates)
-    - `before_id`: only messages with id < before_id (history paging)
-    - `latest`: return newest page of messages (cannot combine with after_id / before_id)
-    - `limit`: max messages returned (default 200, max 1000)
-    """
-    role = await require_reader(request, token)
+    """Query messages with optional filtering. Requires authentication."""
+    await require_reader(request, token)
     limit = max(1, min(limit, MAX_PAGE_SIZE))
 
     if latest and (after_id is not None or before_id is not None):
@@ -689,26 +732,36 @@ async def get_messages(
         )
 
     try:
-        task_id = normalize_optional_reference(task_id)
+        resolved_order_id = normalize_optional_reference(order_id or task_id)
         message_type = normalize_optional_reference(message_type)
         message_type = message_type.upper() if message_type else None
+        status = normalize_optional_reference(status)
+        status = status.upper() if status else None
         action_id = normalize_optional_reference(action_id)
         approval_id = normalize_optional_reference(approval_id)
         typed_kind = normalize_optional_reference(typed_kind)
         typed_kind = typed_kind.upper() if typed_kind else None
         correlation_id = normalize_optional_reference(correlation_id)
+        role_filter = normalize_optional_reference(role_filter)
+        role_filter = role_filter.lower() if role_filter else None
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     query = f"SELECT {MESSAGE_SELECT} FROM messages"
     clauses, params = [], []
 
-    if task_id is not None:
-        clauses.append("task_id = ?")
-        params.append(task_id)
+    if resolved_order_id is not None:
+        clauses.append("(order_id = ? OR task_id = ?)")
+        params.extend([resolved_order_id, resolved_order_id])
+    if role_filter is not None:
+        clauses.append("role = ?")
+        params.append(role_filter)
     if message_type is not None:
         clauses.append("message_type = ?")
         params.append(message_type)
+    if status is not None:
+        clauses.append("status = ?")
+        params.append(status)
     if action_id is not None:
         clauses.append("action_id = ?")
         params.append(action_id)
@@ -734,7 +787,6 @@ async def get_messages(
     if clauses:
         query += " WHERE " + " AND ".join(clauses)
 
-    # For latest or history paging take the last N; otherwise first N after cursor.
     if latest or before_id is not None:
         query += " ORDER BY id DESC LIMIT ?"
     else:
@@ -747,25 +799,15 @@ async def get_messages(
     messages = [_message_out_from_row(row) for row in rows]
     if latest or before_id is not None:
         messages.reverse()
-    logger.debug(
-        "GET /api/messages role=%s count=%d task_id=%s message_type=%s action_id=%s approval_id=%s typed_kind=%s correlation_id=%s reply_to_id=%s latest=%s",
-        role,
-        len(messages),
-        task_id,
-        message_type,
-        action_id,
-        approval_id,
-        typed_kind,
-        correlation_id,
-        reply_to_id,
-        latest,
-    )
     return messages
 
 
 @app.post("/api/messages", response_model=MessageOut)
 async def post_message(msg: MessageCreate, request: Request):
-    """Post a new Markdown message. Token (header preferred, or body) determines the role."""
+    """Post an order (Master) or an execution report (Agent).
+
+    Auth token in Authorization Bearer header or request body.
+    """
     role = await require_reader(request, msg.token)
     await check_rate_limit(role)
 
@@ -773,7 +815,9 @@ async def post_message(msg: MessageCreate, request: Request):
     if not content:
         raise HTTPException(status_code=400, detail="Content cannot be empty")
 
-    task_id = msg.task_id
+    order_id = msg.order_id or msg.task_id
+    task_id = msg.task_id or msg.order_id
+
     message_type = None
     if msg.message_type:
         normalized_type = msg.message_type
@@ -784,16 +828,29 @@ async def post_message(msg: MessageCreate, request: Request):
             )
         message_type = normalized_type
 
+    status = msg.status
+    if status and status not in VALID_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid status '{status}'. Allowed statuses: {sorted(VALID_STATUSES)}",
+        )
+
     envelope = None
     if msg.typed is not None:
         envelope = parse_typed_envelope(msg.typed)
         validate_legacy_kind_consistency(message_type, envelope)
         _validate_typed_envelope_size(envelope)
 
+    message_key = envelope.message_key if envelope is not None else msg.message_key
+    correlation_id = envelope.correlation_id if envelope is not None else None
+    reply_to_id = envelope.reply_to_id if envelope is not None else msg.reply_to_id
+
     submission_fingerprint = _submission_fingerprint(
         content=content,
-        task_id=msg.task_id,
+        order_id=order_id,
+        task_id=task_id,
         message_type=message_type,
+        status=status,
         action_id=msg.action_id,
         approval_id=msg.approval_id,
         next_action=msg.next_action,
@@ -803,8 +860,8 @@ async def post_message(msg: MessageCreate, request: Request):
     typed_storage_values = _typed_storage_values(envelope)
 
     async with connect_db() as db:
-        if envelope is not None:
-            existing = await _find_message_by_key(db, role, envelope.message_key)
+        if message_key is not None:
+            existing = await _find_message_by_key(db, role, message_key)
             if existing is not None:
                 existing_fingerprint = _row_submission_fingerprint(existing)
                 if existing_fingerprint == submission_fingerprint:
@@ -815,43 +872,67 @@ async def post_message(msg: MessageCreate, request: Request):
                     status_code=409,
                 )
 
-            target = None
-            target_typed = None
-            if envelope.reply_to_id is not None:
-                target = await _find_message_by_id(db, envelope.reply_to_id)
-                target_typed = _typed_envelope_from_row(target) if target is not None else None
-            validate_reply_relationship(envelope, role, target, target_typed)
+        if reply_to_id is not None:
+            target = await _find_message_by_id(db, reply_to_id)
+            target_typed = _typed_envelope_from_row(target) if target is not None else None
+            if envelope is not None:
+                validate_reply_relationship(envelope, role, target, target_typed)
+            else:
+                if target is None:
+                    raise BridgeProtocolError(
+                        "E_BRIDGE_REPLY_NOT_FOUND",
+                        f"reply target {reply_to_id} was not found",
+                    )
+                target_role = target["role"]
+                if target_role == role:
+                    raise BridgeProtocolError(
+                        "E_BRIDGE_REPLY_ROLE_INVALID",
+                        "Replies must target a message authored by the opposite role",
+                    )
 
         created_at = time.time()
+        payload_json = typed_storage_values[6]
+        if payload_json is None and msg.payload is not None:
+            payload_json = _json_dumps(msg.payload)
+
         try:
             cursor = await db.execute(
                 """
                 INSERT INTO messages (
-                    role, content, created_at, task_id, message_type,
+                    role, content, created_at, order_id, task_id, message_type, status,
                     action_id, approval_id, next_action, reason_code,
                     typed_schema_version, typed_kind, message_key, correlation_id,
                     reply_to_id, expects_reply, typed_payload_json, canonical_refs_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     role,
                     content,
                     created_at,
+                    order_id,
                     task_id,
                     message_type,
+                    status,
                     msg.action_id,
                     msg.approval_id,
                     msg.next_action,
                     msg.reason_code,
-                    *typed_storage_values,
+                    typed_storage_values[0],
+                    typed_storage_values[1],
+                    message_key,
+                    correlation_id,
+                    reply_to_id,
+                    typed_storage_values[5],
+                    payload_json,
+                    typed_storage_values[7],
                 ),
             )
             await db.commit()
         except aiosqlite.IntegrityError:
             await db.rollback()
-            if envelope is None:
+            if message_key is None:
                 raise
-            existing = await _find_message_by_key(db, role, envelope.message_key)
+            existing = await _find_message_by_key(db, role, message_key)
             if existing is None:
                 raise
             existing_fingerprint = _row_submission_fingerprint(existing)
@@ -872,15 +953,20 @@ async def post_message(msg: MessageCreate, request: Request):
         role=role,
         content=content,
         created_at=created_at,
+        order_id=order_id,
         task_id=task_id,
         message_type=message_type,
+        status=status,
+        reply_to_id=reply_to_id,
+        message_key=message_key,
+        payload=msg.payload if envelope is None else envelope.payload.model_dump(mode="json", exclude_none=False),
+        typed=envelope_to_dict(envelope) if envelope is not None else None,
+        typed_integrity="VALID" if envelope is not None else "NOT_APPLICABLE",
+        typed_error=None,
         action_id=msg.action_id,
         approval_id=msg.approval_id,
         next_action=msg.next_action,
         reason_code=msg.reason_code,
-        typed=envelope_to_dict(envelope) if envelope is not None else None,
-        typed_integrity="VALID" if envelope is not None else "NOT_APPLICABLE",
-        typed_error=None,
     )
     broadcast(out)
     return out
@@ -938,11 +1024,7 @@ async def event_stream(request: Request, queue: asyncio.Queue):
 
 @app.get("/api/stream")
 async def stream(request: Request, token: str | None = None, ticket: str | None = None):
-    """Server-Sent Events stream of new messages (real-time push).
-
-    Browser clients use a short-lived ticket. The legacy token query parameter
-    remains available for non-browser clients for backward compatibility.
-    """
+    """Server-Sent Events stream of new messages (real-time push)."""
     if ticket:
         await resolve_sse_ticket(ticket)
     else:
@@ -962,7 +1044,7 @@ async def healthz():
 
 @app.get("/api/status")
 async def status():
-    """Public health check + last activity (no message contents exposed)."""
+    """Public health check + activity statistics."""
     async with connect_db() as db:
         cursor = await db.execute(
             "SELECT role, created_at FROM messages ORDER BY id DESC LIMIT 1"

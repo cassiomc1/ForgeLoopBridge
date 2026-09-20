@@ -1,24 +1,22 @@
 # Changelog
 
-## Unreleased
+## 3.0.0 - 2026-09-20
+
+### Removed
+- Completely removed all ForgeLoop protocol coupling, version compatibility matrices, context projections, and capability gates.
+- Removed external live observer scripts and audit artifacts.
+- Removed unused banners and legacy validation documents.
+
+### Added
+- Streamlined Master (`master`) and Agent (`agent`) architecture for direct, high-reliability order and execution exchange.
+- Native `ORDER` and `EXECUTION` message types with execution statuses (`PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `BLOCKED`).
+- Primary authentication tokens `MASTER_TOKEN` and `AGENT_TOKEN` (retaining backward-compatible fallback for `ENGINEER_TOKEN` and `WORKER_TOKEN`).
+- Clean, autonomous agent polling runners in `examples/worker_poll.py` and `examples/agent_worker.py`.
 
 ### Changed
-
-- Revalidated the Bridge against the published
-  `@cassiomc1/forgeloop@1.13.0` package at git head
-  `4fbc9f1463c66f0250f46cb76bc4d0c389c8c83c`.
-- Documented ForgeLoop-owned multi-language, nested-project, and ownership
-  detection changes while preserving the Protocol v1, Integration API v1,
-  `task/context` schema v1, and Bridge Typed Message Schema v1 boundaries.
-- Preserved all canonical ordered `selectedGuideIds` values, including the
-  new language specialist IDs, without adding Bridge-side project detection or
-  a duplicate ForgeLoop project/graph model.
-
-### Fixed
-
-- Kept package version informational: compatibility remains capability-first
-  and fails closed on unknown declared protocol, integration, or consumed
-  context versions.
+- Streamlined database migrations and indexing in SQLite WAL mode.
+- Modernized web interface (AgentBridge) with order filtering and real-time Server-Sent Events push.
+- Rewrote documentation to be clear, concise, and focused on Master-Agent workflows.
 
 ## 2.2.1 - 2026-09-10
 

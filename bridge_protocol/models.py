@@ -1,13 +1,12 @@
-"""Pydantic models for ForgeLoopBridge Typed Message Schema v1.
+"""Pydantic models for Master-Agent Bridge protocol.
 
-These models describe coordination intent and copied references only. They do
-not model or authorize ForgeLoop lifecycle, policy, verification, or
-attestation state.
+Minimal, stable, and reliable models for exchanging orders (Master)
+and execution reports (Agent) with idempotency and reply linkage.
 """
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -30,53 +29,55 @@ class BridgeModel(BaseModel):
 
     @field_validator("*", mode="after")
     @classmethod
-    def reject_control_characters(cls, value):
+    def reject_control_characters(cls, value: Any) -> Any:
         if isinstance(value, str) and any(ord(char) < 32 or ord(char) == 127 for char in value):
             raise ValueError("typed string values must contain printable characters only")
         return value
 
 
+Role = Literal["master", "agent"]
+ExecutionStatus = Literal["PENDING", "RUNNING", "COMPLETED", "FAILED", "BLOCKED"]
+
 TypedMessageKind = Literal[
     "TASK_REQUEST",
+    "ORDER",
     "STATUS_UPDATE",
+    "EXECUTION",
     "DECISION_REQUEST",
     "DECISION_RESPONSE",
     "DECISION_NOTICE",
     "BLOCKER",
     "REVIEW_RESULT",
-    "CONTROL_NOTICE",
-    "HANDOFF_NOTICE",
-    "VERIFICATION_REPORT",
-    "ATTESTATION_REPORT",
 ]
 
 TYPED_MESSAGE_KINDS = frozenset(
     {
         "TASK_REQUEST",
+        "ORDER",
         "STATUS_UPDATE",
+        "EXECUTION",
         "DECISION_REQUEST",
         "DECISION_RESPONSE",
         "DECISION_NOTICE",
         "BLOCKER",
         "REVIEW_RESULT",
-        "CONTROL_NOTICE",
-        "HANDOFF_NOTICE",
-        "VERIFICATION_REPORT",
-        "ATTESTATION_REPORT",
     }
 )
+ORDER_TYPES = frozenset({"ORDER", "TASK", "INSTRUCTION", "DECISION", "CANCEL"})
+EXECUTION_TYPES = frozenset({"EXECUTION", "STATUS", "PROGRESS", "RESULT", "BLOCKER"})
+ALL_MESSAGE_TYPES = ORDER_TYPES | EXECUTION_TYPES | frozenset({"MESSAGE", "GENERAL"})
 SUPPORTED_TYPED_SCHEMA_VERSIONS = (1,)
 
 
 class CanonicalRef(BridgeModel):
-    """An opaque reference copied from a canonical ForgeLoop result."""
+    """An opaque reference for coordination (e.g. commit hash, task ID, external doc)."""
 
     kind: str = Field(min_length=1, max_length=64)
     ref: str = Field(min_length=1, max_length=500)
 
 
 class TaskRequestPayload(BridgeModel):
-    kind: Literal["TASK_REQUEST"] = "TASK_REQUEST"
+    kind: Literal["TASK_REQUEST", "ORDER"] = "TASK_REQUEST"
     goal: str = Field(min_length=1, max_length=10_000)
     acceptance_criteria: list[str] = Field(default_factory=list, max_length=64)
     preferred_work_type: str | None = Field(default=None, min_length=1, max_length=100)
@@ -104,67 +105,8 @@ class StatusProgress(BridgeModel):
         return self
 
 
-class ExecutionProfileProjection(BridgeModel):
-    """Opaque canonical execution-profile values copied for host presentation."""
-
-    requested: Literal["auto", "light", "balanced", "full"] | None = None
-    floor: Literal["light", "balanced", "full"]
-    resolved: Literal["light", "balanced", "full"]
-    reasons: list[str] = Field(default_factory=list, max_length=32)
-    escalated: bool
-
-    @field_validator("reasons")
-    @classmethod
-    def validate_reasons(cls, value: list[str]) -> list[str]:
-        return _validate_printable_string_list(value)
-
-
-class ContextPolicyProjection(BridgeModel):
-    """Bounded presentation policy copied from canonical task/context."""
-
-    context_depth: str = Field(min_length=1, max_length=100)
-    output: str = Field(min_length=1, max_length=100)
-    plan_depth: str = Field(min_length=1, max_length=100)
-    guide_strategy: str = Field(min_length=1, max_length=100)
-    verification_strategy: str = Field(min_length=1, max_length=100)
-    optional_artifacts: str = Field(min_length=1, max_length=100)
-    required_sections: list[str] = Field(default_factory=list, max_length=32)
-    excluded_context: list[str] = Field(default_factory=list, max_length=64)
-    allowed_optional_context: list[str] = Field(default_factory=list, max_length=64)
-
-    @field_validator("required_sections", "excluded_context", "allowed_optional_context")
-    @classmethod
-    def validate_policy_lists(cls, value: list[str]) -> list[str]:
-        return _validate_printable_string_list(value)
-
-
-class ContextUsageItems(BridgeModel):
-    task_context: int | None = Field(default=None, ge=0)
-    guides: int | None = Field(default=None, ge=0)
-    history: int | None = Field(default=None, ge=0)
-    protocol_instructions: int | None = Field(default=None, ge=0)
-    repository_context: int | None = Field(default=None, ge=0)
-    other: int | None = Field(default=None, ge=0)
-
-
-class ContextUsageReport(BridgeModel):
-    """Host-observed context usage; UNKNOWN is never treated as zero."""
-
-    source: Literal["HOST_REPORTED", "UNKNOWN"]
-    profile: Literal["light", "balanced", "full"] | None = None
-    items: ContextUsageItems
-
-    @model_validator(mode="after")
-    def unknown_usage_is_null(self):
-        if self.source == "UNKNOWN" and any(
-            value is not None for value in self.items.model_dump().values()
-        ):
-            raise ValueError("UNKNOWN context usage must keep every item null")
-        return self
-
-
 class StatusUpdatePayload(BridgeModel):
-    kind: Literal["STATUS_UPDATE"] = "STATUS_UPDATE"
+    kind: Literal["STATUS_UPDATE", "EXECUTION"] = "STATUS_UPDATE"
     state: Literal[
         "RECEIVED",
         "IN_PROGRESS",
@@ -172,12 +114,11 @@ class StatusUpdatePayload(BridgeModel):
         "BLOCKED",
         "PARTIALLY_VERIFIED",
         "COMPLETE_REPORTED",
+        "COMPLETED",
+        "FAILED",
     ]
     summary: str = Field(min_length=1, max_length=10_000)
     progress: StatusProgress | None = None
-    execution_profile: ExecutionProfileProjection | None = None
-    context_policy: ContextPolicyProjection | None = None
-    context_usage: ContextUsageReport | None = None
 
 
 class DecisionOption(BridgeModel):
@@ -220,8 +161,6 @@ class BlockerPayload(BridgeModel):
     kind: Literal["BLOCKER"] = "BLOCKER"
     category: str = Field(min_length=1, max_length=100)
     summary: str = Field(min_length=1, max_length=10_000)
-    canonical_reason_code: str | None = Field(default=None, min_length=1, max_length=160)
-    canonical_next_action: str | None = Field(default=None, min_length=1, max_length=200)
     retryable: bool | None = None
 
 
@@ -237,62 +176,6 @@ class ReviewResultPayload(BridgeModel):
     items: list[ReviewItem] = Field(default_factory=list, max_length=64)
 
 
-class ControlNoticePayload(BridgeModel):
-    kind: Literal["CONTROL_NOTICE"] = "CONTROL_NOTICE"
-    canonical_next_action: str | None = Field(default=None, min_length=1, max_length=200)
-    canonical_reason_codes: list[str] = Field(default_factory=list, max_length=64)
-    authority_required: bool = False
-    approval_required: bool = False
-    host_action_required: bool = False
-    reconciliation_authority_required: bool = False
-
-    @field_validator("canonical_reason_codes")
-    @classmethod
-    def validate_reason_codes(cls, value: list[str]) -> list[str]:
-        return _validate_printable_string_list(value)
-
-
-class HandoffNoticePayload(BridgeModel):
-    kind: Literal["HANDOFF_NOTICE"] = "HANDOFF_NOTICE"
-    handoff_ref: str = Field(min_length=1, max_length=500)
-    summary: str = Field(min_length=1, max_length=10_000)
-
-
-class VerificationReportPayload(BridgeModel):
-    kind: Literal["VERIFICATION_REPORT"] = "VERIFICATION_REPORT"
-    canonical_result: str = Field(min_length=1, max_length=100)
-    # Deprecated v1 compatibility field. New clients should use the precise
-    # requested/resolved fields below.
-    scope_mode: Literal["AUTO", "CHANGED", "CLAIMED", "FULL"] | None = None
-    requested_scope_mode: Literal["AUTO", "CHANGED", "CLAIMED", "FULL"] | None = None
-    resolved_scope_mode: Literal["CHANGED", "CLAIMED", "FULL", "UNRESOLVED"] | None = None
-    scope_ref: str | None = Field(default=None, min_length=1, max_length=500)
-    checker_id: str | None = Field(default=None, min_length=1, max_length=200)
-    execution_ref: str | None = Field(default=None, min_length=1, max_length=500)
-    summary: str = Field(min_length=1, max_length=10_000)
-
-    @model_validator(mode="after")
-    def validate_scope_representation(self):
-        if self.scope_mode is None and self.requested_scope_mode is None and self.resolved_scope_mode is None:
-            raise ValueError("verification report must include a scope representation")
-        if (
-            self.scope_mode is not None
-            and self.requested_scope_mode is not None
-            and self.scope_mode != self.requested_scope_mode
-        ):
-            raise ValueError("scope_mode must match requested_scope_mode when both are present")
-        return self
-
-
-class AttestationReportPayload(BridgeModel):
-    kind: Literal["ATTESTATION_REPORT"] = "ATTESTATION_REPORT"
-    canonical_status: str = Field(min_length=1, max_length=100)
-    attestation_ref: str | None = Field(default=None, min_length=1, max_length=500)
-    revision_ref: str | None = Field(default=None, min_length=1, max_length=500)
-    range_status: str = Field(min_length=1, max_length=100)
-    signature_status: str = Field(min_length=1, max_length=100)
-
-
 TypedPayload = Annotated[
     TaskRequestPayload
     | StatusUpdatePayload
@@ -300,11 +183,7 @@ TypedPayload = Annotated[
     | DecisionResponsePayload
     | DecisionNoticePayload
     | BlockerPayload
-    | ReviewResultPayload
-    | ControlNoticePayload
-    | HandoffNoticePayload
-    | VerificationReportPayload
-    | AttestationReportPayload,
+    | ReviewResultPayload,
     Field(discriminator="kind"),
 ]
 
@@ -312,7 +191,7 @@ TypedPayload = Annotated[
 class TypedEnvelopeV1(BridgeModel):
     schema_version: Literal[1] = 1
     kind: TypedMessageKind
-    message_key: str = Field(min_length=8, max_length=200)
+    message_key: str = Field(min_length=4, max_length=200)
     correlation_id: str | None = Field(default=None, min_length=1, max_length=200)
     reply_to_id: int | None = Field(default=None, ge=1)
     expects_reply: bool = False

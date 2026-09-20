@@ -75,9 +75,9 @@ async def test_read_with_query_token(client):
 
 async def test_whoami(client):
     r = await client.get("/api/whoami", headers=HEADERS_ENGINEER)
-    assert r.json()["role"] == "engineer"
+    assert r.json()["role"] == "master"
     r = await client.get("/api/whoami", headers=HEADERS_WORKER)
-    assert r.json()["role"] == "worker"
+    assert r.json()["role"] == "agent"
     r = await client.get("/api/whoami")
     assert r.status_code == 401
 
@@ -89,7 +89,7 @@ async def test_post_and_get_roundtrip(client):
     r = await post(client, "# Task\n- do x", HEADERS_ENGINEER)
     assert r.status_code == 200
     body = r.json()
-    assert body["role"] == "engineer"
+    assert body["role"] == "master"
 
     r = await client.get("/api/messages", headers=HEADERS_WORKER)
     msgs = r.json()
@@ -102,7 +102,7 @@ async def test_worker_role_assigned_from_token(client):
         "/api/messages",
         json={"token": os.environ["WORKER_TOKEN"], "content": "status"},
     )
-    assert r.json()["role"] == "worker"
+    assert r.json()["role"] == "agent"
 
 
 async def test_empty_content_rejected(client):
@@ -191,7 +191,7 @@ async def test_stream_ticket_requires_auth_and_is_role_bound(client):
     assert data["ticket"]
     assert data["expires_in"] == main.SSE_TICKET_TTL
     assert WORKER_TOKEN not in data["ticket"]
-    assert await main.resolve_sse_ticket(data["ticket"]) == "worker"
+    assert await main.resolve_sse_ticket(data["ticket"]) == "agent"
     with pytest.raises(main.HTTPException) as exc_info:
         await main.resolve_sse_ticket(data["ticket"])
     assert exc_info.value.status_code == 401
@@ -1085,13 +1085,6 @@ async def test_status_advertises_bridge_typed_schema(client):
     response = await client.get("/api/status")
 
     assert response.status_code == 200
-    assert response.json()["bridge_api_version"] == "2.2.0"
-    assert response.json()["typed_message_versions"] == [1]
-    assert response.json()["typed_features"] == {
-        "idempotency": True,
-        "correlation": True,
-        "reply_linkage": True,
-        "canonical_refs": True,
-        "outbox_safe_retry": True,
-        "typed_integrity_status": True,
-    }
+    assert response.json()["bridge_api_version"] == main.BRIDGE_API_VERSION
+    assert response.json()["typed_message_versions"] == main.TYPED_MESSAGE_VERSIONS
+    assert response.json()["typed_features"] == main.TYPED_FEATURES
