@@ -163,6 +163,19 @@ async def test_delete_missing_message(client):
     assert r.status_code == 404
 
 
+async def test_delete_by_author_alias(client):
+    # Message stored with role 'engineer' can be deleted by caller authenticated as master/engineer
+    async with main.connect_db() as db:
+        cur = await db.execute(
+            "INSERT INTO messages (role, content, created_at) VALUES ('engineer', 'legacy order', 123456.0)"
+        )
+        mid = cur.lastrowid
+        await db.commit()
+    r = await client.delete(f"/api/messages/{mid}", headers=HEADERS_ENGINEER)
+    assert r.status_code == 200
+
+
+
 # ─── Status ───────────────────────────────────────────────────────────────────
 
 
@@ -1189,4 +1202,51 @@ async def test_pending_orders_endpoint(client):
     pending_ids = [m["order_id"] for m in pending_list]
     assert "ORD-PENDING-1" in pending_ids
     assert "ORD-DONE-2" not in pending_ids
+
+
+async def test_role_filter_alias_query(client):
+    async with main.connect_db() as db:
+        await db.execute("INSERT INTO messages (role, content, created_at) VALUES ('engineer', 'legacy master msg', 1.0)")
+        await db.execute("INSERT INTO messages (role, content, created_at) VALUES ('master', 'new master msg', 2.0)")
+        await db.execute("INSERT INTO messages (role, content, created_at) VALUES ('worker', 'legacy worker msg', 3.0)")
+        await db.execute("INSERT INTO messages (role, content, created_at) VALUES ('agent', 'new agent msg', 4.0)")
+        await db.commit()
+    r = await client.get("/api/messages?role=master", headers=HEADERS_ENGINEER)
+    assert r.status_code == 200
+    msgs = r.json()
+    assert len(msgs) == 2
+    assert {m["content"] for m in msgs} == {"legacy master msg", "new master msg"}
+
+    r_agent = await client.get("/api/messages?role=agent", headers=HEADERS_WORKER)
+    assert r_agent.status_code == 200
+    msgs_agent = r_agent.json()
+    assert len(msgs_agent) == 2
+    assert {m["content"] for m in msgs_agent} == {"legacy worker msg", "new agent msg"}
+
+
+async def test_cancelled_status_allowed(client):
+    r = await client.post(
+        "/api/messages",
+        json={"content": "Cancelling task", "status": "CANCELLED", "order_id": "ORD-CANCEL-1"},
+        headers=HEADERS_ENGINEER,
+    )
+    assert r.status_code == 200
+    assert r.json()["status"] == "CANCELLED"
+
+
+async def test_pending_orders_excludes_cancelled(client):
+    async with main.connect_db() as db:
+        await db.execute(
+            "INSERT INTO messages (role, content, order_id, status, created_at) VALUES ('master', 'active order', 'ORD-ACT-1', 'PENDING', 1.0)"
+        )
+        await db.execute(
+            "INSERT INTO messages (role, content, order_id, status, created_at) VALUES ('master', 'cancelled order', 'ORD-CNC-1', 'CANCELLED', 2.0)"
+        )
+        await db.commit()
+    res = await client.get("/api/orders/pending", headers=HEADERS_ENGINEER)
+    assert res.status_code == 200
+    pending = res.json()
+    assert len(pending) == 1
+    assert pending[0]["order_id"] == "ORD-ACT-1"
+
 

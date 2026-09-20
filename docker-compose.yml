@@ -1,5 +1,6 @@
 services:
-  forgebridge:
+  bridge:
+    container_name: bridge
     build: .
     ports:
       - "${PORT:-8000}:${PORT:-8000}"

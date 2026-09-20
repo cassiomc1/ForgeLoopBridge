@@ -86,6 +86,9 @@ def test_new_message_types_appear_in_composer_and_filters():
         assert f'value="{message_type}"' in INDEX
 
     assert 'id="message-type-filter"' in INDEX
+    assert 'id="status-filter"' in INDEX
+    assert "currentStatusFilter" in INDEX
+
 
 
 def test_action_and_approval_metadata_have_safe_rendering():
