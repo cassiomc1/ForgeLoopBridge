@@ -1088,3 +1088,105 @@ async def test_status_advertises_bridge_typed_schema(client):
     assert response.json()["bridge_api_version"] == main.BRIDGE_API_VERSION
     assert response.json()["typed_message_versions"] == main.TYPED_MESSAGE_VERSIONS
     assert response.json()["typed_features"] == main.TYPED_FEATURES
+
+
+# ─── Web LLM & Convenience Endpoints Tests ────────────────────────────────────
+
+
+async def test_cors_headers_present(client):
+    response = await client.get("/healthz", headers={"Origin": "https://chatgpt.com"})
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == "https://chatgpt.com"
+    assert response.headers.get("access-control-allow-credentials") == "true"
+
+
+async def test_prompts_endpoints_return_content(client):
+    res_master = await client.get("/api/prompts/master")
+    assert res_master.status_code == 200
+    data_master = res_master.json()
+    assert data_master["role"] == "master"
+    assert "Master" in data_master["prompt"]
+    assert "ORDER ID" in data_master["prompt"]
+
+    res_agent = await client.get("/api/prompts/agent")
+    assert res_agent.status_code == 200
+    data_agent = res_agent.json()
+    assert data_agent["role"] == "agent"
+    assert "Agent" in data_agent["prompt"]
+    assert "STATUS:" in data_agent["prompt"]
+
+
+async def test_orders_endpoint_master_only(client):
+    # Agent should get 403
+    forbidden = await client.post(
+        "/api/orders",
+        headers=HEADERS_WORKER,
+        json={"order_id": "ORD-1", "content": "Test instruction", "status": "PENDING"},
+    )
+    assert forbidden.status_code == 403
+
+    # Master should succeed
+    success = await client.post(
+        "/api/orders",
+        headers=HEADERS_ENGINEER,
+        json={"order_id": "ORD-1", "content": "Master instruction", "status": "PENDING"},
+    )
+    assert success.status_code == 200
+    data = success.json()
+    assert data["role"] == "master"
+    assert data["order_id"] == "ORD-1"
+    assert data["message_type"] == "ORDER"
+    assert data["status"] == "PENDING"
+
+
+async def test_executions_endpoint_agent_only(client):
+    # Master should get 403
+    forbidden = await client.post(
+        "/api/executions",
+        headers=HEADERS_ENGINEER,
+        json={"order_id": "ORD-1", "content": "Execution result", "status": "COMPLETED"},
+    )
+    assert forbidden.status_code == 403
+
+    # Agent should succeed
+    success = await client.post(
+        "/api/executions",
+        headers=HEADERS_WORKER,
+        json={"order_id": "ORD-1", "content": "Done all tasks", "status": "COMPLETED"},
+    )
+    assert success.status_code == 200
+    data = success.json()
+    assert data["role"] == "agent"
+    assert data["order_id"] == "ORD-1"
+    assert data["message_type"] == "EXECUTION"
+    assert data["status"] == "COMPLETED"
+
+
+async def test_pending_orders_endpoint(client):
+    # Create order 1 (pending)
+    await client.post(
+        "/api/orders",
+        headers=HEADERS_ENGINEER,
+        json={"order_id": "ORD-PENDING-1", "content": "First pending order"},
+    )
+    # Create order 2 (will be completed)
+    await client.post(
+        "/api/orders",
+        headers=HEADERS_ENGINEER,
+        json={"order_id": "ORD-DONE-2", "content": "Second order"},
+    )
+    # Agent completes order 2
+    await client.post(
+        "/api/executions",
+        headers=HEADERS_WORKER,
+        json={"order_id": "ORD-DONE-2", "content": "Completed order 2", "status": "COMPLETED"},
+    )
+
+    # Query pending orders
+    res = await client.get("/api/orders/pending", headers=HEADERS_ENGINEER)
+    assert res.status_code == 200
+    pending_list = res.json()
+    pending_ids = [m["order_id"] for m in pending_list]
+    assert "ORD-PENDING-1" in pending_ids
+    assert "ORD-DONE-2" not in pending_ids
+

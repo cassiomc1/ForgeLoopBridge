@@ -77,11 +77,42 @@ Open `http://localhost:8000` in your browser to access the dashboard.
          │                                                 │
          │                                                 │ 3. Execute
          │                                                 │    order...
-         │                                                 │
          │  4. POST /api/messages (EXECUTION)              │
          │     {"order_id": "ORD-1", "status": "COMPLETED"}│
          │◄────────────────────────────────────────────────┤
 ```
+
+---
+
+## Using with Any Web Chat (Claude, ChatGPT, Gemini) or Agent
+
+The Bridge is fully generic and designed so that **either or both** the Master and the Agent can be operated through any AI chat interface (Claude Web, ChatGPT Web, Gemini Web, DeepSeek, Grok) or programmatic runner.
+
+### 1. The Human-in-the-Loop Copy/Paste Workflow
+1. **Master (Architect)**:
+   - Click **"🤖 AI Chat"** in the Bridge dashboard or grab `prompts/web_chat_master.md`.
+   - Start a conversation in Claude, ChatGPT, or Gemini with that prompt.
+   - When the AI generates an Order, paste it into the Bridge (or use the composer).
+2. **Agent (Executor)**:
+   - On any Order card in the Bridge dashboard, click **"📋 For Agent"**.
+   - Paste the copied prompt into your Agent chat session (Claude, ChatGPT, Gemini).
+   - Once the Agent responds, copy its reply and click **"⚡ Smart Paste"** in the Bridge composer.
+   - The Bridge automatically extracts the `STATUS: ...` and `ORDER ID: ...` and fills the fields for you!
+3. **Closing the Loop**:
+   - On any Execution card in the Bridge dashboard, click **"📋 For Master"** to copy the update and paste it back to your Master chat for the next order.
+
+### 2. Direct API Integration (Custom Actions / Browser Extensions / CLI)
+CORS is enabled out of the box (`Access-Control-Allow-Origin: *` with credentials support), allowing web-based clients and browser extensions to call the Bridge directly:
+
+- **Fetch System Prompts**:
+  - `GET /api/prompts/master`: Returns universal Master system prompt and guidelines.
+  - `GET /api/prompts/agent`: Returns universal Agent system prompt and execution formats.
+- **Pending Orders**:
+  - `GET /api/orders/pending`: Returns recent orders not yet marked as `COMPLETED`.
+- **Post Orders**:
+  - `POST /api/orders`: Master endpoint to publish an order (`order_id`, `content`, `status`).
+- **Post Executions**:
+  - `POST /api/executions`: Agent endpoint to report results (`order_id`, `content`, `status`).
 
 ---
 
