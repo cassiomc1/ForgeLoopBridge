@@ -170,3 +170,18 @@ def test_frontend_exposes_accessible_persistent_light_dark_theme_toggle():
     assert "aria-pressed" in INDEX
     assert "Switch to" in INDEX
     assert "applyTheme(document.documentElement.dataset.theme || 'light', false)" in INDEX
+
+
+def test_frontend_web_llm_assistant_features():
+    assert 'id="llm-assistant-btn"' in INDEX
+    assert 'id="llm-modal"' in INDEX
+    assert 'id="llm-master-prompt"' in INDEX
+    assert 'id="llm-agent-prompt"' in INDEX
+    assert 'id="copy-master-prompt-btn"' in INDEX
+    assert 'id="copy-agent-prompt-btn"' in INDEX
+    assert 'id="composer-status"' in INDEX
+    assert 'id="smart-paste-btn"' in INDEX
+    assert "Copy formatted order for Agent LLM" in INDEX
+    assert "Copy formatted update for Master LLM" in INDEX
+    assert "The Master or Agent can post the first one." in INDEX
+

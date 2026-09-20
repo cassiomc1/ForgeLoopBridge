@@ -523,6 +523,43 @@
     </div>
   </div>
 
+  <div class="unlock-overlay hidden" id="llm-modal">
+    <div class="unlock-box" style="width: min(680px, 94vw); max-height: 88vh; overflow-y: auto;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 8px;">
+        <h2 style="font-size:1.15rem;">🤖 AI Chat Assistant (Claude, ChatGPT, Gemini, etc.)</h2>
+        <button class="delete-btn" id="close-llm-modal" style="font-size:1.2rem; cursor:pointer;" title="Close">✕</button>
+      </div>
+      <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:12px;">
+        Run the <strong>Master</strong> (Architect) or <strong>Agent</strong> (Executor) via any web chat interface (Claude Web, ChatGPT Web, Gemini Web, etc.) or external agent.
+      </p>
+      <div style="display:flex; gap:8px; margin-bottom:12px;">
+        <button type="button" class="history-btn" id="tab-master-btn" style="flex:1; margin-bottom:0; font-weight:600;">Master (Architect)</button>
+        <button type="button" class="history-btn" id="tab-agent-btn" style="flex:1; margin-bottom:0;">Agent (Executor)</button>
+        <button type="button" class="history-btn" id="tab-guide-btn" style="flex:1; margin-bottom:0;">Universal Guide</button>
+      </div>
+      <div id="llm-tab-master" class="llm-tab-panel">
+        <textarea id="llm-master-prompt" readonly style="min-height:180px; font-family:ui-monospace, monospace; font-size:0.8rem;"></textarea>
+        <div style="margin-top:8px; display:flex; justify-content:flex-end;">
+          <button type="button" class="primary" id="copy-master-prompt-btn">📋 Copy Master Prompt</button>
+        </div>
+      </div>
+      <div id="llm-tab-agent" class="llm-tab-panel hidden">
+        <textarea id="llm-agent-prompt" readonly style="min-height:180px; font-family:ui-monospace, monospace; font-size:0.8rem;"></textarea>
+        <div style="margin-top:8px; display:flex; justify-content:flex-end;">
+          <button type="button" class="primary" id="copy-agent-prompt-btn">📋 Copy Agent Prompt</button>
+        </div>
+      </div>
+      <div id="llm-tab-guide" class="llm-tab-panel hidden" style="font-size:0.85rem; line-height:1.6; color:var(--text);">
+        <p><strong>1. Running Master via Web Chat (Claude, ChatGPT, Gemini):</strong></p>
+        <p style="color:var(--text-muted);margin-bottom:8px;">Start a chat with your preferred AI using the Master Prompt. When it issues an order, paste it into this Bridge. When an execution is reported by the Agent, click <em>"📋 For Master"</em> on the execution card to copy the formatted update and paste it back into your Master chat.</p>
+        <p><strong>2. Running Agent via Web Chat (Claude, ChatGPT, Gemini):</strong></p>
+        <p style="color:var(--text-muted);margin-bottom:8px;">Start a chat with your preferred AI using the Agent Prompt. Click <em>"📋 For Agent"</em> on any order card in the Bridge to copy the prompt, and paste it into the Agent chat. When the AI finishes, copy its response and click <em>"⚡ Smart Paste"</em> below to automatically extract the status and content.</p>
+        <p><strong>3. Works with Any Agent or API:</strong></p>
+        <p style="color:var(--text-muted);">Use <code>GET /api/orders/pending</code>, <code>POST /api/orders</code>, and <code>POST /api/executions</code> for programmatic runners or tool integrations.</p>
+      </div>
+    </div>
+  </div>
+
   <header>
     <div class="logo">Agent<span>Bridge</span></div>
     <div class="status-bar">
@@ -571,6 +608,10 @@
       <span>Msgs: <strong id="total">0</strong></span>
       <span>Last: <strong id="last-role">—</strong></span>
       <span class="conn-status polling" id="conn-status">connecting…</span>
+      <button class="theme-toggle" id="llm-assistant-btn" type="button" aria-label="Open AI Chat Assistant" title="Prompts and instructions for Claude, ChatGPT, Gemini, etc.">
+        <span class="theme-icon" aria-hidden="true">🤖</span>
+        <span>AI Chat</span>
+      </button>
       <button class="theme-toggle" id="theme-toggle" type="button" aria-pressed="false" aria-label="Switch to dark theme" title="Switch to dark theme">
         <span class="theme-icon" aria-hidden="true">☾</span>
         <span class="theme-label">Light</span>
@@ -581,7 +622,7 @@
 
   <main id="board">
     <button id="load-older" class="history-btn" hidden>Load older</button>
-    <div class="empty" id="empty-state">No messages yet.<br>The Engineer or Worker can post the first one.</div>
+    <div class="empty" id="empty-state">No messages yet.<br>The Master or Agent can post the first one.</div>
   </main>
 
   <div class="composer" id="composer">
@@ -607,6 +648,14 @@
           <option value="ACTION_RECONCILED">ACTION_RECONCILED</option>
           <option value="DIAGNOSTIC">DIAGNOSTIC</option>
           <option value="POLICY_BLOCKED">POLICY_BLOCKED</option>
+        </select>
+        <select id="composer-status" class="meta-input" title="Execution status">
+          <option value="">Status (optional)</option>
+          <option value="PENDING">PENDING</option>
+          <option value="RUNNING">RUNNING</option>
+          <option value="COMPLETED">COMPLETED</option>
+          <option value="FAILED">FAILED</option>
+          <option value="BLOCKED">BLOCKED</option>
         </select>
         <input type="text" id="composer-action-id" class="meta-input" placeholder="Action ID (optional)" maxlength="200" autocomplete="off" />
         <input type="text" id="composer-approval-id" class="meta-input" placeholder="Approval ID (optional)" maxlength="200" autocomplete="off" />
@@ -641,6 +690,7 @@
       <textarea id="content" placeholder="Write in Markdown…&#10;&#10;## Task X&#10;- clear instruction&#10;- acceptance criteria"></textarea>
       <div class="composer-row">
         <span style="font-size:0.75rem;color:var(--text-muted);flex:1;">Ctrl+Enter to post · posting as <strong id="composer-role">—</strong></span>
+        <button type="button" class="history-btn" id="smart-paste-btn" style="margin-bottom:0;padding:6px 12px;font-size:0.8rem;" title="Extract status, order ID, and content from clipboard">⚡ Smart Paste</button>
         <button class="primary" id="post-btn">Post</button>
       </div>
     </div>
@@ -871,6 +921,32 @@
       header.appendChild(left);
 
       const actions = document.createElement('span');
+      actions.style.display = 'inline-flex';
+      actions.style.alignItems = 'center';
+      actions.style.gap = '6px';
+
+      const copyLlmBtn = document.createElement('button');
+      copyLlmBtn.className = 'delete-btn';
+      copyLlmBtn.style.fontSize = '0.78rem';
+      copyLlmBtn.style.padding = '2px 8px';
+      copyLlmBtn.title = isMaster
+        ? 'Copy formatted order for Agent LLM (Claude, ChatGPT, Gemini, etc.)'
+        : 'Copy formatted update for Master LLM (Claude, ChatGPT, Gemini, etc.)';
+      copyLlmBtn.textContent = isMaster ? '📋 For Agent' : '📋 For Master';
+      copyLlmBtn.addEventListener('click', async () => {
+        let text = '';
+        if (isMaster) {
+          text = `You are the Agent. Execute the following Order from Master:\n\nORDER ID: ${effectiveOrder || 'N/A'}\n\n${msg.content}\n\nWhen completed, report back using the format:\nSTATUS: COMPLETED | RUNNING | FAILED | BLOCKED\nORDER ID: ${effectiveOrder || 'N/A'}\nSUMMARY: <brief summary>\nCHANGES PERFORMED:\n- ...\nVERIFICATION RESULTS:\n- ...\nBLOCKERS / NOTES:\n<none or details>`;
+        } else {
+          text = `Here is the execution report from the Agent:\n\nORDER ID: ${effectiveOrder || 'N/A'}\nSTATUS: ${msg.status || 'COMPLETED'}\n\n${msg.content}\n\nPlease review the progress and provide the next order or instructions.`;
+        }
+        await copyToClipboard(text);
+        const orig = copyLlmBtn.textContent;
+        copyLlmBtn.textContent = '✓ Copied!';
+        setTimeout(() => { copyLlmBtn.textContent = orig; }, 1800);
+      });
+      actions.appendChild(copyLlmBtn);
+
       if (canDelete) {
         const deleteButton = document.createElement('button');
         deleteButton.className = 'delete-btn';
@@ -1118,6 +1194,8 @@
         const payload = { content };
         if (taskIdInput) payload.task_id = taskIdInput;
         if (typeInput) payload.message_type = typeInput;
+        const statusInput = document.getElementById('composer-status')?.value;
+        if (statusInput) payload.status = statusInput;
         if (actionIdInput) payload.action_id = actionIdInput;
         if (approvalIdInput) payload.approval_id = approvalIdInput;
 
@@ -1196,6 +1274,8 @@
         appendMessage(msg);
         lastId = Math.max(lastId, msg.id);
         document.getElementById('content').value = '';
+        const statusEl = document.getElementById('composer-status');
+        if (statusEl) statusEl.value = '';
         document.getElementById('composer-action-id').value = '';
         document.getElementById('composer-approval-id').value = '';
         typedMessageKeyInput.value = '';
@@ -1302,7 +1382,148 @@
       }
     }
 
+    async function copyToClipboard(text) {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+      } catch (_) { /* fallback */ }
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    let masterPromptCache = '';
+    let agentPromptCache = '';
+
+    async function loadLlmPrompts() {
+      if (!masterPromptCache) {
+        try {
+          const res = await fetch('/api/prompts/master');
+          if (res.ok) {
+            const data = await res.json();
+            masterPromptCache = data.prompt || '';
+          }
+        } catch (_) {}
+      }
+      if (!agentPromptCache) {
+        try {
+          const res = await fetch('/api/prompts/agent');
+          if (res.ok) {
+            const data = await res.json();
+            agentPromptCache = data.prompt || '';
+          }
+        } catch (_) {}
+      }
+      const masterEl = document.getElementById('llm-master-prompt');
+      const agentEl = document.getElementById('llm-agent-prompt');
+      if (masterEl && masterPromptCache) masterEl.value = masterPromptCache;
+      if (agentEl && agentPromptCache) agentEl.value = agentPromptCache;
+    }
+
+    function openLlmModal() {
+      loadLlmPrompts();
+      document.getElementById('llm-modal').classList.remove('hidden');
+    }
+
+    function closeLlmModal() {
+      document.getElementById('llm-modal').classList.add('hidden');
+    }
+
+    function setLlmTab(tab) {
+      document.getElementById('tab-master-btn').style.fontWeight = tab === 'master' ? '600' : 'normal';
+      document.getElementById('tab-agent-btn').style.fontWeight = tab === 'agent' ? '600' : 'normal';
+      document.getElementById('tab-guide-btn').style.fontWeight = tab === 'guide' ? '600' : 'normal';
+
+      document.getElementById('llm-tab-master').classList.toggle('hidden', tab !== 'master');
+      document.getElementById('llm-tab-agent').classList.toggle('hidden', tab !== 'agent');
+      document.getElementById('llm-tab-guide').classList.toggle('hidden', tab !== 'guide');
+    }
+
+    async function handleSmartPaste() {
+      let text = '';
+      try {
+        if (navigator.clipboard && navigator.clipboard.readText) {
+          text = await navigator.clipboard.readText();
+        }
+      } catch (_) {}
+      if (!text) {
+        text = prompt('Paste the response from Claude, ChatGPT, Gemini, or your agent:');
+      }
+      if (!text || !text.trim()) return;
+
+      const trimmed = text.trim();
+
+      // Detect Status
+      const statusMatch = trimmed.match(/\bSTATUS:\s*(COMPLETED|RUNNING|FAILED|BLOCKED|PENDING)\b/i);
+      if (statusMatch) {
+        const statusVal = statusMatch[1].toUpperCase();
+        const statusEl = document.getElementById('composer-status');
+        if (statusEl) statusEl.value = statusVal;
+      }
+
+      // Detect Order / Task ID
+      const orderMatch = trimmed.match(/\bORDER(?:\s*ID)?:\s*([A-Za-z0-9_\-]+)\b/i);
+      if (orderMatch) {
+        const orderIdVal = orderMatch[1].trim();
+        const taskInput = document.getElementById('composer-task-id');
+        if (taskInput && !taskInput.value) {
+          taskInput.value = orderIdVal;
+        }
+      }
+
+      // Detect / default Message Type
+      const typeSelect = document.getElementById('composer-message-type');
+      if (typeSelect && !typeSelect.value) {
+        if (statusMatch || myRole === 'agent' || myRole === 'worker') {
+          typeSelect.value = 'EXECUTION';
+        } else if (myRole === 'master' || myRole === 'engineer') {
+          typeSelect.value = 'ORDER';
+        }
+      }
+
+      const contentEl = document.getElementById('content');
+      contentEl.value = trimmed;
+      contentEl.focus();
+    }
+
     // Wire events
+    document.getElementById('llm-assistant-btn').addEventListener('click', openLlmModal);
+    document.getElementById('close-llm-modal').addEventListener('click', closeLlmModal);
+    document.getElementById('llm-modal').addEventListener('click', (e) => {
+      if (e.target.id === 'llm-modal') closeLlmModal();
+    });
+    document.getElementById('tab-master-btn').addEventListener('click', () => setLlmTab('master'));
+    document.getElementById('tab-agent-btn').addEventListener('click', () => setLlmTab('agent'));
+    document.getElementById('tab-guide-btn').addEventListener('click', () => setLlmTab('guide'));
+    document.getElementById('copy-master-prompt-btn').addEventListener('click', async () => {
+      const text = document.getElementById('llm-master-prompt').value;
+      await copyToClipboard(text);
+      const btn = document.getElementById('copy-master-prompt-btn');
+      const orig = btn.textContent;
+      btn.textContent = '✓ Copied!';
+      setTimeout(() => { btn.textContent = orig; }, 1800);
+    });
+    document.getElementById('copy-agent-prompt-btn').addEventListener('click', async () => {
+      const text = document.getElementById('llm-agent-prompt').value;
+      await copyToClipboard(text);
+      const btn = document.getElementById('copy-agent-prompt-btn');
+      const orig = btn.textContent;
+      btn.textContent = '✓ Copied!';
+      setTimeout(() => { btn.textContent = orig; }, 1800);
+    });
+    document.getElementById('smart-paste-btn').addEventListener('click', handleSmartPaste);
     document.getElementById('unlock-btn').addEventListener('click', async () => {
       const tkn = document.getElementById('unlock-token').value.trim();
       if (!tkn) return;

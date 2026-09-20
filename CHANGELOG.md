@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.1.0 - 2026-09-20
+
+### Added
+- **Universal Web Chat & Agent Integration**: Seamlessly run Master, Agent, or both using any AI chat (Claude Web, ChatGPT Web, Gemini Web, DeepSeek, Grok, etc.) or programmatic agent.
+- **Universal Prompt Templates**: Standardized system prompts in `prompts/web_chat_master.md` and `prompts/web_chat_agent.md`.
+- **System Prompt Endpoints**: `GET /api/prompts/master` and `GET /api/prompts/agent` for fetching orchestration and execution instructions.
+- **Pending Orders Query**: `GET /api/orders/pending` for fast retrieval of uncompleted tasks.
+- **Convenience Action Endpoints**: `POST /api/orders` (Master) and `POST /api/executions` (Agent) with role verification.
+- **CORS Support**: Configured `CORSMiddleware` with credentials support for direct browser and web client calls.
+- **Web UI Assistant**:
+  - Top-bar "🤖 AI Chat" button opening the Universal AI Chat Assistant modal.
+  - One-click copy buttons for Master and Agent system prompts.
+  - "📋 For Agent" and "📋 For Master" one-click copy buttons on message cards.
+  - "⚡ Smart Paste" composer button to auto-detect `STATUS: ...` and `ORDER ID: ...` from clipboard text.
+- **Status Selector in Composer**: Direct status selection (`PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `BLOCKED`).
+- **Complete English Translation**: Translated historical audit and improvements documentation (`improves.md`) to English.
+
 ## 3.0.0 - 2026-09-20
 
 ### Removed

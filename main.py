@@ -18,6 +18,7 @@ from typing import Any, Literal
 
 import aiosqlite
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
@@ -44,6 +45,7 @@ DB_PATH = Path(
     )
 )
 STATIC_DIR = BASE_DIR / "static"
+PROMPTS_DIR = BASE_DIR / "prompts"
 HOST = os.getenv("HOST", "0.0.0.0")
 RELOAD = os.getenv("RELOAD") == "1"
 
@@ -68,7 +70,7 @@ if len(MASTER_TOKEN) < 16 or len(AGENT_TOKEN) < 16:
     )
 
 MAX_PAGE_SIZE = 1000
-BRIDGE_API_VERSION = "3.0.0"
+BRIDGE_API_VERSION = "3.1.0"
 TYPED_MESSAGE_VERSIONS = [1]
 TYPED_FEATURES = {
     "idempotency": True,
@@ -351,6 +353,48 @@ class MessageOut(BaseModel):
     reason_code: str | None = None
 
 
+class OrderCreate(BaseModel):
+    token: str = ""
+    order_id: str = Field(..., min_length=1, max_length=200)
+    content: str = Field(..., min_length=1, max_length=50000)
+    status: str = Field(default="PENDING", min_length=1, max_length=40)
+    message_key: str | None = Field(default=None, min_length=4, max_length=200)
+    payload: dict[str, Any] | None = None
+    reply_to_id: int | None = Field(default=None, ge=1)
+
+    @field_validator("order_id", "message_key", mode="before")
+    @classmethod
+    def normalize_refs(cls, value):
+        return normalize_optional_reference(value)
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def normalize_status(cls, value):
+        norm = normalize_optional_reference(value)
+        return norm.upper() if norm else "PENDING"
+
+
+class ExecutionCreate(BaseModel):
+    token: str = ""
+    order_id: str = Field(..., min_length=1, max_length=200)
+    content: str = Field(..., min_length=1, max_length=50000)
+    status: str = Field(default="COMPLETED", min_length=1, max_length=40)
+    reply_to_id: int | None = Field(default=None, ge=1)
+    message_key: str | None = Field(default=None, min_length=4, max_length=200)
+    payload: dict[str, Any] | None = None
+
+    @field_validator("order_id", "message_key", mode="before")
+    @classmethod
+    def normalize_refs(cls, value):
+        return normalize_optional_reference(value)
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def normalize_status(cls, value):
+        norm = normalize_optional_reference(value)
+        return norm.upper() if norm else "COMPLETED"
+
+
 # ─── Auth helpers ─────────────────────────────────────────────────────────────
 def resolve_role(token: str) -> str:
     """Resolve token to role ('master' or 'agent').
@@ -487,6 +531,14 @@ app = FastAPI(
     description="High-reliability communication hub for orders and executions between Master and Agent",
     version=BRIDGE_API_VERSION,
     lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -1062,6 +1114,138 @@ async def status():
         "last_message_role": last["role"] if last else None,
         "last_message_at": last["created_at"] if last else None,
     }
+
+
+# ─── Web LLM Support & Convenience Endpoints ─────────────────────────────────
+def _load_prompt_content(filename: str, fallback: str) -> str:
+    path = PROMPTS_DIR / filename
+    if path.is_file():
+        try:
+            return path.read_text(encoding="utf-8")
+        except Exception as exc:
+            logger.warning("Failed to read prompt file %s: %s", path, exc)
+    return fallback
+
+
+@app.get("/api/prompts/master")
+async def get_master_prompt():
+    """Return universal system prompt and instructions for running Master via any Web Chat (Claude, ChatGPT, Gemini) or agent."""
+    content = _load_prompt_content(
+        "web_chat_master.md",
+        fallback="# Universal Master Prompt\nYou are the Master (Orchestrator). Break tasks into atomic orders.",
+    )
+    return {
+        "role": "master",
+        "title": "Universal Master Prompt (Claude, ChatGPT, Gemini, or any Web Chat / Agent)",
+        "prompt": content,
+    }
+
+
+@app.get("/api/prompts/agent")
+async def get_agent_prompt():
+    """Return universal system prompt and instructions for running Agent via any Web Chat (Claude, ChatGPT, Gemini) or agent."""
+    content = _load_prompt_content(
+        "web_chat_agent.md",
+        fallback="# Universal Agent Prompt\nYou are the Agent (Executor). Execute orders and report status back.",
+    )
+    return {
+        "role": "agent",
+        "title": "Universal Agent Prompt (Claude, ChatGPT, Gemini, or any Web Chat / Agent)",
+        "prompt": content,
+    }
+
+
+@app.get("/api/orders/pending", response_model=list[MessageOut])
+async def get_pending_orders(
+    request: Request,
+    token: str | None = None,
+    limit: int = 50,
+):
+    """Retrieve orders from Master that are not yet marked as COMPLETED. Requires authentication."""
+    await require_reader(request, token)
+    limit = max(1, min(limit, MAX_PAGE_SIZE))
+
+    async with connect_db() as db:
+        # Completed order IDs
+        cursor = await db.execute(
+            """
+            SELECT DISTINCT COALESCE(order_id, task_id) as oid
+            FROM messages
+            WHERE status = 'COMPLETED' AND COALESCE(order_id, task_id) IS NOT NULL
+            """
+        )
+        completed_rows = await cursor.fetchall()
+        completed_oids = {r["oid"] for r in completed_rows if r["oid"]}
+
+        # Recent candidate orders from master
+        cursor = await db.execute(
+            f"""
+            SELECT {MESSAGE_SELECT} FROM messages
+            WHERE role = 'master'
+              AND (message_type IN ('ORDER', 'TASK', 'INSTRUCTION') OR order_id IS NOT NULL)
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit * 3,),
+        )
+        rows = await cursor.fetchall()
+
+    pending: list[MessageOut] = []
+    seen_oids: set[str] = set()
+    for row in rows:
+        msg = _message_out_from_row(row)
+        oid = msg.order_id
+        if oid:
+            if oid in completed_oids or oid in seen_oids:
+                continue
+            seen_oids.add(oid)
+        if msg.status == "COMPLETED":
+            continue
+        pending.append(msg)
+        if len(pending) >= limit:
+            break
+
+    return pending
+
+
+@app.post("/api/orders", response_model=MessageOut)
+async def post_order(order: OrderCreate, request: Request):
+    """Post an order as Master. Requires Master authentication."""
+    role = await require_reader(request, order.token)
+    if role != "master":
+        raise HTTPException(status_code=403, detail="Only Master can create orders")
+
+    msg = MessageCreate(
+        token=order.token,
+        content=order.content,
+        order_id=order.order_id,
+        message_type="ORDER",
+        status=order.status,
+        message_key=order.message_key,
+        reply_to_id=order.reply_to_id,
+        payload=order.payload,
+    )
+    return await post_message(msg=msg, request=request)
+
+
+@app.post("/api/executions", response_model=MessageOut)
+async def post_execution(execution: ExecutionCreate, request: Request):
+    """Post an execution report as Agent. Requires Agent authentication."""
+    role = await require_reader(request, execution.token)
+    if role != "agent":
+        raise HTTPException(status_code=403, detail="Only Agent can submit executions")
+
+    msg = MessageCreate(
+        token=execution.token,
+        content=execution.content,
+        order_id=execution.order_id,
+        message_type="EXECUTION",
+        status=execution.status,
+        message_key=execution.message_key,
+        reply_to_id=execution.reply_to_id,
+        payload=execution.payload,
+    )
+    return await post_message(msg=msg, request=request)
 
 
 # ─── Frontend ─────────────────────────────────────────────────────────────────
