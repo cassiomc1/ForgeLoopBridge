@@ -188,3 +188,12 @@ def test_frontend_web_llm_assistant_features():
     assert "Copy formatted update for Master LLM" in INDEX
     assert "The Master or Agent can post the first one." in INDEX
 
+
+def test_frontend_self_improvement_modal_and_controls():
+    assert 'id="improvements-btn"' in INDEX
+    assert 'id="improvements-modal"' in INDEX
+    assert 'id="improvements-list"' in INDEX
+    assert 'id="close-improvements-modal"' in INDEX
+    assert 'openImprovementsModal' in INDEX
+
+

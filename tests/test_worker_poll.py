@@ -3,6 +3,12 @@ import pytest
 from examples import worker_poll
 
 
+@pytest.fixture(autouse=True)
+def isolate_improvements(monkeypatch, tmp_path):
+    monkeypatch.setenv("IMPROVEMENTS_DIR", str(tmp_path / "improvements"))
+
+
+
 def test_get_auth_headers_raises_when_no_token(monkeypatch):
     monkeypatch.setattr(worker_poll, "AGENT_TOKEN", "")
     with pytest.raises(RuntimeError) as excinfo:

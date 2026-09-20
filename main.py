@@ -23,6 +23,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Streamin
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
+import self_improvement
 from bridge_protocol.errors import (
     E_BRIDGE_IDEMPOTENCY_CONFLICT,
     E_BRIDGE_PERSISTED_TYPED_INVALID,
@@ -46,6 +47,7 @@ DB_PATH = Path(
 )
 STATIC_DIR = BASE_DIR / "static"
 PROMPTS_DIR = BASE_DIR / "prompts"
+IMPROVEMENTS_DIR = Path(os.getenv("IMPROVEMENTS_DIR", str(BASE_DIR / "improvements")))
 HOST = os.getenv("HOST", "0.0.0.0")
 RELOAD = os.getenv("RELOAD") == "1"
 
@@ -70,7 +72,7 @@ if len(MASTER_TOKEN) < 16 or len(AGENT_TOKEN) < 16:
     )
 
 MAX_PAGE_SIZE = 1000
-BRIDGE_API_VERSION = "3.1.0"
+BRIDGE_API_VERSION = "3.2.0"
 TYPED_MESSAGE_VERSIONS = [1]
 TYPED_FEATURES = {
     "idempotency": True,
@@ -391,6 +393,9 @@ class ExecutionCreate(BaseModel):
     reply_to_id: int | None = Field(default=None, ge=1)
     message_key: str | None = Field(default=None, min_length=4, max_length=200)
     payload: dict[str, Any] | None = None
+    improvements: list[str] | str | None = None
+    issues: list[str] | str | None = None
+    action_items: list[str] | str | None = None
 
     @field_validator("order_id", "message_key", mode="before")
     @classmethod
@@ -402,6 +407,18 @@ class ExecutionCreate(BaseModel):
     def normalize_status(cls, value):
         norm = normalize_optional_reference(value)
         return norm.upper() if norm else "COMPLETED"
+
+
+class ImprovementCreate(BaseModel):
+    token: str = ""
+    task_name: str | None = Field(default=None, max_length=200)
+    summary: str = ""
+    improvements: list[str] | str | None = None
+    issues: list[str] | str | None = None
+    action_items: list[str] | str | None = None
+    raw_content: str | None = None
+    status: str = "COMPLETED"
+
 
 
 # ─── Auth helpers ─────────────────────────────────────────────────────────────
@@ -1272,7 +1289,76 @@ async def post_execution(execution: ExecutionCreate, request: Request):
         reply_to_id=execution.reply_to_id,
         payload=execution.payload,
     )
-    return await post_message(msg=msg, request=request)
+    result = await post_message(msg=msg, request=request)
+
+    # Automatically create a standardized self-improvement record per execution
+    try:
+        self_improvement.create_improvement_record(
+            task_name=execution.order_id,
+            role="agent",
+            status=execution.status,
+            summary=f"Execution report for order '{execution.order_id}'.",
+            improvements=execution.improvements,
+            issues=execution.issues,
+            action_items=execution.action_items,
+            raw_content=execution.content,
+            target_dir=IMPROVEMENTS_DIR,
+        )
+    except Exception as exc:
+        logging.getLogger("bridge").warning("Failed to auto-create improvement record: %s", exc)
+
+    return result
+
+
+# ─── Self-Improvement Endpoints ───────────────────────────────────────────────
+@app.post("/api/improvements")
+async def post_improvement(data: ImprovementCreate, request: Request):
+    """Record a self-improvement log. Authenticated for Master or Agent."""
+    role = await require_reader(request, data.token)
+    try:
+        path = self_improvement.create_improvement_record(
+            task_name=data.task_name,
+            role=role,
+            status=data.status,
+            summary=data.summary,
+            improvements=data.improvements,
+            issues=data.issues,
+            action_items=data.action_items,
+            raw_content=data.raw_content,
+            target_dir=IMPROVEMENTS_DIR,
+        )
+        return {
+            "status": "ok",
+            "filename": path.name,
+            "path": str(path.resolve()),
+            "message": f"Self-improvement record saved to {path.name}",
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to save improvement record: {exc}") from exc
+
+
+@app.get("/api/improvements")
+async def get_improvements(request: Request, token: str | None = None, limit: int = 50):
+    """List recorded self-improvement logs. Authenticated."""
+    await require_reader(request, token)
+    limit = max(1, min(limit, 200))
+    records = self_improvement.list_improvement_records(target_dir=IMPROVEMENTS_DIR, limit=limit)
+    return records
+
+
+@app.get("/api/improvements/{filename}")
+async def get_improvement_by_filename(filename: str, request: Request, token: str | None = None):
+    """Read specific self-improvement log. Authenticated."""
+    await require_reader(request, token)
+    try:
+        content = self_improvement.read_improvement_record(filename, target_dir=IMPROVEMENTS_DIR)
+        return {"filename": filename, "content": content}
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Improvement record not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 
 
 # ─── Frontend ─────────────────────────────────────────────────────────────────

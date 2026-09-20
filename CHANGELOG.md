@@ -1,5 +1,26 @@
 # Changelog
 
+## 3.2.0 - 2026-09-20
+
+### Added
+- **Continuous Self-Improvement Subsystem**:
+  - Automatically records standardized `<task_name>-<YYYY-MM-DD>-<HH-MM-SS>.md` files under `improvements/` for each execution in the system.
+  - Generates structured English markdown capturing Executive Summary, Friction Points & Identified Issues, Recommended System Improvements, and Concrete Action Items.
+  - Implemented `self_improvement.py` with filename generation, markdown formatting, extraction heuristics, and directory traversal guards.
+- **Self-Improvement API Endpoints**:
+  - `POST /api/improvements`: Allows Master or Agent to record customized self-improvement notes.
+  - `GET /api/improvements`: Lists recent self-improvement logs with preview snippets and creation timestamps.
+  - `GET /api/improvements/{filename}`: Retrieves full markdown content of a specific log.
+- **Worker Execution Hook**:
+  - `examples/worker_poll.py` automatically generates a self-improvement record upon completing each order execution.
+- **Automatic Execution Report Integration**:
+  - `POST /api/executions` auto-generates a self-improvement log from execution reports, extracting `SELF-IMPROVEMENT:`, `IMPROVEMENTS:`, and `FRICTION POINTS:` sections.
+- **Web UI Self-Improvement Browser**:
+  - Added "💡 Improvements" button in dashboard navigation bar.
+  - Interactive modal to browse, preview, and read generated `<task_name>-<date>-<time>.md` logs.
+- **Universal Prompt Instructions**:
+  - Updated `prompts/web_chat_agent.md` and `prompts/web_chat_master.md` to instruct AI models (Claude, ChatGPT, Gemini) to systematically emit self-improvement and system suggestions at the end of each order cycle.
+
 ## 3.1.0 - 2026-09-20
 
 ### Added

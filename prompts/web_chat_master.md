@@ -56,7 +56,14 @@ When an execution report is pasted from the Agent:
 
 ---
 
-## 4. Bridge API Integration (Optional)
+## 4. Continuous Self-Improvement
+After each milestone or execution review:
+- Assess what worked well, what was fragile, and what can be streamlined in the codebase, tests, or orchestration workflow.
+- Record self-improvement notes directly or submit via `POST /api/improvements` to create a permanent `<task_name>-<date>-<time>.md` record in `improvements/`.
+
+---
+
+## 5. Bridge API Integration (Optional)
 If running via an automated agent or Custom GPT/Tool Action with HTTP capability:
 - Query pending orders: `GET /api/orders/pending`
 - Post an order: `POST /api/orders`
@@ -67,3 +74,12 @@ If running via an automated agent or Custom GPT/Tool Action with HTTP capability
     "status": "PENDING"
   }
   ```
+- Post self-improvement insights: `POST /api/improvements`
+  ```json
+  {
+    "task_name": "ORDER-001",
+    "summary": "Milestone review",
+    "improvements": ["Refactor auth checks", "Add regression test"]
+  }
+  ```
+

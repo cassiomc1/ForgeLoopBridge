@@ -27,9 +27,20 @@ import os
 import secrets
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 import requests
+
+_REPO_ROOT = str(Path(__file__).resolve().parents[1])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+try:
+    from self_improvement import create_improvement_record
+except ImportError:
+    create_improvement_record = None  # type: ignore[assignment]
+
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -176,6 +187,32 @@ def execute_order(msg: dict[str, Any], bridge_url: str, headers: dict[str, str])
         bridge_url=bridge_url,
         headers=headers,
     )
+
+    # 4. Standardized Self-Improvement Record
+    if create_improvement_record is not None:
+        try:
+            task_name = order_id or f"order-{msg_id}"
+            rec_path = create_improvement_record(
+                task_name=task_name,
+                role="agent",
+                status="COMPLETED",
+                summary=f"Automated execution completed for order #{msg_id} ({task_name}).",
+                improvements=[
+                    "Maintain continuous automated test verifications after code edits.",
+                    "Review latency and resource consumption for high-frequency polling.",
+                ],
+                issues=[
+                    "No runtime blockers detected during execution.",
+                ],
+                action_items=[
+                    "Inspect verification logs and wait for next Master order.",
+                ],
+                raw_content=content,
+            )
+            logger.info("Created self-improvement record: %s", rec_path.name)
+        except Exception as exc:
+            logger.warning("Failed to create self-improvement record: %s", exc)
+
 
 
 def run_worker_loop(

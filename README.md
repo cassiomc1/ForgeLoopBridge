@@ -15,7 +15,8 @@ A lightweight, robust message broker and dashboard designed for multi-agent work
 - **Safe Retries & Idempotency**: Resend messages with a `message_key` safely—identical content returns the existing record (`200 OK`) without duplication.
 - **Real-Time Streaming**: Server-Sent Events (`GET /api/stream`) for instant push updates to agents and web dashboards with slow-subscriber protection.
 - **Security**: Bearer token authentication for `master` and `agent` with sliding-window rate-limiting.
-- **Web Dashboard**: Modern, responsive UI with real-time SSE updates, order filtering, and light/dark mode.
+- **Automated Self-Improvement**: Every execution creates a standardized `<task_name>-<date>-<time>.md` record under `improvements/`, tracking friction points, fixes, and actionable optimizations in English.
+- **Web Dashboard**: Modern, responsive UI with real-time SSE updates, order filtering, self-improvement log browser, and light/dark mode.
 
 ---
 
@@ -176,6 +177,34 @@ Agent reporting execution:
 ### 5. Health & Status
 - `GET /healthz`: Minimal liveness check (`{"status": "ok"}`).
 - `GET /api/status`: Statistics (`total_messages`, `last_message_at`, `last_message_role`).
+
+### 6. Self-Improvement Logs
+- `POST /api/improvements`: Record custom self-improvement notes (creates `<task_name>-<date>-<time>.md`).
+- `GET /api/improvements`: List recent self-improvement logs.
+- `GET /api/improvements/{filename}`: Retrieve specific self-improvement markdown content.
+
+---
+
+## Continuous Self-Improvement Subsystem
+
+Every execution of the system records an actionable post-mortem log formatted as `<task_name>-<YYYY-MM-DD>-<HH-MM-SS>.md` under `improvements/`:
+
+```
+improvements/
+└── order-101-2026-09-20-11-05-30.md
+```
+
+### Log Structure (100% in English)
+1. **Executive Summary**: Overview of changes and execution status.
+2. **Friction Points & Identified Issues**: Runtime errors, test failures, or coordination friction.
+3. **Recommended System Improvements**: Architectural, protocol, documentation, or code cleanups.
+4. **Concrete Action Items & Next Steps**: Concrete steps to prevent regressions and improve system velocity.
+
+### How It Triggers:
+- **Agent Worker Loop**: Automated runner (`examples/worker_poll.py`) automatically generates a record upon every order completion.
+- **Execution Reports**: `POST /api/executions` auto-generates a record from the report body and any parsed `SELF-IMPROVEMENT:` sections.
+- **Direct API & Web UI**: Click **"💡 Improvements"** in the top bar to browse logs, or submit records via `POST /api/improvements`.
+- **Web Chat Assistants**: Prompts in `prompts/web_chat_*.md` instruct Claude, ChatGPT, and Gemini to generate actionable self-improvement feedback after every cycle.
 
 ---
 
