@@ -12,6 +12,8 @@ os.environ.setdefault("WORKER_TOKEN", "test_worker_token_0987654321")
 
 _tmpdir = tempfile.mkdtemp()
 os.environ["FORGEBRIDGE_DB"] = str(Path(_tmpdir) / "test.db")
+os.environ["IMPROVEMENTS_DIR"] = str(Path(_tmpdir) / "improvements")
+
 
 import main  # noqa: E402  (import after env vars are set)
 from main import ENGINEER_TOKEN, WORKER_TOKEN, app  # noqa: E402

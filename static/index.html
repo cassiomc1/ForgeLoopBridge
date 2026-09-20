@@ -560,6 +560,25 @@
     </div>
   </div>
 
+  <div class="unlock-overlay hidden" id="improvements-modal">
+    <div class="unlock-box" style="width: min(680px, 94vw); max-height: 88vh; overflow-y: auto;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 8px;">
+        <h2 style="font-size:1.15rem;">💡 Self-Improvement & System Refinement Logs</h2>
+        <button class="delete-btn" id="close-improvements-modal" style="font-size:1.2rem; cursor:pointer;" title="Close">✕</button>
+      </div>
+      <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:12px;">
+        Each execution automatically generates a standard <code>&lt;task_name&gt;-&lt;date&gt;-&lt;time&gt;.md</code> log in English capturing friction points, bug fixes, and recommended optimizations.
+      </p>
+      <div id="improvements-list" style="margin-bottom:12px; display:flex; flex-direction:column; gap:6px; max-height: 240px; overflow-y:auto;">
+        <span style="color:var(--text-muted);font-size:0.85rem;">Loading logs…</span>
+      </div>
+      <div id="improvement-detail" class="hidden" style="margin-top:12px; border-top:1px solid var(--border); padding-top:10px;">
+        <h3 id="improvement-detail-title" style="font-size:0.95rem; margin-bottom:6px;"></h3>
+        <textarea id="improvement-detail-content" readonly style="min-height:180px; font-family:ui-monospace, monospace; font-size:0.8rem;"></textarea>
+      </div>
+    </div>
+  </div>
+
   <header>
     <div class="logo">Agent<span>Bridge</span></div>
     <div class="status-bar">
@@ -617,6 +636,10 @@
       <span>Msgs: <strong id="total">0</strong></span>
       <span>Last: <strong id="last-role">—</strong></span>
       <span class="conn-status polling" id="conn-status">connecting…</span>
+      <button class="theme-toggle" id="improvements-btn" type="button" aria-label="Open Self-Improvement Logs" title="View auto-generated self-improvement and system refinement logs">
+        <span class="theme-icon" aria-hidden="true">💡</span>
+        <span>Improvements</span>
+      </button>
       <button class="theme-toggle" id="llm-assistant-btn" type="button" aria-label="Open AI Chat Assistant" title="Prompts and instructions for Claude, ChatGPT, Gemini, etc.">
         <span class="theme-icon" aria-hidden="true">🤖</span>
         <span>AI Chat</span>
@@ -1455,6 +1478,67 @@
       document.getElementById('llm-modal').classList.add('hidden');
     }
 
+    async function openImprovementsModal() {
+      const modal = document.getElementById('improvements-modal');
+      modal.classList.remove('hidden');
+      await loadImprovementsList();
+    }
+
+    function closeImprovementsModal() {
+      document.getElementById('improvements-modal').classList.add('hidden');
+      const detail = document.getElementById('improvement-detail');
+      if (detail) detail.classList.add('hidden');
+    }
+
+    async function loadImprovementsList() {
+      const container = document.getElementById('improvements-list');
+      container.innerHTML = '<span style="color:var(--text-muted);font-size:0.85rem;">Loading logs…</span>';
+      try {
+        const res = await fetch('/api/improvements', { headers: authHeaders() });
+        if (!res.ok) {
+          container.innerHTML = '<span style="color:var(--danger);font-size:0.85rem;">Failed to load logs.</span>';
+          return;
+        }
+        const records = await res.json();
+        if (!records || records.length === 0) {
+          container.innerHTML = '<span style="color:var(--text-muted);font-size:0.85rem;">No self-improvement records found yet. They are created automatically on execution.</span>';
+          return;
+        }
+        container.innerHTML = '';
+        records.forEach(rec => {
+          const item = document.createElement('div');
+          item.style.cssText = 'display:flex; justify-content:space-between; align-items:center; padding:6px 10px; background:var(--bg-secondary); border-radius:6px; font-size:0.82rem;';
+          const nameSpan = document.createElement('span');
+          nameSpan.textContent = rec.filename;
+          nameSpan.style.fontFamily = 'ui-monospace, monospace';
+          const viewBtn = document.createElement('button');
+          viewBtn.className = 'history-btn';
+          viewBtn.style.cssText = 'margin-bottom:0; padding:2px 8px; font-size:0.75rem;';
+          viewBtn.textContent = 'View';
+          viewBtn.addEventListener('click', () => viewImprovementRecord(rec.filename));
+          item.appendChild(nameSpan);
+          item.appendChild(viewBtn);
+          container.appendChild(item);
+        });
+      } catch (err) {
+        container.innerHTML = '<span style="color:var(--danger);font-size:0.85rem;">Error loading logs.</span>';
+      }
+    }
+
+    async function viewImprovementRecord(filename) {
+      try {
+        const res = await fetch(`/api/improvements/${encodeURIComponent(filename)}`, { headers: authHeaders() });
+        if (!res.ok) return;
+        const data = await res.json();
+        const detail = document.getElementById('improvement-detail');
+        detail.classList.remove('hidden');
+        document.getElementById('improvement-detail-title').textContent = data.filename;
+        document.getElementById('improvement-detail-content').value = data.content;
+      } catch (err) {
+        console.warn('Error viewing improvement record', err);
+      }
+    }
+
     function setLlmTab(tab) {
       document.getElementById('tab-master-btn').style.fontWeight = tab === 'master' ? '600' : 'normal';
       document.getElementById('tab-agent-btn').style.fontWeight = tab === 'agent' ? '600' : 'normal';
@@ -1480,7 +1564,7 @@
       const trimmed = text.trim();
 
       // Detect Status
-      const statusMatch = trimmed.match(/\bSTATUS:\s*(COMPLETED|RUNNING|FAILED|BLOCKED|PENDING)\b/i);
+      const statusMatch = trimmed.match(/\bSTATUS:\s*(COMPLETED|RUNNING|FAILED|BLOCKED|PENDING|CANCELLED|CANCELED)\b/i);
       if (statusMatch) {
         const statusVal = statusMatch[1].toUpperCase();
         const statusEl = document.getElementById('composer-status');
@@ -1513,6 +1597,11 @@
     }
 
     // Wire events
+    document.getElementById('improvements-btn').addEventListener('click', openImprovementsModal);
+    document.getElementById('close-improvements-modal').addEventListener('click', closeImprovementsModal);
+    document.getElementById('improvements-modal').addEventListener('click', (e) => {
+      if (e.target.id === 'improvements-modal') closeImprovementsModal();
+    });
     document.getElementById('llm-assistant-btn').addEventListener('click', openLlmModal);
     document.getElementById('close-llm-modal').addEventListener('click', closeLlmModal);
     document.getElementById('llm-modal').addEventListener('click', (e) => {
