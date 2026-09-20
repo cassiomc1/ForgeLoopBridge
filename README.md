@@ -34,7 +34,8 @@ pip install -r requirements.txt
 Copy `.env.example` to `.env` and set secure tokens:
 
 ```bash
-# Generate secure tokens:
+cp .env.example .env
+# Or generate secure tokens directly:
 export MASTER_TOKEN=$(openssl rand -hex 32)
 export AGENT_TOKEN=$(openssl rand -hex 32)
 ```
@@ -43,12 +44,17 @@ export AGENT_TOKEN=$(openssl rand -hex 32)
 
 ### 3. Start the Server
 
+Directly with Python:
 ```bash
 python main.py
 ```
 Or with uvicorn:
 ```bash
 uvicorn main:app --host 0.0.0.0 --port 8000
+```
+Or via Docker Compose:
+```bash
+docker compose up -d
 ```
 
 Open `http://localhost:8000` in your browser to access the dashboard.
@@ -150,9 +156,9 @@ Agent reporting execution:
 `GET /api/messages`
 - Parameters:
   - `order_id`: Filter by order identity (exact match)
-  - `role_filter`: Filter by `master` or `agent`
+  - `role` or `role_filter`: Filter by `master` or `agent` (transparent alias support)
   - `message_type`: Filter by type (`ORDER`, `EXECUTION`, `STATUS`, `DECISION`, etc.)
-  - `status`: Filter by execution status (`PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `BLOCKED`)
+  - `status`: Filter by execution status (`PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `BLOCKED`, `CANCELLED`)
   - `after_id`: Messages with `id > after_id` (for continuous polling)
   - `before_id`: History paging cursor
   - `latest=true`: Return most recent page
@@ -175,10 +181,10 @@ Agent reporting execution:
 
 ## Running the Agent Poller
 
-The repository includes a ready-to-run polling adapter for automated agents:
+The repository includes a ready-to-run polling adapter for automated agents (executable via `examples/worker_poll.py` or `examples/agent_worker.py`):
 
 ```bash
-python examples/worker_poll.py \
+python examples/agent_worker.py \
   --bridge-url http://localhost:8000 \
   --token $AGENT_TOKEN \
   --run-mode daemon \

@@ -68,9 +68,13 @@ def test_is_master_order():
     assert worker_poll.is_master_order({"role": "master"}) is True
     assert worker_poll.is_master_order({"role": "engineer"}) is True
     assert worker_poll.is_master_order({"role": "MASTER"}) is True
+    assert worker_poll.is_master_order({"role": "master", "status": "PENDING"}) is True
+    assert worker_poll.is_master_order({"role": "master", "status": "COMPLETED"}) is False
+    assert worker_poll.is_master_order({"role": "master", "status": "CANCELLED"}) is False
     assert worker_poll.is_master_order({"role": "agent"}) is False
     assert worker_poll.is_master_order({"role": "worker"}) is False
     assert worker_poll.is_master_order({"role": ""}) is False
+
 
 
 def test_post_execution_report_posts_correct_body(monkeypatch):

@@ -271,7 +271,16 @@ VALID_MESSAGE_TYPES = frozenset({
     "POLICY_BLOCKED",
 })
 
-VALID_STATUSES = frozenset({"PENDING", "RUNNING", "COMPLETED", "FAILED", "BLOCKED"})
+VALID_STATUSES = frozenset({
+    "PENDING",
+    "RUNNING",
+    "COMPLETED",
+    "FAILED",
+    "BLOCKED",
+    "CANCELLED",
+    "CANCELED",
+    "CANCEL",
+})
 
 
 def normalize_optional_reference(value: Any) -> str | None:
@@ -410,6 +419,16 @@ def resolve_role(token: str) -> str:
     if WORKER_TOKEN and secrets.compare_digest(token, WORKER_TOKEN):
         return "agent"
     raise HTTPException(status_code=401, detail="Invalid token")
+
+
+def normalize_role(role: str) -> str:
+    """Normalize role string to canonical 'master' or 'agent'."""
+    r = role.strip().lower()
+    if r in ("master", "engineer"):
+        return "master"
+    if r in ("agent", "worker"):
+        return "agent"
+    return r
 
 
 def extract_bearer_token(request: Request) -> str:
@@ -760,6 +779,7 @@ async def get_messages(
     token: str | None = None,
     order_id: str | None = None,
     task_id: str | None = None,
+    role: str | None = None,
     role_filter: str | None = None,
     message_type: str | None = None,
     status: str | None = None,
@@ -794,8 +814,8 @@ async def get_messages(
         typed_kind = normalize_optional_reference(typed_kind)
         typed_kind = typed_kind.upper() if typed_kind else None
         correlation_id = normalize_optional_reference(correlation_id)
-        role_filter = normalize_optional_reference(role_filter)
-        role_filter = role_filter.lower() if role_filter else None
+        effective_role = normalize_optional_reference(role or role_filter)
+        effective_role = effective_role.lower() if effective_role else None
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -805,9 +825,15 @@ async def get_messages(
     if resolved_order_id is not None:
         clauses.append("(order_id = ? OR task_id = ?)")
         params.extend([resolved_order_id, resolved_order_id])
-    if role_filter is not None:
-        clauses.append("role = ?")
-        params.append(role_filter)
+    if effective_role is not None:
+        norm_filter = normalize_role(effective_role)
+        if norm_filter == "master":
+            clauses.append("role IN ('master', 'engineer')")
+        elif norm_filter == "agent":
+            clauses.append("role IN ('agent', 'worker')")
+        else:
+            clauses.append("role = ?")
+            params.append(effective_role)
     if message_type is not None:
         clauses.append("message_type = ?")
         params.append(message_type)
@@ -936,7 +962,7 @@ async def post_message(msg: MessageCreate, request: Request):
                         f"reply target {reply_to_id} was not found",
                     )
                 target_role = target["role"]
-                if target_role == role:
+                if normalize_role(target_role) == normalize_role(role):
                     raise BridgeProtocolError(
                         "E_BRIDGE_REPLY_ROLE_INVALID",
                         "Replies must target a message authored by the opposite role",
@@ -1034,7 +1060,7 @@ async def delete_message(message_id: int, request: Request, token: str | None = 
         row = await cursor.fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="Message not found")
-        if row["role"] != role:
+        if normalize_role(row["role"]) != normalize_role(role):
             raise HTTPException(status_code=403, detail="Only the author can delete this message")
         await db.execute("DELETE FROM messages WHERE id = ?", (message_id,))
         await db.commit()
@@ -1111,7 +1137,7 @@ async def status():
         "typed_message_versions": TYPED_MESSAGE_VERSIONS,
         "typed_features": TYPED_FEATURES,
         "total_messages": total,
-        "last_message_role": last["role"] if last else None,
+        "last_message_role": normalize_role(last["role"]) if last and last["role"] else None,
         "last_message_at": last["created_at"] if last else None,
     }
 
@@ -1166,12 +1192,13 @@ async def get_pending_orders(
     limit = max(1, min(limit, MAX_PAGE_SIZE))
 
     async with connect_db() as db:
-        # Completed order IDs
+        # Completed or cancelled order IDs
         cursor = await db.execute(
             """
             SELECT DISTINCT COALESCE(order_id, task_id) as oid
             FROM messages
-            WHERE status = 'COMPLETED' AND COALESCE(order_id, task_id) IS NOT NULL
+            WHERE status IN ('COMPLETED', 'CANCELLED', 'CANCELED', 'CANCEL')
+              AND COALESCE(order_id, task_id) IS NOT NULL
             """
         )
         completed_rows = await cursor.fetchall()
@@ -1181,7 +1208,7 @@ async def get_pending_orders(
         cursor = await db.execute(
             f"""
             SELECT {MESSAGE_SELECT} FROM messages
-            WHERE role = 'master'
+            WHERE role IN ('master', 'engineer')
               AND (message_type IN ('ORDER', 'TASK', 'INSTRUCTION') OR order_id IS NOT NULL)
             ORDER BY id DESC
             LIMIT ?
@@ -1199,7 +1226,7 @@ async def get_pending_orders(
             if oid in completed_oids or oid in seen_oids:
                 continue
             seen_oids.add(oid)
-        if msg.status == "COMPLETED":
+        if msg.status in ("COMPLETED", "CANCELLED", "CANCELED", "CANCEL"):
             continue
         pending.append(msg)
         if len(pending) >= limit:

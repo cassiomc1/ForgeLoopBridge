@@ -586,6 +586,15 @@
         <option value="DIAGNOSTIC">DIAGNOSTIC</option>
         <option value="POLICY_BLOCKED">POLICY_BLOCKED</option>
       </select>
+      <select id="status-filter" class="task-filter" title="Filter by status">
+        <option value="">All statuses</option>
+        <option value="PENDING">PENDING</option>
+        <option value="RUNNING">RUNNING</option>
+        <option value="COMPLETED">COMPLETED</option>
+        <option value="FAILED">FAILED</option>
+        <option value="BLOCKED">BLOCKED</option>
+        <option value="CANCELLED">CANCELLED</option>
+      </select>
       <input id="action-filter" class="task-filter filter-input" type="search" placeholder="Action ID" title="Filter by action" autocomplete="off" />
       <input id="approval-filter" class="task-filter filter-input" type="search" placeholder="Approval ID" title="Filter by approval" autocomplete="off" />
       <select id="typed-kind-filter" class="task-filter" title="Filter by typed kind">
@@ -721,6 +730,7 @@
     let streamStarting = false;
     let currentTaskFilter = '';
     let currentMessageTypeFilter = '';
+    let currentStatusFilter = '';
     let currentActionFilter = '';
     let currentApprovalFilter = '';
     let currentTypedKindFilter = '';
@@ -786,12 +796,14 @@
       messages.forEach(el => {
         const msgTaskId = el.dataset.taskId || '';
         const msgType = el.dataset.messageType || '';
+        const msgStatus = el.dataset.status || '';
         const msgActionId = (el.dataset.actionId || '').toLowerCase();
         const msgApprovalId = (el.dataset.approvalId || '').toLowerCase();
         const msgTypedKind = el.dataset.typedKind || '';
         const msgCorrelationId = (el.dataset.correlationId || '').toLowerCase();
         const matches = (!currentTaskFilter || msgTaskId === currentTaskFilter) &&
           (!currentMessageTypeFilter || msgType === currentMessageTypeFilter) &&
+          (!currentStatusFilter || msgStatus === currentStatusFilter) &&
           (!currentActionFilter || msgActionId.includes(currentActionFilter)) &&
           (!currentApprovalFilter || msgApprovalId.includes(currentApprovalFilter)) &&
           (!currentTypedKindFilter || msgTypedKind === currentTypedKindFilter) &&
@@ -1001,8 +1013,10 @@
       const msgApprovalId = (el.dataset.approvalId || '').toLowerCase();
       const msgTypedKind = el.dataset.typedKind || '';
       const msgCorrelationId = (el.dataset.correlationId || '').toLowerCase();
+      const msgStatus = el.dataset.status || '';
       const matches = (!currentTaskFilter || (el.dataset.taskId || '') === currentTaskFilter) &&
         (!currentMessageTypeFilter || (el.dataset.messageType || '') === currentMessageTypeFilter) &&
+        (!currentStatusFilter || msgStatus === currentStatusFilter) &&
         (!currentActionFilter || msgActionId.includes(currentActionFilter)) &&
         (!currentApprovalFilter || msgApprovalId.includes(currentApprovalFilter)) &&
         (!currentTypedKindFilter || msgTypedKind === currentTypedKindFilter) &&
@@ -1547,6 +1561,10 @@
     });
     document.getElementById('message-type-filter').addEventListener('change', (e) => {
       currentMessageTypeFilter = e.target.value;
+      applyFilters();
+    });
+    document.getElementById('status-filter').addEventListener('change', (e) => {
+      currentStatusFilter = e.target.value;
       applyFilters();
     });
     document.getElementById('action-filter').addEventListener('input', (e) => {

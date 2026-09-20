@@ -136,7 +136,11 @@ def post_execution_report(
 def is_master_order(msg: dict[str, Any]) -> bool:
     """Check if message is an actionable order from the master."""
     role = msg.get("role", "").lower()
-    return role in ("master", "engineer")
+    if role not in ("master", "engineer"):
+        return False
+    status = (msg.get("status") or "").upper()
+    return status not in ("COMPLETED", "CANCEL", "CANCELLED", "CANCELED")
+
 
 
 def execute_order(msg: dict[str, Any], bridge_url: str, headers: dict[str, str]) -> None:

@@ -14,7 +14,12 @@
   - One-click copy buttons for Master and Agent system prompts.
   - "📋 For Agent" and "📋 For Master" one-click copy buttons on message cards.
   - "⚡ Smart Paste" composer button to auto-detect `STATUS: ...` and `ORDER ID: ...` from clipboard text.
-- **Status Selector in Composer**: Direct status selection (`PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `BLOCKED`).
+- **Status Selector in Composer**: Direct status selection (`PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `BLOCKED`, `CANCELLED`).
+- **Web UI Status Filter**: Added a status filter in the top navigation bar to filter loaded messages by execution state.
+- **Environment & Docker Templates**: Added `.env.example` with modern `MASTER_TOKEN` and `AGENT_TOKEN` configurations, and updated `docker-compose.yml` service definitions.
+- **Role Normalization & Alias Support**: Added centralized `normalize_role()` across message deletion, reply validation, and querying (`role` and `role_filter` query parameters support alias expansion).
+- **Cancellation Flow**: Added `CANCELLED`, `CANCELED`, and `CANCEL` as recognized statuses, excluded cancelled orders from `/api/orders/pending`, and updated the agent poller to ignore cancelled orders.
+- **Worker Import Robustness**: Added path safety to `examples/agent_worker.py` allowing both direct execution and module import from any directory.
 - **Complete English Translation**: Translated historical audit and improvements documentation (`improves.md`) to English.
 
 ## 3.0.0 - 2026-09-20
