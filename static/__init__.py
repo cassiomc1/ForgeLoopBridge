@@ -1,1 +1,1 @@
-"""Packaged static assets for the ForgeLoopBridge web interface."""
+"""Packaged static assets for the AgentBridge web interface."""

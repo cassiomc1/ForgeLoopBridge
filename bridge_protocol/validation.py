@@ -1,4 +1,4 @@
-"""Parsing and relationship validation for typed Bridge messages."""
+"""Parsing and relationship validation for Master-Agent Bridge messages."""
 
 from __future__ import annotations
 
@@ -19,15 +19,29 @@ from .errors import (
 )
 from .models import TypedEnvelopeV1
 
-LEGACY_TYPED_KIND_MAP = {
+KIND_MAP = {
     "TASK": "TASK_REQUEST",
+    "ORDER": "ORDER",
     "STATUS": "STATUS_UPDATE",
+    "EXECUTION": "EXECUTION",
     "DECISION_NEEDED": "DECISION_REQUEST",
     "DECISION_RESOLVED": "DECISION_RESPONSE",
     "DECISION_TAKEN": "DECISION_NOTICE",
     "BLOCKED": "BLOCKER",
     "REVIEW": "REVIEW_RESULT",
 }
+
+MASTER_ROLES = frozenset({"master", "engineer"})
+AGENT_ROLES = frozenset({"agent", "worker"})
+
+
+def _role_category(role: str) -> str:
+    r = role.lower()
+    if r in MASTER_ROLES:
+        return "master"
+    if r in AGENT_ROLES:
+        return "agent"
+    return r
 
 
 def parse_typed_envelope(raw: Any) -> TypedEnvelopeV1:
@@ -57,9 +71,6 @@ def parse_typed_envelope(raw: Any) -> TypedEnvelopeV1:
             "typed envelope kind must match the payload kind",
         )
 
-    # The envelope is the canonical discriminator in the wire examples. Make
-    # the nested discriminator explicit before Pydantic validates the strict
-    # discriminated union, while still rejecting any supplied disagreement.
     normalized = dict(raw)
     if isinstance(payload, dict) and "kind" not in payload and "kind" in raw:
         normalized["payload"] = {"kind": raw["kind"], **payload}
@@ -100,7 +111,7 @@ def validate_legacy_kind_consistency(message_type: str | None, envelope: TypedEn
     """Reject only explicit, unambiguous legacy/typed kind disagreements."""
     if message_type is None:
         return
-    expected_kind = LEGACY_TYPED_KIND_MAP.get(message_type)
+    expected_kind = KIND_MAP.get(message_type.upper())
     if expected_kind is not None and expected_kind != envelope.kind:
         raise BridgeProtocolError(
             E_BRIDGE_TYPED_KIND_MISMATCH,
@@ -114,7 +125,7 @@ def validate_reply_relationship(
     target: dict[str, Any] | None,
     target_typed: TypedEnvelopeV1 | None,
 ) -> None:
-    """Validate transport-level reply linkage without granting authority."""
+    """Validate transport-level reply linkage."""
     if envelope.reply_to_id is None:
         if envelope.kind == "DECISION_RESPONSE":
             raise BridgeProtocolError(
@@ -129,7 +140,7 @@ def validate_reply_relationship(
             f"reply target {envelope.reply_to_id} was not found",
         )
     target_role = target.get("role") if hasattr(target, "get") else target["role"]
-    if target_role == role:
+    if _role_category(target_role) == _role_category(role):
         raise BridgeProtocolError(
             E_BRIDGE_REPLY_ROLE_INVALID,
             "typed replies must target a message authored by the opposite role",

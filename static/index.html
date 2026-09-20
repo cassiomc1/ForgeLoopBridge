@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ForgeLoopBridge</title>
+  <title>AgentBridge</title>
   <script src="/static/vendor/marked.min.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
   <style>
@@ -118,8 +118,13 @@
       font-size: 0.7rem;
       border: 1px solid var(--border);
     }
-    .badge.engineer { color: var(--engineer); border-color: var(--engineer); }
-    .badge.worker { color: var(--worker); border-color: var(--worker); }
+    .badge.engineer, .badge.master { color: var(--engineer); border-color: var(--engineer); }
+    .badge.worker, .badge.agent { color: var(--worker); border-color: var(--worker); }
+    .badge.order { color: var(--engineer); border-color: var(--engineer); }
+    .badge.execution { color: var(--worker); border-color: var(--worker); }
+    .badge.status { color: var(--accent); border-color: var(--accent); font-family: ui-monospace, monospace; text-transform: uppercase; }
+    .role.master { color: var(--engineer); }
+    .role.agent { color: var(--worker); }
     .badge.task { color: var(--text-muted); border-color: var(--border); font-family: ui-monospace, monospace; text-transform: none; }
     .badge.type { color: var(--accent); border-color: var(--accent); }
     .badge.action { color: var(--purple); border-color: var(--purple); font-family: ui-monospace, monospace; text-transform: none; }
@@ -507,9 +512,9 @@
 <body>
   <div class="unlock-overlay" id="unlock">
     <div class="unlock-box">
-      <h2>🔑 Connect to ForgeLoopBridge</h2>
+      <h2>🔑 Connect to Bridge</h2>
       <p style="color:var(--text-muted);font-size:0.85rem;">
-        Enter your Engineer or Worker token to load the board.
+        Enter your Master or Agent token to load the board.
         The token is kept in this browser session only.
       </p>
       <input type="password" id="unlock-token" placeholder="Token" autofocus autocomplete="off" />
@@ -519,13 +524,15 @@
   </div>
 
   <header>
-    <div class="logo">ForgeLoop<span>Bridge</span></div>
+    <div class="logo">Agent<span>Bridge</span></div>
     <div class="status-bar">
-      <select id="task-filter" class="task-filter" title="Filter by task">
-        <option value="">All tasks</option>
+      <select id="task-filter" class="task-filter" title="Filter by order/task">
+        <option value="">All orders</option>
       </select>
       <select id="message-type-filter" class="task-filter" title="Filter by message type">
         <option value="">All types</option>
+        <option value="ORDER">ORDER</option>
+        <option value="EXECUTION">EXECUTION</option>
         <option value="TASK">TASK</option>
         <option value="STATUS">STATUS</option>
         <option value="DECISION_NEEDED">DECISION_NEEDED</option>
@@ -580,9 +587,11 @@
   <div class="composer" id="composer">
     <div class="composer-inner">
       <div class="metadata-inputs">
-        <input type="text" id="composer-task-id" class="meta-input" placeholder="Task ID (optional, e.g. auth-feature)" style="flex: 1; max-width: 250px;" />
+        <input type="text" id="composer-task-id" class="meta-input" placeholder="Order / Task ID (optional)" style="flex: 1; max-width: 250px;" />
         <select id="composer-message-type" class="meta-input">
           <option value="">Type (optional)</option>
+          <option value="ORDER">ORDER</option>
+          <option value="EXECUTION">EXECUTION</option>
           <option value="TASK">TASK</option>
           <option value="STATUS">STATUS</option>
           <option value="DECISION_NEEDED">DECISION_NEEDED</option>
@@ -749,7 +758,7 @@
       return badge;
     }
 
-    const reportedMetadataTitle = 'Coordination metadata reported by an agent. Verify through canonical ForgeLoop.';
+    const reportedMetadataTitle = 'Coordination metadata reported by an agent.';
 
     function displayTypedValue(value) {
       if (value === null || value === undefined) return '—';
@@ -814,18 +823,21 @@
       if (knownIds.has(msg.id)) return null;
       knownIds.add(msg.id);
 
-      if (msg.task_id) registerTaskId(msg.task_id);
+      const effectiveOrder = msg.order_id || msg.task_id;
+      if (effectiveOrder) registerTaskId(effectiveOrder);
 
       oldestId = oldestId === 0 ? msg.id : Math.min(oldestId, msg.id);
 
-      const roleLabel = msg.role === 'engineer' ? 'Engineer' : 'Worker';
+      const isMaster = msg.role === 'master' || msg.role === 'engineer';
+      const roleLabel = isMaster ? 'Master' : 'Agent';
       const canDelete = msg.role === myRole;
 
       const div = document.createElement('div');
       div.className = 'message';
       div.dataset.id = msg.id;
-      div.dataset.taskId = msg.task_id || '';
+      div.dataset.taskId = effectiveOrder || '';
       div.dataset.messageType = msg.message_type || '';
+      div.dataset.status = msg.status || '';
       div.dataset.actionId = msg.action_id || '';
       div.dataset.approvalId = msg.approval_id || '';
       div.dataset.nextAction = msg.next_action || '';
@@ -840,12 +852,13 @@
       left.className = 'left';
 
       const role = document.createElement('span');
-      role.className = `role ${msg.role === 'engineer' ? 'engineer' : 'worker'}`;
+      role.className = `role ${isMaster ? 'master' : 'agent'}`;
       role.textContent = roleLabel;
       left.appendChild(role);
 
-      if (msg.task_id) left.appendChild(createBadge('task', `task: ${msg.task_id}`));
+      if (effectiveOrder) left.appendChild(createBadge('task', `order: ${effectiveOrder}`));
       if (msg.message_type) left.appendChild(createBadge('type', msg.message_type));
+      if (msg.status) left.appendChild(createBadge('status', msg.status));
       if (msg.action_id) left.appendChild(createBadge('action', `reported action: ${msg.action_id}`, reportedMetadataTitle));
       if (msg.approval_id) left.appendChild(createBadge('approval', `reported approval: ${msg.approval_id}`, reportedMetadataTitle));
       if (msg.next_action) left.appendChild(createBadge('next', `reported next: ${msg.next_action}`, reportedMetadataTitle));
@@ -1075,8 +1088,8 @@
           const s = await res.json();
           document.getElementById('total').textContent = s.total_messages;
           document.getElementById('last-role').textContent =
-            s.last_message_role === 'engineer' ? 'Engineer' :
-            s.last_message_role === 'worker' ? 'Worker' : '—';
+            (s.last_message_role === 'master' || s.last_message_role === 'engineer') ? 'Master' :
+            (s.last_message_role === 'agent' || s.last_message_role === 'worker') ? 'Agent' : '—';
         }
       } catch (e) { /* ignore */ }
     }
@@ -1229,7 +1242,7 @@
       badge.classList.remove('hidden');
       badge.classList.add(myRole);
       document.getElementById('composer-role').textContent =
-        myRole === 'engineer' ? 'Engineer' : 'Worker';
+        (myRole === 'master' || myRole === 'engineer') ? 'Master' : 'Agent';
     }
 
     function resetBoard() {
@@ -1252,7 +1265,7 @@
       document.getElementById('composer').classList.remove('visible');
       const badge = document.getElementById('my-role');
       badge.classList.add('hidden');
-      badge.classList.remove('engineer', 'worker');
+      badge.classList.remove('engineer', 'worker', 'master', 'agent');
       document.getElementById('composer-role').textContent = '—';
       document.getElementById('unlock-error').textContent = 'Session expired. Connect again.';
       document.getElementById('unlock').style.display = 'flex';

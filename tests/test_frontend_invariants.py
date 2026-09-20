@@ -33,9 +33,8 @@ def test_frontend_exposes_history_pagination():
     assert "before_id" in INDEX
 
 
-def test_visible_brand_is_forgeloopbridge():
-    assert "ForgeLoop<span>Bridge</span>" in INDEX
-    assert "Forge<span>Bridge</span>" not in INDEX
+def test_visible_brand():
+    assert "Agent<span>Bridge</span>" in INDEX
 
 
 def test_history_pagination_does_not_scope_before_id_to_task_filter():
@@ -135,7 +134,7 @@ def test_typed_values_do_not_bypass_html_sanitization():
     assert "JSON.stringify" in INDEX[INDEX.index("function displayTypedValue"):typed_start]
 
 
-def test_frontend_keeps_typed_schema_separate_from_forgeloop_protocol():
+def test_frontend_keeps_typed_schema_contract():
     assert "schema_version: 1" in INDEX
     assert "canonical_refs" in INDEX
     assert "message_key" in INDEX
