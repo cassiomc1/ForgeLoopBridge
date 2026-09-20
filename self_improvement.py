@@ -29,16 +29,18 @@ def get_improvements_dir(custom_dir: Path | str | None = None) -> Path:
 
 def sanitize_task_name(task_name: str | None) -> str:
     """Normalize a task or order name into a safe, bounded filesystem slug."""
-    if not task_name or not task_name.strip():
+    if not task_name:
         return "general-task"
 
     # Replace non-alphanumeric chars with hyphen
-    slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", task_name.strip())
+    slug = re.sub(r"[^a-zA-Z0-9_\-]+", "-", str(task_name).strip())
     # Collapse multiple hyphens/underscores
     slug = re.sub(r"-{2,}", "-", slug).strip("-_").lower()
-    if not slug:
+    # Strictly retain ASCII alphanumeric characters, hyphens, and underscores
+    clean = "".join(c for c in slug if c.isascii() and (c.isalnum() or c in ("-", "_")))
+    if not clean:
         return "general-task"
-    return slug[:50]
+    return clean[:50]
 
 
 def generate_improvement_filename(task_name: str | None, timestamp: datetime | None = None) -> str:
@@ -47,7 +49,9 @@ def generate_improvement_filename(task_name: str | None, timestamp: datetime | N
     now = timestamp or datetime.now(UTC)
     # Format: <task_name>-YYYY-MM-DD-HH-MM-SS.md
     date_time_str = now.strftime("%Y-%m-%d-%H-%M-%S")
-    return f"{slug}-{date_time_str}.md"
+    safe_name = f"{slug}-{date_time_str}.md"
+    return os.path.basename(safe_name)
+
 
 
 def _format_list_or_str(items: list[str] | str | None, default_msg: str) -> str:
@@ -127,9 +131,16 @@ def create_improvement_record(
     Returns the Path to the created file.
     """
     now = timestamp or datetime.now(UTC)
-    directory = get_improvements_dir(target_dir)
+    directory = get_improvements_dir(target_dir).resolve()
     filename = generate_improvement_filename(task_name, now)
-    filepath = directory / filename
+    safe_basename = os.path.basename(filename)
+    filepath = (directory / safe_basename).resolve()
+
+    real_dir = os.path.realpath(directory)
+    real_filepath = os.path.realpath(filepath)
+    if not real_filepath.startswith(real_dir + os.path.sep) and not filepath.is_relative_to(directory):
+        raise ValueError("Invalid target path outside improvements directory")
+
 
     # Extract sections from raw_content if explicit lists were omitted
     if raw_content and (not improvements or not issues or not action_items):
@@ -213,7 +224,6 @@ def list_improvement_records(
 
         records.append({
             "filename": f.name,
-            "path": str(f.resolve()),
             "size_bytes": stat.st_size,
             "created_at": stat.st_mtime,
             "snippet": snippet,
@@ -227,12 +237,30 @@ def read_improvement_record(
     target_dir: Path | str | None = None,
 ) -> str:
     """Read a specific improvement record markdown, preventing directory traversal."""
-    directory = get_improvements_dir(target_dir).resolve()
-    # Guard against path traversal
-    safe_name = Path(filename).name
-    target_file = (directory / safe_name).resolve()
-
-    if not target_file.is_file() or not str(target_file).startswith(str(directory)):
+    # Strict format check: must be an exact safe filename without any directory separators
+    if not re.match(r"^[a-zA-Z0-9_\-]+\.md$", filename):
         raise FileNotFoundError(f"Improvement record not found: {filename}")
 
-    return target_file.read_text(encoding="utf-8")
+    safe_name = os.path.basename(filename)
+    if safe_name != filename:
+        raise FileNotFoundError(f"Improvement record not found: {filename}")
+
+    directory = get_improvements_dir(target_dir).resolve()
+    real_dir = os.path.realpath(directory)
+
+    # Search directory entries so we only read pre-existing files without constructing arbitrary paths
+    matched_entry: Path | None = None
+    for entry in directory.iterdir():
+        if entry.is_file() and entry.name == safe_name:
+            matched_entry = entry
+            break
+
+    if matched_entry is None:
+        raise FileNotFoundError(f"Improvement record not found: {filename}")
+
+    real_entry = os.path.realpath(matched_entry)
+    if not real_entry.startswith(real_dir + os.path.sep) and real_entry != real_dir:
+        raise FileNotFoundError(f"Improvement record not found: {filename}")
+
+    return matched_entry.read_text(encoding="utf-8")
+

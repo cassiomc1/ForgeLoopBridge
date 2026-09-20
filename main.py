@@ -9,6 +9,7 @@ import json
 import logging
 import math
 import os
+import re
 import secrets
 import time
 from collections import defaultdict, deque
@@ -418,6 +419,20 @@ class ImprovementCreate(BaseModel):
     action_items: list[str] | str | None = None
     raw_content: str | None = None
     status: str = "COMPLETED"
+
+    @field_validator("task_name", mode="before")
+    @classmethod
+    def validate_task_name(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        val_str = str(value).strip()
+        if not val_str:
+            return None
+        # Strict validation of safe characters (alphanumeric, hyphens, underscores)
+        if not re.match(r"^[a-zA-Z0-9_\-\. ]+$", val_str):
+            raise ValueError("task_name contains invalid characters")
+        return val_str[:60]
+
 
 
 
@@ -1330,7 +1345,6 @@ async def post_improvement(data: ImprovementCreate, request: Request):
         return {
             "status": "ok",
             "filename": path.name,
-            "path": str(path.resolve()),
             "message": f"Self-improvement record saved to {path.name}",
         }
     except Exception as exc:
@@ -1350,6 +1364,8 @@ async def get_improvements(request: Request, token: str | None = None, limit: in
 async def get_improvement_by_filename(filename: str, request: Request, token: str | None = None):
     """Read specific self-improvement log. Authenticated."""
     await require_reader(request, token)
+    if not re.match(r"^[a-zA-Z0-9_\-]+\.md$", filename):
+        raise HTTPException(status_code=400, detail="Invalid improvement record filename format")
     try:
         content = self_improvement.read_improvement_record(filename, target_dir=IMPROVEMENTS_DIR)
         return {"filename": filename, "content": content}
@@ -1357,6 +1373,7 @@ async def get_improvement_by_filename(filename: str, request: Request, token: st
         raise HTTPException(status_code=404, detail="Improvement record not found") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
 
 
 
