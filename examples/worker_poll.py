@@ -23,10 +23,13 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import os
 import secrets
 import sys
 import time
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -67,19 +70,44 @@ def get_auth_headers(token: str | None = None) -> dict[str, str]:
 def fetch_latest_message_id(bridge_url: str = DEFAULT_BRIDGE_URL, headers: dict[str, str] | None = None) -> int:
     """Fetch the highest message id currently recorded on the bridge."""
     hdrs = headers if headers is not None else get_auth_headers()
-    try:
+    resp = requests.get(
+        f"{bridge_url}/api/messages",
+        params={"latest": "true", "limit": 1},
+        headers=hdrs,
+        timeout=10,
+    )
+    resp.raise_for_status()
+    messages = resp.json()
+    return messages[-1]["id"] if messages else 0
+
+
+def fetch_pending_orders(
+    bridge_url: str = DEFAULT_BRIDGE_URL,
+    headers: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Read the full pending backlog using descending message-ID pagination."""
+    hdrs = headers if headers is not None else get_auth_headers()
+    orders: list[dict[str, Any]] = []
+    before_id = None
+    while True:
+        params = {"limit": 100}
+        if before_id is not None:
+            params["before_id"] = before_id
         resp = requests.get(
-            f"{bridge_url}/api/messages",
-            params={"latest": "true", "limit": 1},
-            headers=hdrs,
-            timeout=10,
+            f"{bridge_url}/api/orders/pending", params=params, headers=hdrs, timeout=15,
         )
         resp.raise_for_status()
-        messages = resp.json()
-        return messages[-1]["id"] if messages else 0
-    except Exception as exc:
-        logger.warning("Could not fetch latest message id: %s", exc)
-        return 0
+        page = resp.json()
+        if not page:
+            break
+        next_cursor = min(order["id"] for order in page)
+        if before_id is not None and any(order["id"] >= before_id for order in page):
+            raise RuntimeError("Bridge pending-order pagination did not advance")
+        orders.extend(page)
+        if len(page) < 100:
+            break
+        before_id = next_cursor
+    return sorted(orders, key=lambda order: order["id"])
 
 
 def fetch_messages(
@@ -149,41 +177,56 @@ def is_master_order(msg: dict[str, Any]) -> bool:
     role = msg.get("role", "").lower()
     if role not in ("master", "engineer"):
         return False
+    message_type = (msg.get("message_type") or "").upper()
+    if message_type and message_type not in ("ORDER", "TASK", "INSTRUCTION"):
+        return False
+    if msg.get("typed_integrity") == "INVALID":
+        return False
+    typed = msg.get("typed")
+    if typed is not None and typed.get("kind") not in ("ORDER", "TASK_REQUEST"):
+        return False
+    if not message_type and typed is None and not (msg.get("order_id") or msg.get("task_id")):
+        return False
     status = (msg.get("status") or "").upper()
     return status not in ("COMPLETED", "CANCEL", "CANCELLED", "CANCELED")
 
 
 
-def execute_order(msg: dict[str, Any], bridge_url: str, headers: dict[str, str]) -> None:
-    """Handle an order received from the master."""
+def execute_order(
+    msg: dict[str, Any], bridge_url: str, headers: dict[str, str],
+    executor: Callable[[dict[str, Any]], str] | None = None,
+) -> None:
+    """Dispatch to a configured executor; report BLOCKED when none is configured.
+
+    The executor must perform and verify the work before returning its report.
+    Receiving an order alone never constitutes successful execution.
+    """
     order_id = msg.get("order_id") or msg.get("task_id")
     msg_id = msg["id"]
     content = msg.get("content", "")
     logger.info("Received order #%s (order_id: %s): %s", msg_id, order_id, content[:60])
 
-    # 1. Acknowledge start of execution
-    post_execution_report(
-        content=f"Started execution of order #{msg_id} ({order_id or 'general'}): {content[:100]}",
+    if executor is None:
+        status = "BLOCKED"
+        report = "No task executor is configured. Connect an executor before running this order."
+    else:
+        post_execution_report(
+            content=f"Started execution of order #{msg_id} ({order_id or 'general'}): {content[:100]}",
+            order_id=order_id, status="RUNNING", reply_to_id=msg_id,
+            message_key=f"agent-order-{msg_id}-running", bridge_url=bridge_url, headers=headers,
+        )
+        report = executor(msg)
+        if not isinstance(report, str) or not report.strip():
+            raise ValueError("Executor must return a non-empty verified execution report")
+        status = "COMPLETED"
+
+    result = post_execution_report(
+        content=report,
         order_id=order_id,
-        status="RUNNING",
+        status=status,
         message_type="EXECUTION",
         reply_to_id=msg_id,
-        bridge_url=bridge_url,
-        headers=headers,
-    )
-
-    # 2. Simulated work or actual execution
-    # In real usage, this dispatches to your agent tool or local script
-    time.sleep(0.1)
-
-    # 3. Report completion
-    post_execution_report(
-        content=f"Successfully executed order #{msg_id}: all steps completed.",
-        order_id=order_id,
-        status="COMPLETED",
-        message_type="EXECUTION",
-        reply_to_id=msg_id,
-        payload={"order_id": order_id, "status": "COMPLETED", "exit_code": 0},
+        message_key=f"agent-order-{msg_id}-{status.lower()}",
         bridge_url=bridge_url,
         headers=headers,
     )
@@ -195,19 +238,22 @@ def execute_order(msg: dict[str, Any], bridge_url: str, headers: dict[str, str])
             rec_path = create_improvement_record(
                 task_name=task_name,
                 role="agent",
-                status="COMPLETED",
-                summary=f"Automated execution completed for order #{msg_id} ({task_name}).",
+                status=status,
+                summary=report,
                 improvements=[
                     "Maintain continuous automated test verifications after code edits.",
                     "Review latency and resource consumption for high-frequency polling.",
                 ],
                 issues=[
-                    "No runtime blockers detected during execution.",
+                    "No runtime blockers detected during execution." if executor else report,
                 ],
                 action_items=[
                     "Inspect verification logs and wait for next Master order.",
                 ],
                 raw_content=content,
+                record_id=result["id"] if isinstance(result, dict) else None,
+                timestamp=datetime.fromtimestamp(result["created_at"], UTC)
+                if isinstance(result, dict) and "created_at" in result else None,
             )
             logger.info("Created self-improvement record: %s", rec_path.name)
         except Exception as exc:
@@ -222,71 +268,99 @@ def run_worker_loop(
     run_mode: str = "daemon",
     max_idle_polls: int = 3,
     poll_interval: float = 2.0,
+    executor: Callable[[dict[str, Any]], str] | None = None,
 ) -> int:
     """Run the Agent polling loop."""
     headers = get_auth_headers(token)
 
-    # Resolve starting cursor
-    if start_mode == "now":
-        cursor = fetch_latest_message_id(bridge_url, headers)
-        logger.info("Start mode 'now': listening for messages after id=%d", cursor)
-    elif start_mode == "history":
-        cursor = 0
-        logger.info("Start mode 'history': replaying all messages from id=0")
-    else:  # 'pending'
-        latest = fetch_latest_message_id(bridge_url, headers)
-        cursor = max(0, latest - 20)
-        logger.info("Start mode 'pending': checking recent messages from id=%d", cursor)
+    if start_mode not in {"pending", "now", "history"} or run_mode not in {"daemon", "once", "bounded"}:
+        raise ValueError("Unsupported worker start or run mode")
+    if max_idle_polls < 1 or not math.isfinite(poll_interval) or poll_interval < 0:
+        raise ValueError("max_idle_polls must be positive and poll_interval finite and non-negative")
+
+    backlog = None
+    try:
+        if start_mode == "history":
+            cursor = 0
+        else:
+            # Capture the watermark before reading the backlog, so arrivals
+            # during startup are still covered by subsequent polling.
+            cursor = fetch_latest_message_id(bridge_url, headers)
+            if start_mode == "pending":
+                backlog = fetch_pending_orders(bridge_url, headers)
+    except Exception as exc:
+        logger.error("Could not initialize worker cursor/backlog: %s", exc)
+        return 1
 
     idle_count = 0
+    failure_count = 0
     orders_processed = 0
+    had_failure = False
+    bootstrap_handled: set[int] = set()
 
     while True:
+        is_bootstrap = backlog is not None
         try:
-            messages = fetch_messages(cursor, bridge_url=bridge_url, headers=headers)
+            messages = backlog if is_bootstrap else fetch_messages(
+                cursor, bridge_url=bridge_url, headers=headers,
+            )
         except Exception as exc:
             logger.error("Error polling bridge: %s", exc)
-            if run_mode == "once":
+            failure_count += 1
+            if run_mode == "once" or (run_mode == "bounded" and failure_count >= max_idle_polls):
                 return 1
             time.sleep(poll_interval)
             continue
 
-        master_orders = [m for m in messages if is_master_order(m)]
-
-        if messages:
-            cursor = max(m["id"] for m in messages)
-
-        if master_orders:
-            idle_count = 0
-            for order in master_orders:
+        cycle_processed = 0
+        reporting_failed = False
+        for index, message in enumerate(messages):
+            message_id = message["id"]
+            if message_id in bootstrap_handled:
+                bootstrap_handled.discard(message_id)
+            elif is_master_order(message):
                 try:
-                    execute_order(order, bridge_url=bridge_url, headers=headers)
+                    execute_order(message, bridge_url=bridge_url, headers=headers, executor=executor)
                     orders_processed += 1
+                    cycle_processed += 1
                 except Exception as exc:
-                    logger.error("Failed to execute order %s: %s", order.get("id"), exc)
-                    post_execution_report(
-                        content=f"Error executing order {order.get('id')}: {exc}",
-                        order_id=order.get("order_id") or order.get("task_id"),
-                        status="FAILED",
-                        reply_to_id=order.get("id"),
-                        bridge_url=bridge_url,
-                        headers=headers,
-                    )
-        else:
-            idle_count += 1
+                    had_failure = True
+                    logger.error("Failed to execute order %s: %s", message_id, exc)
+                    try:
+                        post_execution_report(
+                            content=f"Error executing order {message_id}: {exc}",
+                            order_id=message.get("order_id") or message.get("task_id"),
+                            status="FAILED", reply_to_id=message_id,
+                            bridge_url=bridge_url, headers=headers,
+                        )
+                    except Exception as report_exc:
+                        logger.error("Could not report failure for order %s: %s", message_id, report_exc)
+                        reporting_failed = True
+                        if is_bootstrap:
+                            backlog = messages[index:]
+                        break
+                if is_bootstrap and message_id > cursor:
+                    bootstrap_handled.add(message_id)
+            if not is_bootstrap:
+                # Advance only after dispatch or a failure report was accepted.
+                cursor = max(cursor, message_id)
 
+        if reporting_failed:
+            failure_count += 1
+            if run_mode == "once" or (run_mode == "bounded" and failure_count >= max_idle_polls):
+                return 1
+            time.sleep(poll_interval)
+            continue
+
+        backlog = None
+        failure_count = 0
+        idle_count = 0 if cycle_processed else idle_count + 1
         if run_mode == "once":
-            logger.info("Run mode 'once' complete (%d orders processed)", orders_processed)
-            return 0
-
+            logger.info("Run mode 'once' finished (%d orders dispatched)", orders_processed)
+            return int(had_failure)
         if run_mode == "bounded" and idle_count >= max_idle_polls:
-            logger.info(
-                "Run mode 'bounded' finished after %d idle polls (%d orders processed)",
-                idle_count,
-                orders_processed,
-            )
-            return 0
-
+            logger.info("Run mode 'bounded' finished (%d orders dispatched)", orders_processed)
+            return int(had_failure)
         time.sleep(poll_interval)
 
 

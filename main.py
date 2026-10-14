@@ -14,6 +14,7 @@ import secrets
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -442,13 +443,17 @@ def resolve_role(token: str) -> str:
 
     Supports MASTER_TOKEN / AGENT_TOKEN and legacy ENGINEER_TOKEN / WORKER_TOKEN.
     """
-    if MASTER_TOKEN and secrets.compare_digest(token, MASTER_TOKEN):
+    try:
+        candidate = token.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise HTTPException(status_code=401, detail="Invalid token") from exc
+    if MASTER_TOKEN and secrets.compare_digest(candidate, MASTER_TOKEN.encode("utf-8")):
         return "master"
-    if AGENT_TOKEN and secrets.compare_digest(token, AGENT_TOKEN):
+    if AGENT_TOKEN and secrets.compare_digest(candidate, AGENT_TOKEN.encode("utf-8")):
         return "agent"
-    if ENGINEER_TOKEN and secrets.compare_digest(token, ENGINEER_TOKEN):
+    if ENGINEER_TOKEN and secrets.compare_digest(candidate, ENGINEER_TOKEN.encode("utf-8")):
         return "master"
-    if WORKER_TOKEN and secrets.compare_digest(token, WORKER_TOKEN):
+    if WORKER_TOKEN and secrets.compare_digest(candidate, WORKER_TOKEN.encode("utf-8")):
         return "agent"
     raise HTTPException(status_code=401, detail="Invalid token")
 
@@ -646,18 +651,11 @@ def _typed_storage_values(envelope) -> tuple[Any, ...]:
 
 def _typed_row_state(row) -> tuple[Any, str, dict[str, str] | None]:
     data = dict(row)
-    typed_values = (
-        data.get("typed_schema_version"),
-        data.get("typed_kind"),
-        data.get("message_key"),
-        data.get("correlation_id"),
-        data.get("reply_to_id"),
-        data.get("expects_reply"),
-        data.get("typed_payload_json"),
-        data.get("canonical_refs_json"),
-    )
     if data.get("typed_schema_version") is None:
-        if any(value is not None for value in typed_values[1:]):
+        # Keys, replies, and payload JSON are shared with the legacy transport.
+        if any(data.get(field) is not None for field in (
+            "typed_kind", "correlation_id", "expects_reply", "canonical_refs_json",
+        )):
             return (
                 None,
                 "INVALID",
@@ -715,7 +713,9 @@ def _message_out_from_row(row) -> MessageOut:
         payload_val = envelope.payload.model_dump(mode="json", exclude_none=False)
     elif data.get("typed_payload_json"):
         try:
-            payload_val = json.loads(data["typed_payload_json"])
+            decoded = json.loads(data["typed_payload_json"])
+            if isinstance(decoded, dict):
+                payload_val = decoded
         except Exception:
             pass
 
@@ -753,6 +753,8 @@ def _submission_fingerprint(
     next_action: str | None,
     reason_code: str | None,
     envelope,
+    reply_to_id: int | None = None,
+    payload: dict[str, Any] | None = None,
 ) -> str:
     return _json_dumps(
         {
@@ -766,6 +768,8 @@ def _submission_fingerprint(
             "next_action": next_action,
             "reason_code": reason_code,
             "typed": envelope_to_dict(envelope) if envelope is not None else None,
+            "reply_to_id": reply_to_id if envelope is None else None,
+            "payload": payload if envelope is None else None,
         }
     )
 
@@ -777,6 +781,14 @@ def _row_submission_fingerprint(row) -> str | None:
         data.get("message_key") is not None and envelope is None and data.get("typed_schema_version") is not None
     ):
         return None
+    payload = None
+    if envelope is None and data.get("typed_payload_json") is not None:
+        try:
+            payload = json.loads(data["typed_payload_json"])
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(payload, dict):
+            return None
     return _submission_fingerprint(
         content=data["content"],
         order_id=data.get("order_id"),
@@ -788,6 +800,8 @@ def _row_submission_fingerprint(row) -> str | None:
         next_action=data.get("next_action"),
         reason_code=data.get("reason_code"),
         envelope=envelope,
+        reply_to_id=data.get("reply_to_id"),
+        payload=payload,
     )
 
 
@@ -966,6 +980,8 @@ async def post_message(msg: MessageCreate, request: Request):
         next_action=msg.next_action,
         reason_code=msg.reason_code,
         envelope=envelope,
+        reply_to_id=reply_to_id,
+        payload=msg.payload,
     )
     typed_storage_values = _typed_storage_values(envelope)
 
@@ -1218,53 +1234,54 @@ async def get_pending_orders(
     request: Request,
     token: str | None = None,
     limit: int = 50,
+    before_id: int | None = None,
 ):
-    """Retrieve orders from Master that are not yet marked as COMPLETED. Requires authentication."""
+    """Retrieve unfinished orders, newest first, with an optional history cursor."""
     await require_reader(request, token)
     limit = max(1, min(limit, MAX_PAGE_SIZE))
 
+    def candidate(alias: str) -> str:
+        # Aliases are internal constants, never supplied by a client.
+        return f"""
+            {alias}.role IN ('master', 'engineer')
+            AND (
+                {alias}.message_type IN ('ORDER', 'TASK', 'INSTRUCTION')
+                OR ({alias}.message_type IS NULL AND (
+                    COALESCE({alias}.order_id, {alias}.task_id) IS NOT NULL
+                    OR {alias}.typed_kind IN ('ORDER', 'TASK_REQUEST')
+                ))
+            )
+            AND ({alias}.typed_schema_version IS NULL
+                 OR {alias}.typed_kind IN ('ORDER', 'TASK_REQUEST'))
+        """
+
+    select = ", ".join(f"o.{field.strip()}" for field in MESSAGE_SELECT.split(","))
     async with connect_db() as db:
-        # Completed or cancelled order IDs
-        cursor = await db.execute(
-            """
-            SELECT DISTINCT COALESCE(order_id, task_id) as oid
-            FROM messages
-            WHERE status IN ('COMPLETED', 'CANCELLED', 'CANCELED', 'CANCEL')
-              AND COALESCE(order_id, task_id) IS NOT NULL
-            """
-        )
-        completed_rows = await cursor.fetchall()
-        completed_oids = {r["oid"] for r in completed_rows if r["oid"]}
-
-        # Recent candidate orders from master
-        cursor = await db.execute(
+        rows = await db.execute_fetchall(
             f"""
-            SELECT {MESSAGE_SELECT} FROM messages
-            WHERE role IN ('master', 'engineer')
-              AND (message_type IN ('ORDER', 'TASK', 'INSTRUCTION') OR order_id IS NOT NULL)
-            ORDER BY id DESC
-            LIMIT ?
+            SELECT {select} FROM messages o
+            WHERE {candidate('o')}
+              AND (o.status IS NULL OR o.status NOT IN ('COMPLETED', 'CANCELLED', 'CANCELED', 'CANCEL'))
+              AND NOT EXISTS (
+                  SELECT 1 FROM messages newer
+                  WHERE newer.id > o.id AND {candidate('newer')}
+                    AND COALESCE(newer.order_id, newer.task_id) = COALESCE(o.order_id, o.task_id)
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM messages terminal
+                  WHERE terminal.id > o.id
+                    AND (terminal.status IN ('COMPLETED', 'CANCELLED', 'CANCELED', 'CANCEL')
+                         OR (terminal.role IN ('master', 'engineer') AND terminal.message_type = 'CANCEL'))
+                    AND (terminal.reply_to_id = o.id
+                         OR (terminal.reply_to_id IS NULL
+                             AND COALESCE(terminal.order_id, terminal.task_id) = COALESCE(o.order_id, o.task_id)))
+              )
+              AND (? IS NULL OR o.id < ?)
+            ORDER BY o.id DESC LIMIT ?
             """,
-            (limit * 3,),
+            (before_id, before_id, limit),
         )
-        rows = await cursor.fetchall()
-
-    pending: list[MessageOut] = []
-    seen_oids: set[str] = set()
-    for row in rows:
-        msg = _message_out_from_row(row)
-        oid = msg.order_id
-        if oid:
-            if oid in completed_oids or oid in seen_oids:
-                continue
-            seen_oids.add(oid)
-        if msg.status in ("COMPLETED", "CANCELLED", "CANCELED", "CANCEL"):
-            continue
-        pending.append(msg)
-        if len(pending) >= limit:
-            break
-
-    return pending
+    return [_message_out_from_row(row) for row in rows]
 
 
 @app.post("/api/orders", response_model=MessageOut)
@@ -1308,7 +1325,8 @@ async def post_execution(execution: ExecutionCreate, request: Request):
 
     # Automatically create a standardized self-improvement record per execution
     try:
-        self_improvement.create_improvement_record(
+        await asyncio.to_thread(
+            self_improvement.create_improvement_record,
             task_name=execution.order_id,
             role="agent",
             status=execution.status,
@@ -1318,6 +1336,8 @@ async def post_execution(execution: ExecutionCreate, request: Request):
             action_items=execution.action_items,
             raw_content=execution.content,
             target_dir=IMPROVEMENTS_DIR,
+            timestamp=datetime.fromtimestamp(result.created_at, UTC),
+            record_id=result.id,
         )
     except Exception as exc:
         logging.getLogger("bridge").warning("Failed to auto-create improvement record: %s", exc)
@@ -1330,8 +1350,10 @@ async def post_execution(execution: ExecutionCreate, request: Request):
 async def post_improvement(data: ImprovementCreate, request: Request):
     """Record a self-improvement log. Authenticated for Master or Agent."""
     role = await require_reader(request, data.token)
+    await check_rate_limit(role)
     try:
-        path = self_improvement.create_improvement_record(
+        path = await asyncio.to_thread(
+            self_improvement.create_improvement_record,
             task_name=data.task_name,
             role=role,
             status=data.status,
@@ -1348,7 +1370,8 @@ async def post_improvement(data: ImprovementCreate, request: Request):
             "message": f"Self-improvement record saved to {path.name}",
         }
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to save improvement record: {exc}") from exc
+        logger.exception("Failed to save improvement record")
+        raise HTTPException(status_code=500, detail="Failed to save improvement record") from exc
 
 
 @app.get("/api/improvements")
@@ -1356,7 +1379,9 @@ async def get_improvements(request: Request, token: str | None = None, limit: in
     """List recorded self-improvement logs. Authenticated."""
     await require_reader(request, token)
     limit = max(1, min(limit, 200))
-    records = self_improvement.list_improvement_records(target_dir=IMPROVEMENTS_DIR, limit=limit)
+    records = await asyncio.to_thread(
+        self_improvement.list_improvement_records, target_dir=IMPROVEMENTS_DIR, limit=limit,
+    )
     return records
 
 
@@ -1367,7 +1392,9 @@ async def get_improvement_by_filename(filename: str, request: Request, token: st
     if not re.match(r"^[a-zA-Z0-9_\-]+\.md$", filename):
         raise HTTPException(status_code=400, detail="Invalid improvement record filename format")
     try:
-        content = self_improvement.read_improvement_record(filename, target_dir=IMPROVEMENTS_DIR)
+        content = await asyncio.to_thread(
+            self_improvement.read_improvement_record, filename, target_dir=IMPROVEMENTS_DIR,
+        )
         return {"filename": filename, "content": content}
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Improvement record not found") from exc

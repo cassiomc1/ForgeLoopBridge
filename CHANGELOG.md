@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Legacy idempotency now preserves payloads and reply targets through REST history and retries,
+  returning conflicts when either changes. Shared transport fields are no longer classified
+  as corrupt typed envelopes.
+- Pending-order queries search the full history, support `before_id` pagination, exclude
+  decisions and cancellations, and resolve completed replies without an order ID.
+- Improvement records preserve same-second executions, reuse execution API records on retry,
+  retain bullets containing section keywords, and exclude symlinks from listing previews.
+- Non-ASCII invalid tokens return authentication errors instead of crashing the request.
+- Wheels include the self-improvement module and full web-chat prompts. CI now checks a wheel
+  installation outside the source checkout.
+- The poller starts from the full pending backlog, fails closed on cursor-fetch errors, retains
+  unhandled work after reporting failures, and stops bounded runs after repeated failures.
+- The stock poller reports `BLOCKED` until a verified executor is configured, replacing its
+  simulated completion reports.
+- Dashboard polling recovers messages preceding newer POST/SSE responses. Session guards
+  prevent delayed history responses and stream events from repopulating a locked dashboard.
+
+### Changed
+- Improvement file operations run outside the API event loop; improvement writes use the
+  existing role rate limit and return a generic error on storage failures.
+
 ## 3.2.0 - 2026-09-20
 
 ### Added

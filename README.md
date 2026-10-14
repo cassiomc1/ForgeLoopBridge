@@ -43,6 +43,9 @@ export AGENT_TOKEN=$(openssl rand -hex 32)
 
 *(Legacy `ENGINEER_TOKEN` and `WORKER_TOKEN` remain supported as backward-compatible aliases).*
 
+Docker Compose reads `.env`. For direct Python startup, export the variables in your shell;
+for uvicorn, use `--env-file .env` as shown below.
+
 ### 3. Start the Server
 
 Directly with Python:
@@ -51,7 +54,7 @@ python main.py
 ```
 Or with uvicorn:
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8000
+uvicorn main:app --env-file .env --host 0.0.0.0 --port 8000
 ```
 Or via Docker Compose:
 ```bash
@@ -115,7 +118,11 @@ CORS is enabled out of the box (`Access-Control-Allow-Origin: *` with credential
   - `GET /api/prompts/master`: Returns universal Master system prompt and guidelines.
   - `GET /api/prompts/agent`: Returns universal Agent system prompt and execution formats.
 - **Pending Orders**:
-  - `GET /api/orders/pending`: Returns recent orders not yet marked as `COMPLETED`.
+  - `GET /api/orders/pending`: Returns unfinished orders across the full history, newest first.
+    Use `before_id` and `limit` to page through older pending work. Decisions and cancellations
+    are excluded. A later completion or cancellation closes its reply target, or its matching
+    order ID when no reply target is supplied. A new order submitted after completion can reuse
+    the same order ID.
 - **Post Orders**:
   - `POST /api/orders`: Master endpoint to publish an order (`order_id`, `content`, `status`).
 - **Post Executions**:
@@ -194,6 +201,10 @@ improvements/
 └── order-101-2026-09-20-11-05-30.md
 ```
 
+Execution API records append `-message-<id>` to the filename and reuse the original record
+on an idempotent retry. Direct records created in the same second append a unique suffix
+when needed, preserving each execution. The timestamp is in UTC.
+
 ### Log Structure (100% in English)
 1. **Executive Summary**: Overview of changes and execution status.
 2. **Friction Points & Identified Issues**: Runtime errors, test failures, or coordination friction.
@@ -212,6 +223,8 @@ improvements/
 
 The repository includes a ready-to-run polling adapter for automated agents (executable via `examples/worker_poll.py` or `examples/agent_worker.py`):
 
+Install its HTTP client dependency with `pip install 'requests>=2.32'`.
+
 ```bash
 python examples/agent_worker.py \
   --bridge-url http://localhost:8000 \
@@ -225,6 +238,17 @@ Modes:
 - `--run-mode once`: Checks for available orders once and exits.
 - `--run-mode bounded`: Exits after N idle polls without work.
 
+`--start-mode pending` reads the entire pending backlog before watching new messages.
+`--start-mode now` starts from a successfully fetched current cursor; startup failures exit
+with a nonzero status. Bounded mode also exits nonzero after repeated polling or reporting failures.
+
+The stock poller reports `BLOCKED` until an executor is connected. It does not implement
+task execution. Programmatic integrations can pass `executor` to `run_worker_loop` or
+`execute_order`: the callable receives the order dictionary and must perform and verify the
+work, then return a non-empty report string. Exceptions are reported as failures.
+HTTP report retries reuse the same message key within the request attempt; message
+idempotency does not guarantee that an executor's external side effects run exactly once.
+
 ---
 
 ## Running Tests
@@ -234,3 +258,16 @@ Run the full test suite with pytest:
 ```bash
 pytest
 ```
+
+Additional checks:
+
+```bash
+ruff check .
+python scripts/check_frontend_syntax.py
+python scripts/check_package_install.py
+```
+
+The package check builds a wheel, installs it in a temporary environment outside the checkout,
+and verifies the installed API, prompts, static assets, and improvement records. It reuses
+the development environment's third-party dependencies. CI runs this check on its existing
+Python and operating-system matrix.
