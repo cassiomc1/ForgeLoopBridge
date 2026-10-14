@@ -1252,3 +1252,97 @@ async def test_pending_orders_excludes_cancelled(client):
     assert pending[0]["order_id"] == "ORD-ACT-1"
 
 
+async def test_legacy_idempotency_round_trip_includes_payload_and_reply(client):
+    order = await post(client, "Original order", HEADERS_ENGINEER)
+    body = {
+        "content": "Execution report",
+        "message_key": "legacy-retry-1",
+        "reply_to_id": order.json()["id"],
+        "payload": {"exit_code": 0},
+    }
+    first = await client.post("/api/messages", json=body, headers=HEADERS_WORKER)
+    retry = await client.post("/api/messages", json=body, headers=HEADERS_WORKER)
+    assert retry.status_code == 200
+    assert retry.json() == first.json()
+    history = await client.get("/api/messages", headers=HEADERS_WORKER)
+    assert history.json()[-1]["typed_integrity"] == "NOT_APPLICABLE"
+    assert history.json()[-1]["payload"] == {"exit_code": 0}
+
+    for change in ({"payload": {"exit_code": 1}}, {"reply_to_id": None}):
+        conflict = await client.post("/api/messages", json=body | change, headers=HEADERS_WORKER)
+        assert conflict.status_code == 409
+
+
+async def test_pending_orders_searches_beyond_recent_completed_orders(client):
+    async with main.connect_db() as db:
+        await db.execute(
+            "INSERT INTO messages (role, content, created_at, order_id, message_type, status) "
+            "VALUES ('master', 'Older unfinished work', 1, 'OLD-OPEN', 'ORDER', 'PENDING')"
+        )
+        await db.executemany(
+            "INSERT INTO messages (role, content, created_at, order_id, message_type, status) "
+            "VALUES ('master', 'Already done', 2, ?, 'ORDER', 'COMPLETED')",
+            [(f"done-{i}",) for i in range(20)],
+        )
+    pending = await client.get("/api/orders/pending", params={"limit": 1}, headers=HEADERS_WORKER)
+    assert [m["order_id"] for m in pending.json()] == ["OLD-OPEN"]
+
+
+async def test_pending_orders_excludes_decisions_cancellations_and_completed_replies(client):
+    order = await client.post(
+        "/api/messages", headers=HEADERS_ENGINEER,
+        json={"content": "Unidentified order", "message_type": "ORDER"},
+    )
+    await client.post(
+        "/api/messages", headers=HEADERS_WORKER,
+        json={"content": "Finished", "status": "COMPLETED", "reply_to_id": order.json()["id"]},
+    )
+    for message_type in ("DECISION", "CANCEL", "STATUS"):
+        await client.post(
+            "/api/messages", headers=HEADERS_ENGINEER,
+            json={"content": message_type, "message_type": message_type, "order_id": message_type},
+        )
+    pending = await client.get("/api/orders/pending", headers=HEADERS_WORKER)
+    assert pending.json() == []
+
+
+async def test_pending_orders_paginates_and_allows_new_order_after_completion(client):
+    async with main.connect_db() as db:
+        await db.executemany(
+            "INSERT INTO messages (role, content, created_at, order_id, message_type, status) "
+            "VALUES (?, ?, 1, ?, ?, ?)",
+            [
+                ("master", "Original", "REUSED", "ORDER", "PENDING"),
+                ("agent", "Finished", "REUSED", "EXECUTION", "COMPLETED"),
+                ("master", "New work", "REUSED", "ORDER", "PENDING"),
+                ("master", "Other work", "OTHER", "ORDER", "PENDING"),
+            ],
+        )
+    latest = await client.get("/api/orders/pending", params={"limit": 1}, headers=HEADERS_WORKER)
+    assert latest.json()[0]["order_id"] == "OTHER"
+    older = await client.get(
+        "/api/orders/pending", params={"limit": 1, "before_id": latest.json()[0]["id"]},
+        headers=HEADERS_WORKER,
+    )
+    assert [m["content"] for m in older.json()] == ["New work"]
+
+
+async def test_non_ascii_invalid_token_returns_unauthorized(client):
+    response = await client.post("/api/messages", json={"content": "hi", "token": "invalid-🔒"})
+    assert response.status_code == 401
+
+
+async def test_concurrent_legacy_retries_store_and_broadcast_one_message(client):
+    queue = main.create_sse_queue()
+    main._subscribers.add(queue)
+    body = {"content": "Concurrent retry", "message_key": "concurrent-legacy", "payload": {"ok": True}}
+    responses = await asyncio.gather(*[
+        client.post("/api/messages", json=body, headers=HEADERS_WORKER) for _ in range(8)
+    ])
+    assert all(response.status_code == 200 for response in responses)
+    assert len({response.json()["id"] for response in responses}) == 1
+    assert queue.qsize() == 1
+    history = await client.get("/api/messages", headers=HEADERS_WORKER)
+    assert len(history.json()) == 1
+
+

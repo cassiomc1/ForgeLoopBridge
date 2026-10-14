@@ -227,10 +227,75 @@ def test_worker_poll_execute_order_creates_improvement_record(monkeypatch, temp_
     }
     worker_poll.execute_order(msg, "http://test", headers={"Authorization": "Bearer test"})
 
-    assert len(posted) == 2  # RUNNING and COMPLETED
+    assert len(posted) == 1
+    assert posted[0]["status"] == "BLOCKED"
     files = list(temp_improvements_dir.glob("ord-worker-test-*.md"))
     assert len(files) == 1
     content = files[0].read_text(encoding="utf-8")
     assert "Self-Improvement Record: ORD-WORKER-TEST" in content
     assert "Maintain continuous automated test verifications" in content
+
+
+def test_records_created_in_same_second_preserve_each_execution(temp_improvements_dir):
+    dt = datetime(2026, 10, 14, 12, 0, 0, tzinfo=UTC)
+    paths = [
+        self_improvement.create_improvement_record(
+            "same-task", summary=f"Execution {i}", timestamp=dt, target_dir=temp_improvements_dir,
+        )
+        for i in range(3)
+    ]
+    assert len(set(paths)) == 3
+    assert all(f"Execution {i}" in path.read_text() for i, path in enumerate(paths))
+
+
+def test_concurrent_improvement_records_do_not_overwrite(temp_improvements_dir):
+    from concurrent.futures import ThreadPoolExecutor
+
+    dt = datetime(2026, 10, 14, 12, 0, 0, tzinfo=UTC)
+    def create(index):
+        return self_improvement.create_improvement_record(
+            "same-task", summary=f"Execution {index}", timestamp=dt, target_dir=temp_improvements_dir,
+        )
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        paths = list(pool.map(create, range(16)))
+    assert len(set(paths)) == 16
+    assert all(f"Execution {i}" in path.read_text() for i, path in enumerate(paths))
+
+
+def test_improvement_bullets_are_not_mistaken_for_headings():
+    extracted = self_improvement.extract_improvement_sections(
+        "SELF-IMPROVEMENT:\n- Proposed architecture improvements\n"
+        "- Reduce blockers with better diagnostics\nACTION ITEMS:\n- Review next steps weekly\n"
+    )
+    assert extracted["improvements"] == [
+        "Proposed architecture improvements", "Reduce blockers with better diagnostics",
+    ]
+    assert extracted["action_items"] == ["Review next steps weekly"]
+
+
+def test_improvement_listing_does_not_disclose_symlink_contents(temp_improvements_dir, tmp_path):
+    secret = tmp_path / "outside.md"
+    secret.write_text("Private file outside the improvements directory")
+    link = temp_improvements_dir / "linked-record.md"
+    try:
+        link.symlink_to(secret)
+    except OSError:
+        pytest.skip("Symlinks unavailable on this platform")
+    assert self_improvement.list_improvement_records(temp_improvements_dir) == []
+
+
+async def test_execution_retry_does_not_duplicate_or_rewrite_improvement(client, temp_improvements_dir):
+    body = {"order_id": "RETRY-LOG", "content": "Done", "message_key": "retry-log-key"}
+    first = await client.post("/api/executions", json=body, headers=HEADERS_AGENT)
+    assert first.status_code == 200
+    files = list(temp_improvements_dir.glob("*.md"))
+    assert len(files) == 1
+    original = files[0].read_bytes()
+    retry = await client.post(
+        "/api/executions", json=body | {"improvements": ["Unexpected rewrite"]}, headers=HEADERS_AGENT,
+    )
+    assert retry.status_code == 200
+    assert retry.json() == first.json()
+    assert list(temp_improvements_dir.glob("*.md")) == files
+    assert files[0].read_bytes() == original
 

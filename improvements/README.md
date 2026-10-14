@@ -7,6 +7,10 @@ Every execution creates a timestamped markdown file following the pattern:
 <task_name>-<YYYY-MM-DD>-<HH-MM-SS>.md
 ```
 
+Timestamps are in UTC. Execution API records add `-message-<id>` and are reused on retries.
+Direct records add a unique suffix on filename collisions, so same-second executions never
+overwrite one another.
+
 ## Structure of an Improvement Record
 Each file captures:
 1. **Executive Summary**: Overview of the execution.

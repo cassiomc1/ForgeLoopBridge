@@ -41,6 +41,7 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - run: ruff check .
       - run: python scripts/check_frontend_syntax.py
+      - run: python scripts/check_package_install.py
       - run: pytest -v
         env:
           PYTHONPATH: .

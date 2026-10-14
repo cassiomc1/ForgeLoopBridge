@@ -18,13 +18,14 @@ dependencies = [
 
 [tool.setuptools]
 include-package-data = true
-py-modules = ["main"]
+py-modules = ["main", "self_improvement"]
 
 [tool.setuptools.packages.find]
-include = ["bridge_protocol*", "static*"]
+include = ["bridge_protocol*", "static*", "prompts*"]
 
 [tool.setuptools.package-data]
 static = ["index.html", "vendor/*.js"]
+prompts = ["*.md"]
 
 [tool.ruff]
 line-length = 100

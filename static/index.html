@@ -746,7 +746,10 @@
     const emptyState = document.getElementById('empty-state');
     let token = sessionStorage.getItem('flb_token') || '';
     let myRole = sessionStorage.getItem('flb_role') || '';
+    let sessionVersion = 0;
     let lastId = 0;
+    // Only complete REST pages advance the polling cursor. SSE events and
+    // POST responses can arrive ahead of messages not yet loaded.
     let oldestId = 0;
     let knownIds = new Set();
     let eventSource = null;
@@ -1082,6 +1085,7 @@
 
     async function loadOlder() {
       if (!oldestId) return;
+      const version = sessionVersion;
 
       const loadOlderBtn = document.getElementById('load-older');
       loadOlderBtn.disabled = true;
@@ -1092,9 +1096,11 @@
         });
 
         const res = await fetch('/api/messages?' + params.toString(), { headers: authHeaders() });
+        if (version !== sessionVersion || !token || !myRole) return;
         if (!res.ok) return;
 
         const messages = await res.json();
+        if (version !== sessionVersion || !token || !myRole) return;
         prependMessagesPreservingScroll(messages);
         applyFilters();
 
@@ -1113,6 +1119,7 @@
         setConnStatus('disconnected');
         return;
       }
+      const version = sessionVersion;
       try {
         const params = new URLSearchParams();
         if (initial) {
@@ -1122,9 +1129,11 @@
         }
 
         const res = await fetch('/api/messages?' + params.toString(), { headers: authHeaders() });
+        if (version !== sessionVersion || !token || !myRole) return;
         if (res.status === 401 || res.status === 403) { lock(); return; }
         if (!res.ok) return;
         const messages = await res.json();
+        if (version !== sessionVersion || !token || !myRole) return;
         messages.forEach(appendMessage);
         if (messages.length > 0) {
           lastId = Math.max(lastId, ...messages.map(m => m.id));
@@ -1160,6 +1169,7 @@
         return;
       }
       if (streamStarting) return;
+      const version = sessionVersion;
       streamStarting = true;
       if (eventSource) { eventSource.close(); eventSource = null; }
       try {
@@ -1167,30 +1177,34 @@
           method: 'POST',
           headers: authHeaders(),
         });
+        if (version !== sessionVersion || !token || !myRole) return;
         if (ticketRes.status === 401 || ticketRes.status === 403) { lock(); return; }
         if (!ticketRes.ok) { setConnStatus('polling'); return; }
         const ticketData = await ticketRes.json();
+        if (version !== sessionVersion || !token || !myRole) return;
         if (!ticketData.ticket) { setConnStatus('polling'); return; }
 
         eventSource = new EventSource('/api/stream?ticket=' + encodeURIComponent(ticketData.ticket));
         eventSource.onopen = async () => {
+          if (version !== sessionVersion || !token || !myRole) return;
           setConnStatus('live');
           await fetchMessages(false);
         };
         eventSource.onmessage = (ev) => {
+          if (version !== sessionVersion || !token || !myRole) return;
           const msg = JSON.parse(ev.data);
           appendMessage(msg);
-          lastId = Math.max(lastId, msg.id);
           refreshStatus();
         };
         eventSource.onerror = () => {
+          if (version !== sessionVersion || !token || !myRole) return;
           setConnStatus('polling');
           if (eventSource) { eventSource.close(); eventSource = null; }
         };
       } catch (e) {
         setConnStatus('polling');
       } finally {
-        streamStarting = false;
+        if (version === sessionVersion) streamStarting = false;
       }
     }
 
@@ -1208,6 +1222,7 @@
     }
 
     async function postMessage() {
+      const version = sessionVersion;
       const content = document.getElementById('content').value.trim();
       if (!content) return;
 
@@ -1297,6 +1312,7 @@
           headers: { 'Content-Type': 'application/json', ...authHeaders() },
           body: JSON.stringify(payload)
         });
+        if (version !== sessionVersion || !token || !myRole) return;
 
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
@@ -1308,8 +1324,8 @@
         }
 
         const msg = await res.json();
+        if (version !== sessionVersion || !token || !myRole) return;
         appendMessage(msg);
-        lastId = Math.max(lastId, msg.id);
         document.getElementById('content').value = '';
         const statusEl = document.getElementById('composer-status');
         if (statusEl) statusEl.value = '';
@@ -1374,11 +1390,16 @@
     }
 
     function lock() {
+      sessionVersion++;
+      streamStarting = false;
       sessionStorage.removeItem('flb_token');
       sessionStorage.removeItem('flb_role');
       token = ''; myRole = '';
       if (eventSource) { eventSource.close(); eventSource = null; }
       resetBoard();
+      closeImprovementsModal();
+      document.getElementById('improvements-list').textContent = '';
+      document.getElementById('improvement-detail-content').value = '';
       document.getElementById('composer').classList.remove('visible');
       const badge = document.getElementById('my-role');
       badge.classList.add('hidden');
@@ -1400,14 +1421,17 @@
     }
 
     async function connect(tkn) {
+      const version = ++sessionVersion;
       const errEl = document.getElementById('unlock-error');
       try {
         const res = await fetch('/api/whoami', { headers: { 'Authorization': 'Bearer ' + tkn } });
+        if (version !== sessionVersion) return false;
         if (!res.ok) {
           errEl.textContent = 'Invalid token.';
           return false;
         }
         const data = await res.json();
+        if (version !== sessionVersion) return false;
         token = tkn;
         myRole = data.role;
         sessionStorage.setItem('flb_token', token);
@@ -1491,15 +1515,18 @@
     }
 
     async function loadImprovementsList() {
+      const version = sessionVersion;
       const container = document.getElementById('improvements-list');
       container.innerHTML = '<span style="color:var(--text-muted);font-size:0.85rem;">Loading logs…</span>';
       try {
         const res = await fetch('/api/improvements', { headers: authHeaders() });
+        if (version !== sessionVersion || !token || !myRole) return;
         if (!res.ok) {
           container.innerHTML = '<span style="color:var(--danger);font-size:0.85rem;">Failed to load logs.</span>';
           return;
         }
         const records = await res.json();
+        if (version !== sessionVersion || !token || !myRole) return;
         if (!records || records.length === 0) {
           container.innerHTML = '<span style="color:var(--text-muted);font-size:0.85rem;">No self-improvement records found yet. They are created automatically on execution.</span>';
           return;
@@ -1526,10 +1553,12 @@
     }
 
     async function viewImprovementRecord(filename) {
+      const version = sessionVersion;
       try {
         const res = await fetch(`/api/improvements/${encodeURIComponent(filename)}`, { headers: authHeaders() });
         if (!res.ok) return;
         const data = await res.json();
+        if (version !== sessionVersion || !token || !myRole) return;
         const detail = document.getElementById('improvement-detail');
         detail.classList.remove('hidden');
         document.getElementById('improvement-detail-title').textContent = data.filename;
@@ -1683,7 +1712,6 @@
     }
     setInterval(() => {
       if (!token || !myRole) return;
-      if (eventSource && eventSource.readyState <= 1) return;
       fetchMessages(false);
       if (!eventSource && !streamStarting) startStream();
     }, 8000);

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+import secrets
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -87,6 +88,14 @@ def extract_improvement_sections(raw_markdown: str) -> dict[str, list[str]]:
 
     for line in lines:
         stripped = line.strip()
+        if re.match(r"^[-*]\s+", stripped):
+            if current_section:
+                item = stripped[1:].strip()
+                if item:
+                    result[current_section].append(item)
+            continue
+        if not (stripped.startswith("#") or stripped.rstrip("*").endswith(":")):
+            continue
         upper_stripped = stripped.upper()
 
         if any(h in upper_stripped for h in ["SELF-IMPROVEMENT", "IMPROVEMENT", "SYSTEM SUGGESTION"]):
@@ -102,11 +111,6 @@ def extract_improvement_sections(raw_markdown: str) -> dict[str, list[str]]:
             current_section = None
             continue
 
-        if current_section and stripped.startswith(("-", "*")):
-            item = stripped.lstrip("-* \t")
-            if item:
-                result[current_section].append(item)
-
     return result
 
 
@@ -115,28 +119,26 @@ def create_improvement_record(
     role: str = "agent",
     status: str = "COMPLETED",
     summary: str = "",
-    improvements: list[str] | None = None,
-    issues: list[str] | None = None,
-    action_items: list[str] | None = None,
+    improvements: list[str] | str | None = None,
+    issues: list[str] | str | None = None,
+    action_items: list[str] | str | None = None,
     raw_content: str | None = None,
     target_dir: Path | str | None = None,
     timestamp: datetime | None = None,
+    record_id: int | None = None,
 ) -> Path:
     """Create and write a standard `<task_name>-<date>-<time>.md` self-improvement record.
 
-    Returns the Path to the created file.
+    Returns the Path to the created file. A persisted message ID plus its creation
+    timestamp makes API retries reuse an existing record without rewriting it.
     """
     now = timestamp or datetime.now(UTC)
     directory = get_improvements_dir(target_dir)
     filename = generate_improvement_filename(task_name, now)
-
-    base_dir = os.path.realpath(str(directory))
-    dest_path = os.path.realpath(os.path.join(base_dir, filename))
-
-    # Barrier guard recognized by CodeQL: os.path.realpath (PathNormalization) + startswith (SafeAccessCheck)
-    if not dest_path.startswith(base_dir + os.path.sep):
-        raise ValueError("Invalid target path outside improvements directory")
-
+    if record_id is not None:
+        if isinstance(record_id, bool) or not isinstance(record_id, int) or record_id < 1:
+            raise ValueError("record_id must be a positive integer")
+        filename = f"{filename[:-3]}-message-{record_id}.md"
 
     # Extract sections from raw_content if explicit lists were omitted
     if raw_content and (not improvements or not issues or not action_items):
@@ -189,9 +191,20 @@ def create_improvement_record(
 *Generated automatically by Master-Agent Bridge Self-Improvement Subsystem.*
 """
 
-    with open(dest_path, "w", encoding="utf-8") as f:
-        f.write(content)
-    return Path(dest_path)
+    base_dir = os.path.realpath(str(directory))
+    while True:
+        dest_path = os.path.realpath(os.path.join(base_dir, filename))
+        # Normalize and check containment before accessing the destination.
+        if not dest_path.startswith(base_dir + os.path.sep):
+            raise ValueError("Invalid target path outside improvements directory")
+        try:
+            with open(dest_path, "x", encoding="utf-8") as f:
+                f.write(content)
+            return Path(dest_path)
+        except FileExistsError:
+            if record_id is not None:
+                return Path(dest_path)
+            filename = f"{generate_improvement_filename(task_name, now)[:-3]}-{secrets.token_hex(6)}.md"
 
 
 def list_improvement_records(
@@ -204,18 +217,19 @@ def list_improvement_records(
 
     files = [
         f for f in directory.iterdir()
-        if f.is_file() and f.suffix == ".md" and f.name.lower() != "readme.md"
+        if not f.is_symlink() and f.is_file()
+        and re.fullmatch(r"[a-zA-Z0-9_\-]+\.md", f.name) and f.name.lower() != "readme.md"
     ]
 
     # Sort descending by modification time
     files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
 
-    for f in files[:limit]:
+    for f in files[:max(0, limit)]:
         stat = f.stat()
-        # Read snippet (first 6 lines)
+        # Bound preview reads to eight chunks of at most 1024 characters.
         try:
-            head_lines = f.read_text(encoding="utf-8", errors="replace").splitlines()[:8]
-            snippet = "\n".join(head_lines)
+            with f.open(encoding="utf-8", errors="replace") as stream:
+                snippet = "".join(stream.readline(1024) for _ in range(8)).rstrip("\n")
         except Exception:
             snippet = ""
 

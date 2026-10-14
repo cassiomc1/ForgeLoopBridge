@@ -1,4 +1,8 @@
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 INDEX = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
@@ -195,5 +199,12 @@ def test_frontend_self_improvement_modal_and_controls():
     assert 'id="improvements-list"' in INDEX
     assert 'id="close-improvements-modal"' in INDEX
     assert 'openImprovementsModal' in INDEX
+
+
+def test_dashboard_recovers_messages_between_post_and_sse_events():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required for dashboard runtime verification")
+    subprocess.run([node, str(ROOT / "tests" / "frontend_cursor.cjs")], check=True, timeout=15)
 
 
