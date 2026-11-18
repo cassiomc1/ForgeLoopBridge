@@ -52,7 +52,7 @@ def generate_improvement_filename(task_name: str | None, timestamp: datetime | N
     date_time_str = now.strftime("%Y-%m-%d-%H-%M-%S")
     safe_name = f"{slug}-{date_time_str}.md"
     base_name = os.path.basename(safe_name)
-    if not re.match(r"^[a-zA-Z0-9_\-]+\.md$", base_name):
+    if not re.fullmatch(r"[a-zA-Z0-9_\-]+\.md", base_name):
         return f"general-task-{date_time_str}.md"
     return base_name
 
@@ -88,28 +88,44 @@ def extract_improvement_sections(raw_markdown: str) -> dict[str, list[str]]:
 
     for line in lines:
         stripped = line.strip()
-        if re.match(r"^[-*]\s+", stripped):
+        if not stripped:
+            continue
+
+        bullet_match = re.match(r"^(?:[-*+]|\d+[.)])\s+(.+)$", stripped)
+        if bullet_match:
             if current_section:
-                item = stripped[1:].strip()
+                item = bullet_match.group(1).strip()
                 if item:
                     result[current_section].append(item)
             continue
-        if not (stripped.startswith("#") or stripped.rstrip("*").endswith(":")):
-            continue
-        upper_stripped = stripped.upper()
 
-        if any(h in upper_stripped for h in ["SELF-IMPROVEMENT", "IMPROVEMENT", "SYSTEM SUGGESTION"]):
-            current_section = "improvements"
-            continue
-        elif any(h in upper_stripped for h in ["FRICTION POINT", "IDENTIFIED ISSUE", "BLOCKER", "FRICTION", "ISSUES"]):
-            current_section = "issues"
-            continue
-        elif any(h in upper_stripped for h in ["ACTION ITEM", "NEXT STEP"]):
-            current_section = "action_items"
-            continue
-        elif upper_stripped.startswith("##") or upper_stripped.startswith("SUMMARY:"):
+        upper_stripped = stripped.upper()
+        if upper_stripped.startswith(("STATUS:", "ORDER ID:", "ORDER:", "TASK ID:", "PRIORITY:", "TITLE:")):
             current_section = None
             continue
+
+        cleaned_heading = stripped.strip("*_")
+        if stripped.startswith("#") or cleaned_heading.endswith(":"):
+            upper_heading = cleaned_heading.upper()
+            if any(h in upper_heading for h in ("SELF-IMPROVEMENT", "IMPROVEMENT", "SYSTEM SUGGESTION")):
+                current_section = "improvements"
+            elif any(h in upper_heading for h in ("FRICTION POINT", "IDENTIFIED ISSUE", "BLOCKER", "FRICTION", "ISSUES")):
+                current_section = "issues"
+            elif any(h in upper_heading for h in ("ACTION ITEM", "NEXT STEP")):
+                current_section = "action_items"
+            else:
+                current_section = None
+            continue
+
+        if current_section:
+            if re.fullmatch(r"[-=*]{3,}", stripped):
+                continue
+            lowered = stripped.lower()
+            if lowered in {"none", "none.", "n/a", "n/a."} or (
+                lowered.startswith("<none") and lowered.endswith(">")
+            ):
+                continue
+            result[current_section].append(stripped)
 
     return result
 
@@ -192,7 +208,7 @@ def create_improvement_record(
 """
 
     base_dir = os.path.realpath(str(directory))
-    while True:
+    for _ in range(32):
         dest_path = os.path.realpath(os.path.join(base_dir, filename))
         # Normalize and check containment before accessing the destination.
         if not dest_path.startswith(base_dir + os.path.sep):
@@ -205,6 +221,7 @@ def create_improvement_record(
             if record_id is not None:
                 return Path(dest_path)
             filename = f"{generate_improvement_filename(task_name, now)[:-3]}-{secrets.token_hex(6)}.md"
+    raise RuntimeError("Could not allocate unique improvement filename")
 
 
 def list_improvement_records(
@@ -215,17 +232,23 @@ def list_improvement_records(
     directory = get_improvements_dir(target_dir)
     records: list[dict[str, Any]] = []
 
-    files = [
-        f for f in directory.iterdir()
-        if not f.is_symlink() and f.is_file()
-        and re.fullmatch(r"[a-zA-Z0-9_\-]+\.md", f.name) and f.name.lower() != "readme.md"
-    ]
+    file_entries: list[tuple[Path, os.stat_result]] = []
+    for f in directory.iterdir():
+        if (
+            not f.is_symlink()
+            and f.is_file()
+            and re.fullmatch(r"[a-zA-Z0-9_\-]+\.md", f.name)
+            and f.name.lower() != "readme.md"
+        ):
+            try:
+                file_entries.append((f, f.stat()))
+            except OSError:
+                continue
 
-    # Sort descending by modification time
-    files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+    # Sort descending by modification time, then filename for determinism
+    file_entries.sort(key=lambda item: (item[1].st_mtime, item[0].name), reverse=True)
 
-    for f in files[:max(0, limit)]:
-        stat = f.stat()
+    for f, stat in file_entries[:max(0, limit)]:
         # Bound preview reads to eight chunks of at most 1024 characters.
         try:
             with f.open(encoding="utf-8", errors="replace") as stream:
@@ -249,7 +272,7 @@ def read_improvement_record(
 ) -> str:
     """Read a specific improvement record markdown, preventing directory traversal."""
     # Strict format check: must be an exact safe filename without any directory separators
-    if not re.match(r"^[a-zA-Z0-9_\-]+\.md$", filename):
+    if not re.fullmatch(r"[a-zA-Z0-9_\-]+\.md", filename) or filename.lower() == "readme.md":
         raise FileNotFoundError(f"Improvement record not found: {filename}")
 
     safe_name = os.path.basename(filename)
@@ -262,7 +285,7 @@ def read_improvement_record(
     # Search directory entries so we only read pre-existing files without constructing arbitrary paths
     matched_entry: Path | None = None
     for entry in directory.iterdir():
-        if entry.is_file() and entry.name == safe_name:
+        if not entry.is_symlink() and entry.is_file() and entry.name == safe_name:
             matched_entry = entry
             break
 

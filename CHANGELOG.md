@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Fixed
+- Dashboard message delete buttons now work correctly without triggering the copy button, support normalized `engineer`/`worker` aliases, and insert out-of-order SSE/REST messages in ID order.
+- Dashboard CSS now uses consistent theme tokens (`--destructive`, `--warning`, `--typed`, `--muted`) and resets task filters cleanly on session lock.
+- Typed `DECISION_RESPONSE` messages without `reply_to_id` are validated consistently, mismatched top-level `message_key`/`reply_to_id` fields are rejected, and oversized or non-finite legacy JSON payloads fail safely.
+- Pending-order queries now close orders when a Master `CANCEL` replies to an intermediate Agent message rather than directly to the original order.
+- Self-improvement markdown parsing now supports numbered lists and plain-text lines while resetting on unrelated headings and ignoring `None` placeholders; `README.md` and symlinks are excluded consistently on read.
+- Worker poller now avoids retrying non-transient 4xx errors, honors `Retry-After` on 429 responses, deduplicates paged pending orders, and drains full message pages without idle sleep.
+- Package wheel smoke check now finds dev dependencies reliably when executed from an active virtualenv.
 - Legacy idempotency now preserves payloads and reply targets through REST history and retries,
   returning conflicts when either changes. Shared transport fields are no longer classified
   as corrupt typed envelopes.
@@ -21,6 +28,8 @@
   prevent delayed history responses and stream events from repopulating a locked dashboard.
 
 ### Changed
+- Added `CORS_ALLOW_ORIGINS` and `IMPROVEMENTS_DIR` configuration examples, `.dockerignore`, Docker healthcheck timeout, and `improvements/` volume mount.
+- Added security response headers (`X-Content-Type-Options`, `Referrer-Policy`), SSE `id:` event frames and cache-control headers, monotonic rate-limit/ticket clocks, SQLite `action_id`/`approval_id` indexes, and `BlockerPayload`/`ReviewItem`/`ReviewResultPayload` package exports.
 - Improvement file operations run outside the API event loop; improvement writes use the
   existing role rate limit and return a generic error on storage failures.
 

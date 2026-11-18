@@ -112,7 +112,7 @@ The Bridge is fully generic and designed so that **either or both** the Master a
    - On any Execution card in the Bridge dashboard, click **"📋 For Master"** to copy the update and paste it back to your Master chat for the next order.
 
 ### 2. Direct API Integration (Custom Actions / Browser Extensions / CLI)
-CORS is enabled out of the box (`Access-Control-Allow-Origin: *` with credentials support), allowing web-based clients and browser extensions to call the Bridge directly:
+CORS is enabled out of the box (`Access-Control-Allow-Origin: *` by default, configurable via `CORS_ALLOW_ORIGINS`, with credentials support), allowing web-based clients and browser extensions to call the Bridge directly:
 
 - **Fetch System Prompts**:
   - `GET /api/prompts/master`: Returns universal Master system prompt and guidelines.
@@ -194,7 +194,7 @@ Agent reporting execution:
 
 ## Continuous Self-Improvement Subsystem
 
-Every execution of the system records an actionable post-mortem log formatted as `<task_name>-<YYYY-MM-DD>-<HH-MM-SS>.md` under `improvements/`:
+Every execution of the system records an actionable post-mortem log formatted as `<task_name>-<YYYY-MM-DD>-<HH-MM-SS>.md` under `improvements/` (configurable via `IMPROVEMENTS_DIR`):
 
 ```
 improvements/

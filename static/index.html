@@ -205,7 +205,7 @@
     .typed-details summary {
       cursor: pointer;
       padding: 6px 8px;
-      color: #a5d6ff;
+      color: var(--typed);
     }
     .typed-fields {
       display: grid;
@@ -266,6 +266,26 @@
 
     .time { color: var(--text-muted); }
 
+    .msg-id {
+      color: var(--text-muted);
+      font-family: ui-monospace, monospace;
+      font-size: 0.72rem;
+    }
+
+    .action-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.78rem;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+    .action-btn:hover {
+      color: var(--text);
+      background: var(--muted);
+    }
+
     .delete-btn {
       background: none;
       border: none;
@@ -276,9 +296,9 @@
       border-radius: 4px;
     }
     .delete-btn:hover {
-      color: #f85149;
+      color: var(--destructive);
       filter: none;
-      background: rgba(248,81,73,0.1);
+      background: color-mix(in srgb, var(--destructive) 12%, transparent);
     }
 
     .message-body {
@@ -451,7 +471,7 @@
 
     .conn-status { font-size: 0.75rem; }
     .conn-status.live { color: var(--worker); }
-    .conn-status.polling { color: #d29922; }
+    .conn-status.polling { color: var(--warning); }
     .conn-status.disconnected { color: var(--text-muted); }
     .filter-note { color: var(--text-muted); font-size: 0.7rem; }
     .history-btn {
@@ -591,6 +611,13 @@
         <option value="EXECUTION">EXECUTION</option>
         <option value="TASK">TASK</option>
         <option value="STATUS">STATUS</option>
+        <option value="PROGRESS">PROGRESS</option>
+        <option value="RESULT">RESULT</option>
+        <option value="BLOCKER">BLOCKER</option>
+        <option value="INSTRUCTION">INSTRUCTION</option>
+        <option value="DECISION">DECISION</option>
+        <option value="CANCEL">CANCEL</option>
+        <option value="MESSAGE">MESSAGE</option>
         <option value="DECISION_NEEDED">DECISION_NEEDED</option>
         <option value="DECISION_RESOLVED">DECISION_RESOLVED</option>
         <option value="DECISION_TAKEN">DECISION_TAKEN</option>
@@ -619,16 +646,14 @@
       <select id="typed-kind-filter" class="task-filter" title="Filter by typed kind">
         <option value="">All typed kinds</option>
         <option value="TASK_REQUEST">TASK_REQUEST</option>
+        <option value="ORDER">ORDER</option>
         <option value="STATUS_UPDATE">STATUS_UPDATE</option>
+        <option value="EXECUTION">EXECUTION</option>
         <option value="DECISION_REQUEST">DECISION_REQUEST</option>
         <option value="DECISION_RESPONSE">DECISION_RESPONSE</option>
         <option value="DECISION_NOTICE">DECISION_NOTICE</option>
         <option value="BLOCKER">BLOCKER</option>
         <option value="REVIEW_RESULT">REVIEW_RESULT</option>
-        <option value="CONTROL_NOTICE">CONTROL_NOTICE</option>
-        <option value="HANDOFF_NOTICE">HANDOFF_NOTICE</option>
-        <option value="VERIFICATION_REPORT">VERIFICATION_REPORT</option>
-        <option value="ATTESTATION_REPORT">ATTESTATION_REPORT</option>
       </select>
       <input id="correlation-filter" class="task-filter filter-input" type="search" placeholder="Correlation ID" title="Filter by correlation" autocomplete="off" />
       <span class="filter-note" title="Filters inspect messages already loaded in this browser session.">Filters apply to loaded messages.</span>
@@ -667,6 +692,13 @@
           <option value="EXECUTION">EXECUTION</option>
           <option value="TASK">TASK</option>
           <option value="STATUS">STATUS</option>
+          <option value="PROGRESS">PROGRESS</option>
+          <option value="RESULT">RESULT</option>
+          <option value="BLOCKER">BLOCKER</option>
+          <option value="INSTRUCTION">INSTRUCTION</option>
+          <option value="DECISION">DECISION</option>
+          <option value="CANCEL">CANCEL</option>
+          <option value="MESSAGE">MESSAGE</option>
           <option value="DECISION_NEEDED">DECISION_NEEDED</option>
           <option value="DECISION_RESOLVED">DECISION_RESOLVED</option>
           <option value="DECISION_TAKEN">DECISION_TAKEN</option>
@@ -688,6 +720,7 @@
           <option value="COMPLETED">COMPLETED</option>
           <option value="FAILED">FAILED</option>
           <option value="BLOCKED">BLOCKED</option>
+          <option value="CANCELLED">CANCELLED</option>
         </select>
         <input type="text" id="composer-action-id" class="meta-input" placeholder="Action ID (optional)" maxlength="200" autocomplete="off" />
         <input type="text" id="composer-approval-id" class="meta-input" placeholder="Approval ID (optional)" maxlength="200" autocomplete="off" />
@@ -699,16 +732,14 @@
             <select id="composer-typed-kind" class="meta-input">
               <option value="">Typed kind (optional)</option>
               <option value="TASK_REQUEST">TASK_REQUEST</option>
+              <option value="ORDER">ORDER</option>
               <option value="STATUS_UPDATE">STATUS_UPDATE</option>
+              <option value="EXECUTION">EXECUTION</option>
               <option value="DECISION_REQUEST">DECISION_REQUEST</option>
               <option value="DECISION_RESPONSE">DECISION_RESPONSE</option>
               <option value="DECISION_NOTICE">DECISION_NOTICE</option>
               <option value="BLOCKER">BLOCKER</option>
               <option value="REVIEW_RESULT">REVIEW_RESULT</option>
-              <option value="CONTROL_NOTICE">CONTROL_NOTICE</option>
-              <option value="HANDOFF_NOTICE">HANDOFF_NOTICE</option>
-              <option value="VERIFICATION_REPORT">VERIFICATION_REPORT</option>
-              <option value="ATTESTATION_REPORT">ATTESTATION_REPORT</option>
             </select>
             <input type="text" id="composer-message-key" class="meta-input" placeholder="Message key (retry-safe)" maxlength="200" autocomplete="off" />
             <input type="text" id="composer-correlation-id" class="meta-input" placeholder="Correlation ID (optional)" maxlength="200" autocomplete="off" />
@@ -721,7 +752,7 @@
       </details>
       <textarea id="content" placeholder="Write in Markdown…&#10;&#10;## Task X&#10;- clear instruction&#10;- acceptance criteria"></textarea>
       <div class="composer-row">
-        <span style="font-size:0.75rem;color:var(--text-muted);flex:1;">Ctrl+Enter to post · posting as <strong id="composer-role">—</strong></span>
+        <span style="font-size:0.75rem;color:var(--text-muted);flex:1;">Ctrl/Cmd+Enter to post · posting as <strong id="composer-role">—</strong></span>
         <button type="button" class="history-btn" id="smart-paste-btn" style="margin-bottom:0;padding:6px 12px;font-size:0.8rem;" title="Extract status, order ID, and content from clipboard">⚡ Smart Paste</button>
         <button class="primary" id="post-btn">Post</button>
       </div>
@@ -782,6 +813,23 @@
     }
 
     const authHeaders = () => ({ 'Authorization': 'Bearer ' + token });
+
+    function normalizeRole(role) {
+      const r = (role || '').trim().toLowerCase();
+      if (r === 'master' || r === 'engineer') return 'master';
+      if (r === 'agent' || r === 'worker') return 'agent';
+      return r;
+    }
+
+    function flashCopyButton(btn, ok) {
+      if (!btn.dataset.origLabel) btn.dataset.origLabel = btn.textContent;
+      if (btn._copyTimer) clearTimeout(btn._copyTimer);
+      btn.textContent = ok ? '✓ Copied!' : '✕ Failed';
+      btn._copyTimer = setTimeout(() => {
+        btn.textContent = btn.dataset.origLabel;
+        btn._copyTimer = null;
+      }, 1800);
+    }
 
     function escapeHtml(str) {
       if (!str) return '';
@@ -916,9 +964,10 @@
 
       oldestId = oldestId === 0 ? msg.id : Math.min(oldestId, msg.id);
 
-      const isMaster = msg.role === 'master' || msg.role === 'engineer';
+      const normalizedMsgRole = normalizeRole(msg.role);
+      const isMaster = normalizedMsgRole === 'master';
       const roleLabel = isMaster ? 'Master' : 'Agent';
-      const canDelete = msg.role === myRole;
+      const canDelete = Boolean(myRole) && normalizedMsgRole === normalizeRole(myRole);
 
       const div = document.createElement('div');
       div.className = 'message';
@@ -938,6 +987,11 @@
       header.className = 'message-header';
       const left = document.createElement('span');
       left.className = 'left';
+
+      const msgIdEl = document.createElement('span');
+      msgIdEl.className = 'msg-id';
+      msgIdEl.textContent = `#${msg.id}`;
+      left.appendChild(msgIdEl);
 
       const role = document.createElement('span');
       role.className = `role ${isMaster ? 'master' : 'agent'}`;
@@ -964,9 +1018,7 @@
       actions.style.gap = '6px';
 
       const copyLlmBtn = document.createElement('button');
-      copyLlmBtn.className = 'delete-btn';
-      copyLlmBtn.style.fontSize = '0.78rem';
-      copyLlmBtn.style.padding = '2px 8px';
+      copyLlmBtn.className = 'action-btn';
       copyLlmBtn.title = isMaster
         ? 'Copy formatted order for Agent LLM (Claude, ChatGPT, Gemini, etc.)'
         : 'Copy formatted update for Master LLM (Claude, ChatGPT, Gemini, etc.)';
@@ -978,10 +1030,8 @@
         } else {
           text = `Here is the execution report from the Agent:\n\nORDER ID: ${effectiveOrder || 'N/A'}\nSTATUS: ${msg.status || 'COMPLETED'}\n\n${msg.content}\n\nPlease review the progress and provide the next order or instructions.`;
         }
-        await copyToClipboard(text);
-        const orig = copyLlmBtn.textContent;
-        copyLlmBtn.textContent = '✓ Copied!';
-        setTimeout(() => { copyLlmBtn.textContent = orig; }, 1800);
+        const ok = await copyToClipboard(text);
+        flashCopyButton(copyLlmBtn, ok);
       });
       actions.appendChild(copyLlmBtn);
 
@@ -990,6 +1040,7 @@
         deleteButton.className = 'delete-btn';
         deleteButton.title = 'Delete message';
         deleteButton.textContent = '🗑';
+        deleteButton.addEventListener('click', () => deleteMessage(msg.id));
         actions.appendChild(deleteButton);
       }
       header.appendChild(actions);
@@ -1025,11 +1076,11 @@
         if (typedDetails) div.appendChild(typedDetails);
       }
 
-      applyFiltersToElement(div);
-
-      if (canDelete) {
-        div.querySelector('.delete-btn').addEventListener('click', () => deleteMessage(msg.id));
+      if (msg.reply_to_id && !(msg.typed && msg.typed.reply_to_id)) {
+        left.insertBefore(createBadge('reply', `reply to: #${msg.reply_to_id}`, reportedMetadataTitle), time);
       }
+
+      applyFiltersToElement(div);
 
       return div;
     }
@@ -1056,7 +1107,24 @@
 
       const shouldScroll = nearBottom();
       if (emptyState.isConnected) emptyState.remove();
-      board.appendChild(el);
+      const existingMessages = board.querySelectorAll('.message');
+      let inserted = false;
+      for (let i = existingMessages.length - 1; i >= 0; i--) {
+        const existingId = Number(existingMessages[i].dataset.id);
+        if (existingId < msg.id) {
+          board.insertBefore(el, existingMessages[i].nextSibling);
+          inserted = true;
+          break;
+        }
+      }
+      if (!inserted) {
+        const firstMessage = existingMessages[0] || null;
+        if (firstMessage) {
+          board.insertBefore(el, firstMessage);
+        } else {
+          board.appendChild(el);
+        }
+      }
       if (shouldScroll) window.scrollTo({ top: document.body.scrollHeight });
     }
 
@@ -1192,7 +1260,13 @@
         };
         eventSource.onmessage = (ev) => {
           if (version !== sessionVersion || !token || !myRole) return;
-          const msg = JSON.parse(ev.data);
+          let msg;
+          try {
+            msg = JSON.parse(ev.data);
+          } catch (e) {
+            console.warn('Malformed SSE event', e);
+            return;
+          }
           appendMessage(msg);
           refreshStatus();
         };
@@ -1313,6 +1387,7 @@
           body: JSON.stringify(payload)
         });
         if (version !== sessionVersion || !token || !myRole) return;
+        if (res.status === 401) { lock(); return; }
 
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
@@ -1353,6 +1428,7 @@
           method: 'DELETE',
           headers: authHeaders()
         });
+        if (res.status === 401) { lock(); return; }
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           alert(err.detail || 'Failed to delete');
@@ -1361,6 +1437,9 @@
         const el = board.querySelector(`[data-id="${id}"]`);
         if (el) el.remove();
         knownIds.delete(id);
+        if (board.querySelectorAll('.message').length === 0 && !emptyState.isConnected) {
+          board.appendChild(emptyState);
+        }
         refreshStatus();
       } catch (e) {
         alert('Network error');
@@ -1384,6 +1463,12 @@
       lastId = 0;
       oldestId = 0;
       knownIds.clear();
+      currentTaskFilter = '';
+      const taskFilterSelect = document.getElementById('task-filter');
+      if (taskFilterSelect) {
+        taskFilterSelect.innerHTML = '<option value="">All orders</option>';
+        taskFilterSelect.value = '';
+      }
       const loadOlderBtn = document.getElementById('load-older');
       loadOlderBtn.hidden = true;
       loadOlderBtn.disabled = false;
@@ -1521,8 +1606,9 @@
       try {
         const res = await fetch('/api/improvements', { headers: authHeaders() });
         if (version !== sessionVersion || !token || !myRole) return;
+        if (res.status === 401) { lock(); return; }
         if (!res.ok) {
-          container.innerHTML = '<span style="color:var(--danger);font-size:0.85rem;">Failed to load logs.</span>';
+          container.innerHTML = '<span style="color:var(--destructive);font-size:0.85rem;">Failed to load logs.</span>';
           return;
         }
         const records = await res.json();
@@ -1534,7 +1620,7 @@
         container.innerHTML = '';
         records.forEach(rec => {
           const item = document.createElement('div');
-          item.style.cssText = 'display:flex; justify-content:space-between; align-items:center; padding:6px 10px; background:var(--bg-secondary); border-radius:6px; font-size:0.82rem;';
+          item.style.cssText = 'display:flex; justify-content:space-between; align-items:center; padding:6px 10px; background:var(--muted); border-radius:6px; font-size:0.82rem;';
           const nameSpan = document.createElement('span');
           nameSpan.textContent = rec.filename;
           nameSpan.style.fontFamily = 'ui-monospace, monospace';
@@ -1548,7 +1634,7 @@
           container.appendChild(item);
         });
       } catch (err) {
-        container.innerHTML = '<span style="color:var(--danger);font-size:0.85rem;">Error loading logs.</span>';
+        container.innerHTML = '<span style="color:var(--destructive);font-size:0.85rem;">Error loading logs.</span>';
       }
     }
 
@@ -1556,6 +1642,7 @@
       const version = sessionVersion;
       try {
         const res = await fetch(`/api/improvements/${encodeURIComponent(filename)}`, { headers: authHeaders() });
+        if (res.status === 401) { lock(); return; }
         if (!res.ok) return;
         const data = await res.json();
         if (version !== sessionVersion || !token || !myRole) return;
@@ -1595,7 +1682,8 @@
       // Detect Status
       const statusMatch = trimmed.match(/\bSTATUS:\s*(COMPLETED|RUNNING|FAILED|BLOCKED|PENDING|CANCELLED|CANCELED)\b/i);
       if (statusMatch) {
-        const statusVal = statusMatch[1].toUpperCase();
+        const rawStatus = statusMatch[1].toUpperCase();
+        const statusVal = rawStatus === 'CANCELED' ? 'CANCELLED' : rawStatus;
         const statusEl = document.getElementById('composer-status');
         if (statusEl) statusEl.value = statusVal;
       }
@@ -1641,19 +1729,19 @@
     document.getElementById('tab-guide-btn').addEventListener('click', () => setLlmTab('guide'));
     document.getElementById('copy-master-prompt-btn').addEventListener('click', async () => {
       const text = document.getElementById('llm-master-prompt').value;
-      await copyToClipboard(text);
-      const btn = document.getElementById('copy-master-prompt-btn');
-      const orig = btn.textContent;
-      btn.textContent = '✓ Copied!';
-      setTimeout(() => { btn.textContent = orig; }, 1800);
+      const ok = await copyToClipboard(text);
+      flashCopyButton(document.getElementById('copy-master-prompt-btn'), ok);
     });
     document.getElementById('copy-agent-prompt-btn').addEventListener('click', async () => {
       const text = document.getElementById('llm-agent-prompt').value;
-      await copyToClipboard(text);
-      const btn = document.getElementById('copy-agent-prompt-btn');
-      const orig = btn.textContent;
-      btn.textContent = '✓ Copied!';
-      setTimeout(() => { btn.textContent = orig; }, 1800);
+      const ok = await copyToClipboard(text);
+      flashCopyButton(document.getElementById('copy-agent-prompt-btn'), ok);
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeLlmModal();
+        closeImprovementsModal();
+      }
     });
     document.getElementById('smart-paste-btn').addEventListener('click', handleSmartPaste);
     document.getElementById('unlock-btn').addEventListener('click', async () => {
@@ -1671,7 +1759,7 @@
     document.getElementById('post-btn').addEventListener('click', postMessage);
     document.getElementById('load-older').addEventListener('click', loadOlder);
     document.getElementById('content').addEventListener('keydown', (e) => {
-      if (e.ctrlKey && e.key === 'Enter') postMessage();
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') postMessage();
     });
     document.getElementById('task-filter').addEventListener('change', (e) => {
       currentTaskFilter = e.target.value;

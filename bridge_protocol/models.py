@@ -36,7 +36,7 @@ class BridgeModel(BaseModel):
 
 
 Role = Literal["master", "agent"]
-ExecutionStatus = Literal["PENDING", "RUNNING", "COMPLETED", "FAILED", "BLOCKED"]
+ExecutionStatus = Literal["PENDING", "RUNNING", "COMPLETED", "FAILED", "BLOCKED", "CANCELLED"]
 
 TypedMessageKind = Literal[
     "TASK_REQUEST",
