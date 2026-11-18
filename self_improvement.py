@@ -44,6 +44,16 @@ def sanitize_task_name(task_name: str | None) -> str:
     return clean[:50]
 
 
+def is_valid_improvement_filename(filename: str) -> bool:
+    """Validate improvement markdown filename in linear time without regex backtracking."""
+    if not isinstance(filename, str) or not (4 <= len(filename) <= 128):
+        return False
+    if not filename.endswith(".md"):
+        return False
+    stem = filename[:-3]
+    return all(c.isascii() and (c.isalnum() or c in ("_", "-")) for c in stem)
+
+
 def generate_improvement_filename(task_name: str | None, timestamp: datetime | None = None) -> str:
     """Generate a standard `<task_name>-<date>-<time>.md` filename."""
     slug = sanitize_task_name(task_name)
@@ -52,7 +62,7 @@ def generate_improvement_filename(task_name: str | None, timestamp: datetime | N
     date_time_str = now.strftime("%Y-%m-%d-%H-%M-%S")
     safe_name = f"{slug}-{date_time_str}.md"
     base_name = os.path.basename(safe_name)
-    if not re.fullmatch(r"[a-zA-Z0-9_\-]+\.md", base_name):
+    if not is_valid_improvement_filename(base_name):
         return f"general-task-{date_time_str}.md"
     return base_name
 
@@ -237,7 +247,7 @@ def list_improvement_records(
         if (
             not f.is_symlink()
             and f.is_file()
-            and re.fullmatch(r"[a-zA-Z0-9_\-]+\.md", f.name)
+            and is_valid_improvement_filename(f.name)
             and f.name.lower() != "readme.md"
         ):
             try:
@@ -272,7 +282,7 @@ def read_improvement_record(
 ) -> str:
     """Read a specific improvement record markdown, preventing directory traversal."""
     # Strict format check: must be an exact safe filename without any directory separators
-    if not re.fullmatch(r"[a-zA-Z0-9_\-]+\.md", filename) or filename.lower() == "readme.md":
+    if not is_valid_improvement_filename(filename) or filename.lower() == "readme.md":
         raise FileNotFoundError(f"Improvement record not found: {filename}")
 
     safe_name = os.path.basename(filename)

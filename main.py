@@ -9,7 +9,6 @@ import json
 import logging
 import math
 import os
-import re
 import secrets
 import time
 from collections import defaultdict, deque
@@ -441,8 +440,10 @@ class ImprovementCreate(BaseModel):
         val_str = str(value).strip()
         if not val_str:
             return None
-        # Strict validation of safe characters (alphanumeric, hyphens, underscores)
-        if not re.fullmatch(r"[a-zA-Z0-9_\-\. ]+", val_str):
+        if len(val_str) > 200:
+            raise ValueError("task_name exceeds maximum length")
+        # Strict validation of safe characters (alphanumeric, hyphens, underscores, dots, spaces)
+        if not all(c.isascii() and (c.isalnum() or c in ("_", "-", ".", " ")) for c in val_str):
             raise ValueError("task_name contains invalid characters")
         return val_str[:60]
 
@@ -1483,7 +1484,7 @@ async def get_improvements(request: Request, token: str | None = None, limit: in
 async def get_improvement_by_filename(filename: str, request: Request, token: str | None = None):
     """Read specific self-improvement log. Authenticated."""
     await require_reader(request, token)
-    if not re.fullmatch(r"[a-zA-Z0-9_\-]+\.md", filename):
+    if not self_improvement.is_valid_improvement_filename(filename):
         raise HTTPException(status_code=400, detail="Invalid improvement record filename format")
     try:
         content = await asyncio.to_thread(
