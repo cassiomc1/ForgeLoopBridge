@@ -40,9 +40,10 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 try:
-    from self_improvement import create_improvement_record
+    from self_improvement import create_improvement_record, extract_improvement_sections
 except ImportError:
     create_improvement_record = None  # type: ignore[assignment]
+    extract_improvement_sections = None  # type: ignore[assignment]
 
 
 logging.basicConfig(
@@ -53,6 +54,10 @@ logger = logging.getLogger("agent-worker")
 
 DEFAULT_BRIDGE_URL = os.getenv("BRIDGE_URL", "http://localhost:8000")
 AGENT_TOKEN = os.getenv("AGENT_TOKEN") or os.getenv("WORKER_TOKEN", "")
+
+
+def _normalize_bridge_url(bridge_url: str) -> str:
+    return bridge_url.rstrip("/")
 
 
 def get_auth_headers(token: str | None = None) -> dict[str, str]:
@@ -70,8 +75,9 @@ def get_auth_headers(token: str | None = None) -> dict[str, str]:
 def fetch_latest_message_id(bridge_url: str = DEFAULT_BRIDGE_URL, headers: dict[str, str] | None = None) -> int:
     """Fetch the highest message id currently recorded on the bridge."""
     hdrs = headers if headers is not None else get_auth_headers()
+    base_url = _normalize_bridge_url(bridge_url)
     resp = requests.get(
-        f"{bridge_url}/api/messages",
+        f"{base_url}/api/messages",
         params={"latest": "true", "limit": 1},
         headers=hdrs,
         timeout=10,
@@ -87,14 +93,15 @@ def fetch_pending_orders(
 ) -> list[dict[str, Any]]:
     """Read the full pending backlog using descending message-ID pagination."""
     hdrs = headers if headers is not None else get_auth_headers()
-    orders: list[dict[str, Any]] = []
+    base_url = _normalize_bridge_url(bridge_url)
+    seen_ids: dict[int, dict[str, Any]] = {}
     before_id = None
     while True:
         params = {"limit": 100}
         if before_id is not None:
             params["before_id"] = before_id
         resp = requests.get(
-            f"{bridge_url}/api/orders/pending", params=params, headers=hdrs, timeout=15,
+            f"{base_url}/api/orders/pending", params=params, headers=hdrs, timeout=15,
         )
         resp.raise_for_status()
         page = resp.json()
@@ -103,11 +110,12 @@ def fetch_pending_orders(
         next_cursor = min(order["id"] for order in page)
         if before_id is not None and any(order["id"] >= before_id for order in page):
             raise RuntimeError("Bridge pending-order pagination did not advance")
-        orders.extend(page)
+        for order in page:
+            seen_ids.setdefault(order["id"], order)
         if len(page) < 100:
             break
         before_id = next_cursor
-    return sorted(orders, key=lambda order: order["id"])
+    return sorted(seen_ids.values(), key=lambda order: order["id"])
 
 
 def fetch_messages(
@@ -118,8 +126,9 @@ def fetch_messages(
 ) -> list[dict[str, Any]]:
     """Poll messages from the bridge with id > after_id."""
     hdrs = headers if headers is not None else get_auth_headers()
+    base_url = _normalize_bridge_url(bridge_url)
     resp = requests.get(
-        f"{bridge_url}/api/messages",
+        f"{base_url}/api/messages",
         params={"after_id": after_id, "limit": limit},
         headers=hdrs,
         timeout=15,
@@ -141,6 +150,7 @@ def post_execution_report(
 ) -> dict[str, Any]:
     """Post an execution report from the agent back to the master."""
     hdrs = headers if headers is not None else get_auth_headers()
+    base_url = _normalize_bridge_url(bridge_url)
     key = message_key or f"agent-exec-{order_id or 'gen'}-{secrets.token_hex(6)}"
     body: dict[str, Any] = {
         "content": content,
@@ -156,13 +166,31 @@ def post_execution_report(
     for attempt in range(1, 4):
         try:
             resp = requests.post(
-                f"{bridge_url}/api/messages",
+                f"{base_url}/api/messages",
                 json=body,
                 headers=hdrs,
                 timeout=15,
             )
             resp.raise_for_status()
             return resp.json()
+        except requests.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response is not None else None
+            if status_code is not None and 400 <= status_code < 500 and status_code not in (408, 429):
+                raise
+            if attempt == 3:
+                raise
+            delay = attempt * 0.5
+            if status_code == 429 and exc.response is not None:
+                raw_retry = exc.response.headers.get("Retry-After")
+                if raw_retry is not None:
+                    try:
+                        retry_after = float(raw_retry)
+                    except (TypeError, ValueError):
+                        retry_after = delay
+                    if math.isfinite(retry_after):
+                        delay = min(30.0, max(0.5, retry_after))
+            logger.warning("Post attempt %d failed: %s. Retrying...", attempt, exc)
+            time.sleep(delay)
         except requests.RequestException as exc:
             if attempt == 3:
                 raise
@@ -235,22 +263,30 @@ def execute_order(
     if create_improvement_record is not None:
         try:
             task_name = order_id or f"order-{msg_id}"
+            extracted = (
+                extract_improvement_sections(report)
+                if extract_improvement_sections is not None
+                else {"improvements": [], "issues": [], "action_items": []}
+            )
+            improvements = extracted["improvements"] or [
+                "Maintain continuous automated test verifications after code edits.",
+                "Review latency and resource consumption for high-frequency polling.",
+            ]
+            issues = extracted["issues"] or [
+                "No runtime blockers detected during execution." if executor else report,
+            ]
+            action_items = extracted["action_items"] or [
+                "Inspect verification logs and wait for next Master order.",
+            ]
             rec_path = create_improvement_record(
                 task_name=task_name,
                 role="agent",
                 status=status,
                 summary=report,
-                improvements=[
-                    "Maintain continuous automated test verifications after code edits.",
-                    "Review latency and resource consumption for high-frequency polling.",
-                ],
-                issues=[
-                    "No runtime blockers detected during execution." if executor else report,
-                ],
-                action_items=[
-                    "Inspect verification logs and wait for next Master order.",
-                ],
-                raw_content=content,
+                improvements=improvements,
+                issues=issues,
+                action_items=action_items,
+                raw_content=report,
                 record_id=result["id"] if isinstance(result, dict) else None,
                 timestamp=datetime.fromtimestamp(result["created_at"], UTC)
                 if isinstance(result, dict) and "created_at" in result else None,
@@ -272,6 +308,7 @@ def run_worker_loop(
 ) -> int:
     """Run the Agent polling loop."""
     headers = get_auth_headers(token)
+    bridge_url = _normalize_bridge_url(bridge_url)
 
     if start_mode not in {"pending", "now", "history"} or run_mode not in {"daemon", "once", "bounded"}:
         raise ValueError("Unsupported worker start or run mode")
@@ -361,6 +398,8 @@ def run_worker_loop(
         if run_mode == "bounded" and idle_count >= max_idle_polls:
             logger.info("Run mode 'bounded' finished (%d orders dispatched)", orders_processed)
             return int(had_failure)
+        if not is_bootstrap and len(messages) >= 100:
+            continue
         time.sleep(poll_interval)
 
 
@@ -402,14 +441,18 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    return run_worker_loop(
-        bridge_url=args.bridge_url,
-        token=args.token,
-        start_mode=args.start_mode,
-        run_mode=args.run_mode,
-        max_idle_polls=args.max_idle_polls,
-        poll_interval=args.poll_interval,
-    )
+    try:
+        return run_worker_loop(
+            bridge_url=args.bridge_url,
+            token=args.token,
+            start_mode=args.start_mode,
+            run_mode=args.run_mode,
+            max_idle_polls=args.max_idle_polls,
+            poll_interval=args.poll_interval,
+        )
+    except KeyboardInterrupt:
+        logger.info("Agent worker stopped by interrupt")
+        return 0
 
 
 if __name__ == "__main__":

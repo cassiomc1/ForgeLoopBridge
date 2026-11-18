@@ -1,5 +1,6 @@
 import pytest
 
+import bridge_protocol
 from bridge_protocol.errors import (
     E_BRIDGE_CANONICAL_REF_INVALID,
     E_BRIDGE_CORRELATION_MISMATCH,
@@ -11,8 +12,12 @@ from bridge_protocol.errors import (
     E_BRIDGE_TYPED_SCHEMA_UNSUPPORTED,
     BridgeProtocolError,
 )
-from bridge_protocol.models import TypedEnvelopeV1
-from bridge_protocol.validation import parse_typed_envelope, validate_reply_relationship
+from bridge_protocol.models import BlockerPayload, ReviewItem, ReviewResultPayload, TypedEnvelopeV1
+from bridge_protocol.validation import (
+    parse_typed_envelope,
+    validate_legacy_kind_consistency,
+    validate_reply_relationship,
+)
 
 
 def envelope(kind: str, payload: dict, **overrides) -> dict:
@@ -327,3 +332,23 @@ def test_reply_correlation_mismatch_is_rejected():
         validate_reply_relationship(parsed, "agent", {"id": 12, "role": "master"}, target)
 
     assert exc_info.value.code == E_BRIDGE_CORRELATION_MISMATCH
+
+
+def test_package_exports_blocker_and_review_models():
+    assert bridge_protocol.BlockerPayload is BlockerPayload
+    assert bridge_protocol.ReviewItem is ReviewItem
+    assert bridge_protocol.ReviewResultPayload is ReviewResultPayload
+
+
+def test_legacy_blocker_kind_consistency():
+    blocker_env = parse_typed_envelope(
+        envelope("BLOCKER", {"category": "ENV", "summary": "Missing token."})
+    )
+    validate_legacy_kind_consistency("BLOCKER", blocker_env)
+
+    status_env = parse_typed_envelope(
+        envelope("STATUS_UPDATE", {"state": "WAITING", "summary": "Waiting."})
+    )
+    with pytest.raises(BridgeProtocolError) as exc_info:
+        validate_legacy_kind_consistency("BLOCKER", status_env)
+    assert exc_info.value.code == E_BRIDGE_TYPED_KIND_MISMATCH

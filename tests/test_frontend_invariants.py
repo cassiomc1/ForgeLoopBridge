@@ -208,3 +208,17 @@ def test_dashboard_recovers_messages_between_post_and_sse_events():
     subprocess.run([node, str(ROOT / "tests" / "frontend_cursor.cjs")], check=True, timeout=15)
 
 
+def test_frontend_theme_tokens_and_supported_composer_options():
+    assert "var(--danger)" not in INDEX
+    assert "var(--bg-secondary)" not in INDEX
+    composer_status_start = INDEX.index('id="composer-status"')
+    composer_status_end = INDEX.index("</select>", composer_status_start)
+    assert '<option value="CANCELLED">CANCELLED</option>' in INDEX[composer_status_start:composer_status_end]
+
+    typed_kind_start = INDEX.index('id="composer-typed-kind"')
+    typed_kind_end = INDEX.index("</select>", typed_kind_start)
+    typed_kind_block = INDEX[typed_kind_start:typed_kind_end]
+    assert '<option value="ORDER">ORDER</option>' in typed_kind_block
+    assert '<option value="EXECUTION">EXECUTION</option>' in typed_kind_block
+
+

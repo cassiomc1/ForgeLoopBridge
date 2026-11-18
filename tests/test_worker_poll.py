@@ -295,3 +295,121 @@ def test_startup_arrivals_are_not_dispatched_twice(monkeypatch):
     monkeypatch.setattr(worker_poll.time, "sleep", lambda _: None)
     assert worker_poll.run_worker_loop(token="test", run_mode="bounded", max_idle_polls=1) == 0
     assert executed == [1, 101, 102]
+
+
+def test_bridge_url_trailing_slash_is_normalized(monkeypatch):
+    urls = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return []
+
+    def fake_get(url, **kwargs):
+        urls.append(url)
+        return FakeResponse()
+
+    monkeypatch.setattr(worker_poll.requests, "get", fake_get)
+    worker_poll.fetch_latest_message_id("http://localhost:8000/", headers={"Authorization": "Bearer test"})
+    worker_poll.fetch_messages(0, bridge_url="http://localhost:8000///", headers={"Authorization": "Bearer test"})
+    assert urls == [
+        "http://localhost:8000/api/messages",
+        "http://localhost:8000/api/messages",
+    ]
+
+
+def test_post_execution_report_skips_retry_on_client_4xx_and_retries_429_and_503(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(worker_poll.time, "sleep", lambda s: sleeps.append(s))
+
+    def make_http_error(status_code: int, headers: dict | None = None):
+        resp = worker_poll.requests.Response()
+        resp.status_code = status_code
+        resp.headers.update(headers or {})
+        err = worker_poll.requests.HTTPError(f"HTTP {status_code}", response=resp)
+        return err
+
+    attempts_422 = 0
+
+    def post_422(*args, **kwargs):
+        nonlocal attempts_422
+        attempts_422 += 1
+        raise make_http_error(422)
+
+    monkeypatch.setattr(worker_poll.requests, "post", post_422)
+    with pytest.raises(worker_poll.requests.HTTPError):
+        worker_poll.post_execution_report("bad payload", headers={"Authorization": "Bearer test"})
+    assert attempts_422 == 1
+    assert sleeps == []
+
+    attempts_429 = 0
+
+    class OkResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"id": 99}
+
+    def post_429_then_503_then_ok(*args, **kwargs):
+        nonlocal attempts_429
+        attempts_429 += 1
+        if attempts_429 == 1:
+            raise make_http_error(429, {"Retry-After": "3"})
+        if attempts_429 == 2:
+            raise make_http_error(503)
+        return OkResponse()
+
+    monkeypatch.setattr(worker_poll.requests, "post", post_429_then_503_then_ok)
+    res = worker_poll.post_execution_report("retry me", headers={"Authorization": "Bearer test"})
+    assert res == {"id": 99}
+    assert attempts_429 == 3
+    assert sleeps == [3.0, 1.0]
+
+
+def test_fetch_pending_orders_deduplicates_across_pages(monkeypatch):
+    pages = [
+        [{"id": i} for i in range(150, 50, -1)],
+        [{"id": 50}, {"id": 50}, {"id": 49}],
+    ]
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return pages.pop(0)
+
+    monkeypatch.setattr(worker_poll.requests, "get", lambda *a, **kw: Response())
+    orders = worker_poll.fetch_pending_orders(headers={"Authorization": "Bearer test"})
+    assert [o["id"] for o in orders] == list(range(49, 151))
+
+
+def test_execute_order_extracts_improvements_from_executor_report(monkeypatch, tmp_path):
+    monkeypatch.setenv("IMPROVEMENTS_DIR", str(tmp_path))
+    posts = []
+    monkeypatch.setattr(
+        worker_poll,
+        "post_execution_report",
+        lambda **kw: posts.append(kw) or {"id": 55, "created_at": 1_700_000_000.0},
+    )
+    report = (
+        "STATUS: COMPLETED\nORDER ID: ORD-EXT\n"
+        "SELF-IMPROVEMENT:\n- Cache parsed templates\n"
+        "FRICTION POINTS:\n- Slow initial startup\n"
+        "ACTION ITEMS:\n- Add benchmark\n"
+    )
+    worker_poll.execute_order(
+        {"id": 10, "role": "master", "order_id": "ORD-EXT", "content": "Run optimization"},
+        "http://test",
+        headers={"Authorization": "Bearer test"},
+        executor=lambda msg: report,
+    )
+    files = list(tmp_path.glob("ord-ext-*.md"))
+    assert len(files) == 1
+    body = files[0].read_text(encoding="utf-8")
+    assert "Cache parsed templates" in body
+    assert "Slow initial startup" in body
+    assert "Add benchmark" in body

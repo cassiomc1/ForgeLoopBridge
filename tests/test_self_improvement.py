@@ -1,4 +1,6 @@
+import atexit
 import os
+import shutil
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -6,6 +8,7 @@ from pathlib import Path
 os.environ.setdefault("MASTER_TOKEN", "test_master_token_1234567890abcdef")
 os.environ.setdefault("AGENT_TOKEN", "test_agent_token_0987654321fedcba")
 _tmpdb = tempfile.mkdtemp()
+atexit.register(shutil.rmtree, _tmpdb, ignore_errors=True)
 os.environ["BRIDGE_DB"] = str(Path(_tmpdb) / "test.db")
 
 import httpx  # noqa: E402
@@ -24,6 +27,7 @@ async def clean_db():
     await main.init_db()
     async with main.connect_db() as db:
         await db.execute("DELETE FROM messages")
+    main._post_timestamps.clear()
     yield
 
 
@@ -298,4 +302,78 @@ async def test_execution_retry_does_not_duplicate_or_rewrite_improvement(client,
     assert retry.json() == first.json()
     assert list(temp_improvements_dir.glob("*.md")) == files
     assert files[0].read_bytes() == original
+
+
+def test_extract_improvement_sections_handles_numbered_lists_plain_text_and_unrelated_headings():
+    raw_markdown = """
+STATUS: COMPLETED
+ORDER ID: ORD-77
+
+**IMPROVEMENTS:**
+1. Add index on action_id
+2) Reuse compiled regexes
+
+CHANGES PERFORMED:
+- Edited main.py
+
+VERIFICATION RESULTS:
+- pytest passed
+
+BLOCKERS / NOTES:
+None
+
+SELF-IMPROVEMENT / SYSTEM SUGGESTIONS:
+- Document CORS_ALLOW_ORIGINS in README
+
+BLOCKERS:
+Intermittent upstream timeout on staging
+"""
+    extracted = self_improvement.extract_improvement_sections(raw_markdown)
+    assert extracted["improvements"] == [
+        "Add index on action_id",
+        "Reuse compiled regexes",
+        "Document CORS_ALLOW_ORIGINS in README",
+    ]
+    assert extracted["issues"] == ["Intermittent upstream timeout on staging"]
+    assert extracted["action_items"] == []
+
+
+def test_read_improvement_record_rejects_readme_symlinks_and_trailing_newline(
+    temp_improvements_dir, tmp_path
+):
+    readme = temp_improvements_dir / "README.md"
+    readme.write_text("# Docs", encoding="utf-8")
+    with pytest.raises(FileNotFoundError):
+        self_improvement.read_improvement_record("README.md", target_dir=temp_improvements_dir)
+
+    outside = tmp_path / "outside.md"
+    outside.write_text("secret", encoding="utf-8")
+    symlink_file = temp_improvements_dir / "linked.md"
+    try:
+        symlink_file.symlink_to(outside)
+    except OSError:
+        pytest.skip("Symlinks unavailable on this platform")
+    with pytest.raises(FileNotFoundError):
+        self_improvement.read_improvement_record("linked.md", target_dir=temp_improvements_dir)
+
+    created = self_improvement.create_improvement_record(
+        task_name="newline-guard", target_dir=temp_improvements_dir
+    )
+    with pytest.raises(FileNotFoundError):
+        self_improvement.read_improvement_record(
+            f"{created.name}\n", target_dir=temp_improvements_dir
+        )
+
+
+def test_list_improvement_records_deterministic_order(temp_improvements_dir):
+    t = 1_700_000_000.0
+    for name in ("alpha-2026-01-01-00-00-00.md", "beta-2026-01-01-00-00-00.md"):
+        p = temp_improvements_dir / name
+        p.write_text(f"# {name}\n", encoding="utf-8")
+        os.utime(p, (t, t))
+    records = self_improvement.list_improvement_records(target_dir=temp_improvements_dir)
+    assert [r["filename"] for r in records] == [
+        "beta-2026-01-01-00-00-00.md",
+        "alpha-2026-01-01-00-00-00.md",
+    ]
 

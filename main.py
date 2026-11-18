@@ -9,7 +9,6 @@ import json
 import logging
 import math
 import os
-import re
 import secrets
 import time
 from collections import defaultdict, deque
@@ -29,6 +28,9 @@ import self_improvement
 from bridge_protocol.errors import (
     E_BRIDGE_IDEMPOTENCY_CONFLICT,
     E_BRIDGE_PERSISTED_TYPED_INVALID,
+    E_BRIDGE_REPLY_NOT_FOUND,
+    E_BRIDGE_REPLY_ROLE_INVALID,
+    E_BRIDGE_TYPED_PAYLOAD_INVALID,
     E_BRIDGE_TYPED_PAYLOAD_TOO_LARGE,
     BridgeProtocolError,
 )
@@ -65,13 +67,22 @@ if not MASTER_TOKEN or not AGENT_TOKEN:
         "MASTER_TOKEN and AGENT_TOKEN (or ENGINEER_TOKEN and WORKER_TOKEN) must be set in the environment. "
         "Generate strong tokens with: openssl rand -hex 32"
     )
-if MASTER_TOKEN == AGENT_TOKEN:
-    raise RuntimeError("MASTER_TOKEN and AGENT_TOKEN must be different")
+if not {MASTER_TOKEN, ENGINEER_TOKEN}.isdisjoint({AGENT_TOKEN, WORKER_TOKEN}):
+    raise RuntimeError("MASTER_TOKEN/ENGINEER_TOKEN and AGENT_TOKEN/WORKER_TOKEN must be different")
 if len(MASTER_TOKEN) < 16 or len(AGENT_TOKEN) < 16:
     logging.getLogger("bridge").warning(
         "Tokens shorter than 16 chars are easy to brute-force; "
         "use `openssl rand -hex 32` to generate strong ones."
     )
+
+
+def _parse_cors_origins() -> list[str]:
+    raw = os.getenv("CORS_ALLOW_ORIGINS", "*")
+    origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+    return origins or ["*"]
+
+
+CORS_ALLOW_ORIGINS = _parse_cors_origins()
 
 MAX_PAGE_SIZE = 1000
 BRIDGE_API_VERSION = "3.2.0"
@@ -151,7 +162,7 @@ def _retry_after_seconds(window: deque[float], now: float, window_seconds: float
 
 
 async def check_rate_limit(key: str) -> None:
-    now = time.time()
+    now = time.monotonic()
     async with _rl_lock:
         window = _post_timestamps[key]
         while window and now - window[0] > RATE_LIMIT_WINDOW:
@@ -168,7 +179,7 @@ async def check_rate_limit(key: str) -> None:
 
 
 async def check_sse_ticket_rate_limit(role: str) -> None:
-    now = time.time()
+    now = time.monotonic()
     async with _sse_ticket_rl_lock:
         window = _sse_ticket_timestamps[role]
         while window and now - window[0] > SSE_TICKET_RATE_WINDOW:
@@ -204,7 +215,7 @@ def _purge_sse_tickets(now: float) -> None:
 
 
 async def issue_sse_ticket(role: str) -> tuple[str, float]:
-    now = time.time()
+    now = time.monotonic()
     ticket = secrets.token_urlsafe(32)
     expires_at = now + SSE_TICKET_TTL
     async with _sse_ticket_lock:
@@ -214,7 +225,7 @@ async def issue_sse_ticket(role: str) -> tuple[str, float]:
 
 
 async def resolve_sse_ticket(ticket: str) -> str:
-    now = time.time()
+    now = time.monotonic()
     async with _sse_ticket_lock:
         _purge_sse_tickets(now)
         entry = _sse_tickets.pop(ticket, None)
@@ -414,12 +425,12 @@ class ExecutionCreate(BaseModel):
 class ImprovementCreate(BaseModel):
     token: str = ""
     task_name: str | None = Field(default=None, max_length=200)
-    summary: str = ""
+    summary: str = Field(default="", max_length=10000)
     improvements: list[str] | str | None = None
     issues: list[str] | str | None = None
     action_items: list[str] | str | None = None
-    raw_content: str | None = None
-    status: str = "COMPLETED"
+    raw_content: str | None = Field(default=None, max_length=50000)
+    status: str = Field(default="COMPLETED", min_length=1, max_length=40)
 
     @field_validator("task_name", mode="before")
     @classmethod
@@ -429,10 +440,33 @@ class ImprovementCreate(BaseModel):
         val_str = str(value).strip()
         if not val_str:
             return None
-        # Strict validation of safe characters (alphanumeric, hyphens, underscores)
-        if not re.match(r"^[a-zA-Z0-9_\-\. ]+$", val_str):
+        if len(val_str) > 200:
+            raise ValueError("task_name exceeds maximum length")
+        # Strict validation of safe characters (alphanumeric, hyphens, underscores, dots, spaces)
+        if not all(c.isascii() and (c.isalnum() or c in ("_", "-", ".", " ")) for c in val_str):
             raise ValueError("task_name contains invalid characters")
         return val_str[:60]
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def normalize_improvement_status(cls, value: Any) -> str:
+        norm = normalize_optional_reference(value)
+        return norm.upper() if norm else "COMPLETED"
+
+    @field_validator("improvements", "issues", "action_items")
+    @classmethod
+    def validate_improvement_items(cls, value: list[str] | str | None) -> list[str] | str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            if len(value) > 20000:
+                raise ValueError("field exceeds maximum length of 20000 characters")
+            return value
+        if len(value) > 100:
+            raise ValueError("field cannot contain more than 100 items")
+        if any(len(item) > 2000 for item in value):
+            raise ValueError("individual items must be at most 2000 characters")
+        return value
 
 
 
@@ -446,6 +480,7 @@ def resolve_role(token: str) -> str:
     try:
         candidate = token.encode("utf-8")
     except UnicodeEncodeError as exc:
+        logger.warning("Rejected invalid authentication token")
         raise HTTPException(status_code=401, detail="Invalid token") from exc
     if MASTER_TOKEN and secrets.compare_digest(candidate, MASTER_TOKEN.encode("utf-8")):
         return "master"
@@ -455,6 +490,7 @@ def resolve_role(token: str) -> str:
         return "master"
     if WORKER_TOKEN and secrets.compare_digest(candidate, WORKER_TOKEN.encode("utf-8")):
         return "agent"
+    logger.warning("Rejected invalid authentication token")
     raise HTTPException(status_code=401, detail="Invalid token")
 
 
@@ -470,8 +506,9 @@ def normalize_role(role: str) -> str:
 
 def extract_bearer_token(request: Request) -> str:
     auth = request.headers.get("Authorization", "")
-    if auth.startswith("Bearer "):
-        return auth[len("Bearer ") :].strip()
+    scheme, sep, value = auth.partition(" ")
+    if sep and scheme.lower() == "bearer":
+        return value.strip()
     return ""
 
 
@@ -486,21 +523,18 @@ async def require_reader(request: Request, token: str | None) -> str:
 @asynccontextmanager
 async def connect_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    db = aiosqlite.connect(DB_PATH, timeout=10)
-    try:
-        conn = await db
+    async with aiosqlite.connect(DB_PATH, timeout=10) as conn:
         conn.row_factory = aiosqlite.Row
-        await conn.execute("PRAGMA journal_mode=WAL")
         await conn.execute("PRAGMA busy_timeout=5000")
         await conn.execute("PRAGMA synchronous=NORMAL")
         yield conn
-        await conn.commit()
-    finally:
-        await db.close()
+        if conn.in_transaction:
+            await conn.commit()
 
 
 async def init_db():
     async with connect_db() as db:
+        await db.execute("PRAGMA journal_mode=WAL")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -557,6 +591,8 @@ async def init_db():
             ("idx_messages_role", "messages(role)"),
             ("idx_messages_message_type", "messages(message_type)"),
             ("idx_messages_status", "messages(status)"),
+            ("idx_messages_action_id", "messages(action_id)"),
+            ("idx_messages_approval_id", "messages(approval_id)"),
             ("idx_messages_typed_kind", "messages(typed_kind)"),
             ("idx_messages_correlation_id", "messages(correlation_id)"),
             ("idx_messages_reply_to_id", "messages(reply_to_id)"),
@@ -577,6 +613,8 @@ async def init_db():
 async def lifespan(app: FastAPI):
     await init_db()
     yield
+    for q in list(_subscribers):
+        disconnect_slow_subscriber(q)
     _subscribers.clear()
     _sse_tickets.clear()
     _sse_ticket_timestamps.clear()
@@ -591,11 +629,19 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ALLOW_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    return response
 
 
 @app.exception_handler(BridgeProtocolError)
@@ -615,7 +661,25 @@ MESSAGE_SELECT = """
 
 
 def _json_dumps(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def _serialize_legacy_payload(payload: dict[str, Any]) -> str:
+    try:
+        serialized = _json_dumps(payload)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="payload must be valid JSON without NaN or Infinity",
+        ) from exc
+    size = len(serialized.encode("utf-8"))
+    if size > MAX_TYPED_ENVELOPE_BYTES:
+        raise BridgeProtocolError(
+            E_BRIDGE_TYPED_PAYLOAD_TOO_LARGE,
+            f"payload is {size} bytes; maximum is {MAX_TYPED_ENVELOPE_BYTES}",
+            status_code=413,
+        )
+    return serialized
 
 
 def _typed_envelope_size(envelope) -> int:
@@ -964,6 +1028,20 @@ async def post_message(msg: MessageCreate, request: Request):
         envelope = parse_typed_envelope(msg.typed)
         validate_legacy_kind_consistency(message_type, envelope)
         _validate_typed_envelope_size(envelope)
+        if msg.message_key is not None and msg.message_key != envelope.message_key:
+            raise BridgeProtocolError(
+                E_BRIDGE_TYPED_PAYLOAD_INVALID,
+                "message_key must match typed.message_key",
+            )
+        if msg.reply_to_id is not None and msg.reply_to_id != envelope.reply_to_id:
+            raise BridgeProtocolError(
+                E_BRIDGE_TYPED_PAYLOAD_INVALID,
+                "reply_to_id must match typed.reply_to_id",
+            )
+
+    legacy_payload_json = None
+    if envelope is None and msg.payload is not None:
+        legacy_payload_json = _serialize_legacy_payload(msg.payload)
 
     message_key = envelope.message_key if envelope is not None else msg.message_key
     correlation_id = envelope.correlation_id if envelope is not None else None
@@ -998,28 +1076,25 @@ async def post_message(msg: MessageCreate, request: Request):
                     status_code=409,
                 )
 
-        if reply_to_id is not None:
-            target = await _find_message_by_id(db, reply_to_id)
+        if envelope is not None:
+            target = await _find_message_by_id(db, reply_to_id) if reply_to_id is not None else None
             target_typed = _typed_envelope_from_row(target) if target is not None else None
-            if envelope is not None:
-                validate_reply_relationship(envelope, role, target, target_typed)
-            else:
-                if target is None:
-                    raise BridgeProtocolError(
-                        "E_BRIDGE_REPLY_NOT_FOUND",
-                        f"reply target {reply_to_id} was not found",
-                    )
-                target_role = target["role"]
-                if normalize_role(target_role) == normalize_role(role):
-                    raise BridgeProtocolError(
-                        "E_BRIDGE_REPLY_ROLE_INVALID",
-                        "Replies must target a message authored by the opposite role",
-                    )
+            validate_reply_relationship(envelope, role, target, target_typed)
+        elif reply_to_id is not None:
+            target = await _find_message_by_id(db, reply_to_id)
+            if target is None:
+                raise BridgeProtocolError(
+                    E_BRIDGE_REPLY_NOT_FOUND,
+                    f"reply target {reply_to_id} was not found",
+                )
+            if normalize_role(target["role"]) == normalize_role(role):
+                raise BridgeProtocolError(
+                    E_BRIDGE_REPLY_ROLE_INVALID,
+                    "Replies must target a message authored by the opposite role",
+                )
 
         created_at = time.time()
-        payload_json = typed_storage_values[6]
-        if payload_json is None and msg.payload is not None:
-            payload_json = _json_dumps(msg.payload)
+        payload_json = typed_storage_values[6] if envelope is not None else legacy_payload_json
 
         try:
             cursor = await db.execute(
@@ -1141,7 +1216,7 @@ async def event_stream(request: Request, queue: asyncio.Queue):
                 item = await asyncio.wait_for(queue.get(), timeout=15)
                 if item is SSE_DISCONNECT:
                     break
-                yield f"data: {item.model_dump_json()}\n\n"
+                yield f"id: {item.id}\ndata: {item.model_dump_json()}\n\n"
             except TimeoutError:
                 yield ": keepalive\n\n"
     finally:
@@ -1159,7 +1234,15 @@ async def stream(request: Request, token: str | None = None, ticket: str | None 
     queue = create_sse_queue()
     _subscribers.add(queue)
 
-    return StreamingResponse(event_stream(request, queue), media_type="text/event-stream")
+    return StreamingResponse(
+        event_stream(request, queue),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/healthz")
@@ -1272,9 +1355,21 @@ async def get_pending_orders(
                   WHERE terminal.id > o.id
                     AND (terminal.status IN ('COMPLETED', 'CANCELLED', 'CANCELED', 'CANCEL')
                          OR (terminal.role IN ('master', 'engineer') AND terminal.message_type = 'CANCEL'))
-                    AND (terminal.reply_to_id = o.id
-                         OR (terminal.reply_to_id IS NULL
-                             AND COALESCE(terminal.order_id, terminal.task_id) = COALESCE(o.order_id, o.task_id)))
+                    AND (
+                        terminal.reply_to_id = o.id
+                        OR (
+                            COALESCE(terminal.order_id, terminal.task_id) = COALESCE(o.order_id, o.task_id)
+                            AND (
+                                terminal.reply_to_id IS NULL
+                                OR EXISTS (
+                                    SELECT 1 FROM messages rt
+                                    WHERE rt.id = terminal.reply_to_id
+                                      AND rt.id > o.id
+                                      AND NOT ({candidate('rt')})
+                                )
+                            )
+                        )
+                    )
               )
               AND (? IS NULL OR o.id < ?)
             ORDER BY o.id DESC LIMIT ?
@@ -1389,7 +1484,7 @@ async def get_improvements(request: Request, token: str | None = None, limit: in
 async def get_improvement_by_filename(filename: str, request: Request, token: str | None = None):
     """Read specific self-improvement log. Authenticated."""
     await require_reader(request, token)
-    if not re.match(r"^[a-zA-Z0-9_\-]+\.md$", filename):
+    if not self_improvement.is_valid_improvement_filename(filename):
         raise HTTPException(status_code=400, detail="Invalid improvement record filename format")
     try:
         content = await asyncio.to_thread(

@@ -3,6 +3,7 @@
 import os
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import venv
 from pathlib import Path
@@ -53,6 +54,28 @@ def main() -> None:
         # Reuse test dependencies, but install Bridge exclusively from its wheel.
         venv.EnvBuilder(with_pip=True, system_site_packages=True).create(environment)
         python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        if sys.prefix != sys.base_prefix:
+            candidate_paths = [
+                sysconfig.get_path("purelib"),
+                sysconfig.get_path("platlib"),
+                *(
+                    p for p in sys.path
+                    if p and Path(p).is_dir() and Path(p).name in {"site-packages", "dist-packages"}
+                ),
+            ]
+            host_paths = list(dict.fromkeys(
+                str(Path(path).resolve())
+                for path in candidate_paths
+                if path and Path(path).is_dir() and not Path(path).resolve().is_relative_to(ROOT)
+            ))
+            if host_paths:
+                venv_site = Path(
+                    subprocess.check_output(
+                        [str(python), "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
+                        text=True,
+                    ).strip()
+                )
+                (venv_site / "_dev_deps.pth").write_text("\n".join(host_paths) + "\n", encoding="utf-8")
         env = os.environ.copy()
         env.pop("PYTHONPATH", None)
         subprocess.run(

@@ -1,6 +1,8 @@
 import asyncio
+import atexit
 import json
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -11,6 +13,7 @@ os.environ.setdefault("ENGINEER_TOKEN", "test_engineer_token_1234567890")
 os.environ.setdefault("WORKER_TOKEN", "test_worker_token_0987654321")
 
 _tmpdir = tempfile.mkdtemp()
+atexit.register(shutil.rmtree, _tmpdir, ignore_errors=True)
 os.environ["FORGEBRIDGE_DB"] = str(Path(_tmpdir) / "test.db")
 os.environ["IMPROVEMENTS_DIR"] = str(Path(_tmpdir) / "improvements")
 
@@ -1344,5 +1347,193 @@ async def test_concurrent_legacy_retries_store_and_broadcast_one_message(client)
     assert queue.qsize() == 1
     history = await client.get("/api/messages", headers=HEADERS_WORKER)
     assert len(history.json()) == 1
+
+
+async def test_decision_response_without_reply_to_id_is_rejected(client):
+    response = await client.post(
+        "/api/messages",
+        headers=HEADERS_WORKER,
+        json={
+            "content": "Choose option A",
+            "message_type": "DECISION_RESOLVED",
+            "typed": {
+                "schema_version": 1,
+                "kind": "DECISION_RESPONSE",
+                "message_key": "worker-missing-reply-1",
+                "correlation_id": "decision-missing-reply",
+                "expects_reply": False,
+                "payload": {
+                    "kind": "DECISION_RESPONSE",
+                    "decision": "A",
+                    "rationale": "Default choice.",
+                },
+                "canonical_refs": [],
+            },
+        },
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "E_BRIDGE_REPLY_NOT_FOUND"
+
+
+async def test_mismatched_top_level_key_or_reply_with_typed_is_rejected(client):
+    parent = await post(client, "Parent order", HEADERS_ENGINEER)
+    parent_id = parent.json()["id"]
+
+    mismatch_key = await client.post(
+        "/api/messages",
+        headers=HEADERS_WORKER,
+        json={
+            "content": "Status update",
+            "message_key": "top-level-key-1",
+            "typed": typed_status(message_key="typed-key-2"),
+        },
+    )
+    assert mismatch_key.status_code == 422
+    assert mismatch_key.json()["error"]["code"] == "E_BRIDGE_TYPED_PAYLOAD_INVALID"
+
+    mismatch_reply = await client.post(
+        "/api/messages",
+        headers=HEADERS_WORKER,
+        json={
+            "content": "Status update",
+            "reply_to_id": parent_id + 1,
+            "typed": typed_status(message_key="typed-reply-mismatch", reply_to_id=parent_id),
+        },
+    )
+    assert mismatch_reply.status_code == 422
+    assert mismatch_reply.json()["error"]["code"] == "E_BRIDGE_TYPED_PAYLOAD_INVALID"
+
+
+async def test_legacy_payload_exceeding_max_bytes_returns_413(client, monkeypatch):
+    monkeypatch.setattr(main, "MAX_TYPED_ENVELOPE_BYTES", 32)
+    response = await client.post(
+        "/api/messages",
+        headers=HEADERS_WORKER,
+        json={"content": "Large legacy payload", "payload": {"blob": "x" * 64}},
+    )
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "E_BRIDGE_TYPED_PAYLOAD_TOO_LARGE"
+
+
+async def test_case_insensitive_bearer_auth_and_security_headers(client):
+    response = await client.get(
+        "/api/whoami",
+        headers={"Authorization": f"bearer {ENGINEER_TOKEN}"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"role": "master"}
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["referrer-policy"] == "no-referrer"
+
+
+async def test_pending_orders_master_cancel_replying_to_running_closes_order_without_affecting_reused(client):
+    first_order = await client.post(
+        "/api/orders",
+        headers=HEADERS_ENGINEER,
+        json={"order_id": "REUSE-CANCEL", "content": "First order"},
+    )
+    first_order_id = first_order.json()["id"]
+
+    running = await client.post(
+        "/api/executions",
+        headers=HEADERS_WORKER,
+        json={
+            "order_id": "REUSE-CANCEL",
+            "content": "Working on it",
+            "status": "RUNNING",
+            "reply_to_id": first_order_id,
+        },
+    )
+    running_id = running.json()["id"]
+
+    await client.post(
+        "/api/messages",
+        headers=HEADERS_ENGINEER,
+        json={
+            "order_id": "REUSE-CANCEL",
+            "message_type": "CANCEL",
+            "content": "Cancel running work",
+            "reply_to_id": running_id,
+        },
+    )
+    pending_after_cancel = await client.get("/api/orders/pending", headers=HEADERS_WORKER)
+    assert pending_after_cancel.json() == []
+
+    second_order = await client.post(
+        "/api/orders",
+        headers=HEADERS_ENGINEER,
+        json={"order_id": "REUSE-CANCEL", "content": "Second order"},
+    )
+    second_order_id = second_order.json()["id"]
+
+    # Late completion replying directly to the first order must NOT close the newer reused order.
+    await client.post(
+        "/api/executions",
+        headers=HEADERS_WORKER,
+        json={
+            "order_id": "REUSE-CANCEL",
+            "content": "Late completion of first order",
+            "status": "COMPLETED",
+            "reply_to_id": first_order_id,
+        },
+    )
+    pending_after_late = await client.get("/api/orders/pending", headers=HEADERS_WORKER)
+    assert [m["id"] for m in pending_after_late.json()] == [second_order_id]
+
+
+async def test_stream_headers_event_id_and_lifespan_disconnect():
+    class StreamRequest:
+        def __init__(self):
+            self.headers = {}
+
+        async def is_disconnected(self):
+            return False
+
+    response = await main.stream(StreamRequest(), token=WORKER_TOKEN)
+    assert response.headers["cache-control"] == "no-cache, no-transform"
+    assert response.headers["x-accel-buffering"] == "no"
+    assert len(main._subscribers) == 1
+    queue = next(iter(main._subscribers))
+
+    msg = main.MessageOut(id=42, role="master", content="Stream event", created_at=1.0)
+    main.broadcast(msg)
+    chunk = await asyncio.wait_for(anext(response.body_iterator), timeout=1)
+    assert chunk.startswith("id: 42\ndata: ")
+    assert '"id":42' in chunk
+
+    main.disconnect_slow_subscriber(queue)
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.wait_for(anext(response.body_iterator), timeout=1)
+    await response.body_iterator.aclose()
+
+    async with main.lifespan(app):
+        sub_queue = main.create_sse_queue()
+        main._subscribers.add(sub_queue)
+        gen = main.event_stream(ConnectedRequest(), sub_queue)
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.wait_for(anext(gen), timeout=1)
+    await gen.aclose()
+
+
+async def test_improvements_input_validation_and_trailing_newline_filename(client):
+    overlong_summary = await client.post(
+        "/api/improvements",
+        headers=HEADERS_ENGINEER,
+        json={"task_name": "ORD-VAL", "summary": "x" * 10001},
+    )
+    assert overlong_summary.status_code == 422
+
+    newline_status = await client.post(
+        "/api/improvements",
+        headers=HEADERS_ENGINEER,
+        json={"task_name": "ORD-VAL", "status": "COMPLETED\nINJECTED"},
+    )
+    assert newline_status.status_code == 422
+
+    bad_filename = await client.get(
+        "/api/improvements/sample-record.md%0A",
+        headers=HEADERS_WORKER,
+    )
+    assert bad_filename.status_code == 400
 
 
