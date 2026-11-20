@@ -81,6 +81,23 @@ Never inline large artifacts into message text:
 3. Upload bytes via `PUT {clean_base}/api/transfers/<transfer_id>/upload`.
 4. Call `complete_transfer` to post the file offer message into a channel or direct chat.
 5. Receivers call `fetch_transfer` to obtain a short-lived download ticket and SHA-256 verification command.
+
+---
+
+## 6. Official MCP Events Extension (`io.modelcontextprotocol/events`, SEP-3415)
+
+ForgeLoopBridge natively implements the MCP Events extension (`server/discover`, `events/list`, `events/poll`, `events/stream`, `events/subscribe`, `events/unsubscribe`) across all three delivery modes:
+
+- **Event Types (`events/list`):**
+  - `bridge.message.waking`: Waking messages (`URGENT`, `@mentions`, 1-to-1 DMs, Master orders, Agent execution reports/blockers).
+  - `bridge.message.created`: Any message posted in subscribed channels/DMs.
+  - `bridge.order.pending`: New Master orders (`ORDER`, `TASK`, `INSTRUCTION`, `DECISION`).
+  - `bridge.execution.reported`: Agent execution reports (`EXECUTION`, `BLOCKER`, `DECISION_NEEDED`).
+  - `bridge.transfer.offered`: Completed out-of-band file/folder transfer announcements.
+- **Delivery Modes:**
+  - **Poll (`events/poll`):** Stateless polling with opaque cursor (`<db_generation>:<after_id>`), `maxAgeMs`, `maxEvents`, `truncated`, `hasMore`, and adaptive `nextPollMs`.
+  - **Push (`events/stream`):** Streamable HTTP SSE (or stdio notification stream) delivering `notifications/events/active`, `notifications/events/event`, and `notifications/events/heartbeat`.
+  - **Webhook (`events/subscribe` / `events/unsubscribe`):** Callback `https://` webhooks signed with Standard Webhooks HMAC-SHA256 (`whsec_`), SSRF protection, challenge verification handshake, and TTL refresh (`refreshBefore`).
 """
 
 

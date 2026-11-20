@@ -11,8 +11,9 @@ ForgeLoopBridge combines a structured Master ⇄ Agent task/order protocol (`ORD
 - **Master ⇄ Agent Task Protocol**:
   - **Master (`master`)**: Issues structured orders, decisions, cancellations, and reviews.
   - **Agent (`agent`)**: Consumes pending orders, reports progress (`RUNNING`, `COMPLETED`, `FAILED`, `BLOCKED`), and records execution details.
-- **Native MCP Server (`/mcp`) & Self-Served Onboarding (`/instructions`)**:
+- **Native MCP Server (`/mcp`), MCP Events (`io.modelcontextprotocol/events`) & Self-Served Onboarding (`/instructions`)**:
   - Built-in Streamable HTTP JSON-RPC 2.0 endpoint (`POST /mcp`) exposing **21 tools**, resources, and prompts, plus a zero-dependency stdio bridge ([examples/mcp_stdio.py](examples/mcp_stdio.py)).
+  - Native support for the official **MCP Events Extension (`io.modelcontextprotocol/events`, SEP-3415)** across all three delivery modes: **Poll** (`events/poll`), **Push** (`events/stream` SSE/stdio), and **Webhook** (`events/subscribe` / `events/unsubscribe` with Standard Webhooks HMAC-SHA256 `whsec_` signatures and challenge verification).
   - Self-served setup instructions at `GET /instructions` and `GET /llms.txt`.
 - **Real-Time SSE & Long-Polling (`wait_seconds`)**:
   - Server-Sent Events (`GET /api/stream` via short-lived tickets) and zero-busy-wait long-polling (`wait_seconds` on `GET /api/messages` and `GET /api/updates`).
@@ -115,7 +116,24 @@ BRIDGE_URL=http://localhost:8000 BRIDGE_TOKEN=$AGENT_TOKEN python examples/mcp_s
 - **Hooks & Wakes**: `create_signal`, `revoke_signal`, `list_wakes`, `revoke_wake`
 - **Self-Improvement**: `record_improvement`
 
-Also exposes MCP resources (`bridge://instructions`, `bridge://prompts/master`, `bridge://prompts/agent`) and MCP prompts (`master_orchestrator`, `agent_executor`).
+Also exposes MCP resources (`bridge://instructions`, `bridge://prompts/master`, `bridge://prompts/agent`), MCP prompts (`master_orchestrator`, `agent_executor`), and the official **MCP Events extension (`io.modelcontextprotocol/events`)** (`server/discover`, `events/list`, `events/poll`, `events/stream`, `events/subscribe`, `events/unsubscribe`) for `bridge.message.waking`, `bridge.message.created`, `bridge.order.pending`, `bridge.execution.reported`, and `bridge.transfer.offered`.
+
+### Official MCP Events Extension (`io.modelcontextprotocol/events`, SEP-3415)
+
+ForgeLoopBridge natively implements all three delivery modes of the [MCP Events specification](https://modelcontextprotocol.io/extensions/events/overview) on `POST /mcp` (and stdio via `examples/mcp_stdio.py`):
+
+| Event Type | Fires When | Delivery Modes |
+|---|---|---|
+| `bridge.message.waking` | A message arrives that wakes/interrupts the participant (`URGENT`, `@mention`, 1-to-1 DM, system notice, Master `ORDER`, or Agent `EXECUTION`/`BLOCKER`) | `poll`, `push`, `webhook` |
+| `bridge.message.created` | Any new message is posted in subscribed channels or direct chats | `poll`, `push`, `webhook` |
+| `bridge.order.pending` | Master publishes a new `ORDER`, `TASK`, `INSTRUCTION`, or `DECISION` | `poll`, `push`, `webhook` |
+| `bridge.execution.reported` | Agent reports an `EXECUTION`, `BLOCKER`, or `DECISION_NEEDED` | `poll`, `push`, `webhook` |
+| `bridge.transfer.offered` | An out-of-band file or folder transfer is completed and announced | `poll`, `push`, `webhook` |
+
+- **Discovery (`server/discover` & `events/list`)**: Advertises `io.modelcontextprotocol/events` and returns JSON Schemas (`inputSchema` for `participant_id`, `conversation_ids`, `include_direct`, `priority`, `order_id`, and minimal triage `payloadSchema`).
+- **Poll (`events/poll`)**: Stateless polling with opaque `<db_generation>:<after_id>` cursors, `maxAgeMs`, `maxEvents`, `truncated` gap detection, `hasMore`, and adaptive `nextPollMs`.
+- **Push (`events/stream`)**: Long-lived SSE stream on `POST /mcp` (or newline-delimited notifications on `examples/mcp_stdio.py`) emitting `notifications/events/active`, `notifications/events/event`, `notifications/events/heartbeat`, and `notifications/events/terminated`.
+- **Webhook (`events/subscribe` & `events/unsubscribe`)**: Persistent SQLite subscriptions with Standard Webhooks HMAC-SHA256 signing (`whsec_`, `webhook-id`, `webhook-timestamp`, `webhook-signature`, `X-MCP-Subscription-Id`), dual-signing during secret rotation, verification challenge handshake (`{"type": "verification", "challenge": "..."}`), SSRF/redirect protection, TTL grants (`refreshBefore`), and `deliveryStatus`.
 
 ---
 

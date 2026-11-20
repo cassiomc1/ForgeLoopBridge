@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import hmac
 import ipaddress
 import json
 import logging
 import os
+import secrets
 import shlex
 import socket
 import time
@@ -98,6 +102,50 @@ def _wake_dict(row: Any) -> dict[str, Any]:
     }
 
 
+def decode_standard_webhook_secret(secret: str) -> bytes:
+    """Decode a secret into raw HMAC key bytes.
+
+    If ``secret`` begins with ``whsec_``, decode the remainder as base64 per Standard Webhooks.
+    Otherwise encode the UTF-8 string directly.
+    """
+    if secret.startswith("whsec_"):
+        b64_part = secret[6:]
+        try:
+            return base64.b64decode(b64_part, validate=True)
+        except Exception:
+            return secret.encode("utf-8")
+    return secret.encode("utf-8")
+
+
+def build_standard_webhook_headers(
+    body_bytes: bytes,
+    secret: str,
+    *,
+    webhook_id: str | None = None,
+    timestamp: int | None = None,
+    secondary_secret: str | None = None,
+) -> dict[str, str]:
+    """Generate Standard Webhooks (`webhook-id`, `webhook-timestamp`, `webhook-signature`) headers."""
+    wid = webhook_id or f"msg_{secrets.token_urlsafe(18)}"
+    ts = str(int(timestamp if timestamp is not None else time.time()))
+    signed_prefix = f"{wid}.{ts}.".encode()
+    to_sign = signed_prefix + body_bytes
+
+    sigs: list[str] = []
+    for sec in (secret, secondary_secret):
+        if not sec:
+            continue
+        key_bytes = decode_standard_webhook_secret(sec)
+        digest = hmac.new(key_bytes, to_sign, hashlib.sha256).digest()
+        sigs.append(f"v1,{base64.b64encode(digest).decode('ascii')}")
+
+    return {
+        "webhook-id": wid,
+        "webhook-timestamp": ts,
+        "webhook-signature": " ".join(sigs),
+    }
+
+
 def _http_post_sync(url: str, payload: dict[str, Any], secret: str | None, timeout: float) -> tuple[int, str]:
     body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     headers = {
@@ -107,6 +155,7 @@ def _http_post_sync(url: str, payload: dict[str, Any], secret: str | None, timeo
     if secret:
         headers["Authorization"] = f"Bearer {secret}"
         headers["X-Bridge-Wake-Secret"] = secret
+        headers.update(build_standard_webhook_headers(body, secret))
     req = urllib.request.Request(url, data=body, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:

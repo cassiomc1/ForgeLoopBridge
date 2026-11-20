@@ -14,9 +14,10 @@ from bridge_protocol.errors import BridgeProtocolError
 
 from . import HUB_VERSION
 from .instructions import render_instructions_markdown
+from .mcp_events import EVENTS_CATALOG, EVENTS_EXTENSION_ID, MCPEventsError
 from .service import HubServiceError
 
-SUPPORTED_PROTOCOL_VERSIONS = ("2025-03-26", "2024-11-05")
+SUPPORTED_PROTOCOL_VERSIONS = ("2026-07-28", "2025-03-26", "2024-11-05")
 
 
 @dataclass
@@ -45,6 +46,9 @@ class MCPServices:
     revoke_wake: Callable[[Any, str], Awaitable[dict[str, Any]]]
     record_improvement: Callable[[Any, dict[str, Any]], Awaitable[dict[str, Any]]]
     get_prompt_text: Callable[[str], str]
+    events_poll: Callable[[Any, dict[str, Any]], Awaitable[dict[str, Any]]] | None = None
+    events_subscribe: Callable[[Any, dict[str, Any]], Awaitable[dict[str, Any]]] | None = None
+    events_unsubscribe: Callable[[Any, dict[str, Any]], Awaitable[dict[str, Any]]] | None = None
 
 
 def _tool_def(
@@ -438,7 +442,45 @@ async def _handle_single(
     if method == "notifications/initialized" or method.startswith("notifications/"):
         return None if is_notification else _jsonrpc_result(req_id, {})
 
+    server_capabilities = {
+        "tools": {"listChanged": False},
+        "resources": {"subscribe": False, "listChanged": False},
+        "prompts": {"listChanged": False},
+        "extensions": {
+            EVENTS_EXTENSION_ID: {
+                "listChanged": False,
+            },
+        },
+    }
+    server_info = {
+        "name": "forgeloopbridge",
+        "version": HUB_VERSION,
+    }
+    server_instructions = (
+        "Start with get_context, register_participant if needed, "
+        "read pending orders with list_pending_orders or get_updates(wait_seconds=25) "
+        "(or subscribe via MCP Events io.modelcontextprotocol/events), "
+        "and use @mentions or priority=URGENT sparingly."
+    )
+
     if method == "initialize":
+        requested = params.get("protocolVersion")
+        negotiated = (
+            requested
+            if isinstance(requested, str) and requested in SUPPORTED_PROTOCOL_VERSIONS
+            else "2025-03-26"
+        )
+        return _jsonrpc_result(
+            req_id,
+            {
+                "protocolVersion": negotiated,
+                "capabilities": server_capabilities,
+                "serverInfo": server_info,
+                "instructions": server_instructions,
+            },
+        )
+
+    if method == "server/discover":
         requested = params.get("protocolVersion")
         negotiated = (
             requested
@@ -448,23 +490,39 @@ async def _handle_single(
         return _jsonrpc_result(
             req_id,
             {
+                "resultType": "complete",
                 "protocolVersion": negotiated,
-                "capabilities": {
-                    "tools": {"listChanged": False},
-                    "resources": {"subscribe": False, "listChanged": False},
-                    "prompts": {"listChanged": False},
-                },
-                "serverInfo": {
-                    "name": "forgeloopbridge",
-                    "version": HUB_VERSION,
-                },
-                "instructions": (
-                    "Start with get_context, register_participant if needed, "
-                    "read pending orders with list_pending_orders or get_updates(wait_seconds=25), "
-                    "and use @mentions or priority=URGENT sparingly."
-                ),
+                "capabilities": server_capabilities,
+                "serverInfo": server_info,
+                "instructions": server_instructions,
             },
         )
+
+    if method == "events/list":
+        return _jsonrpc_result(
+            req_id,
+            {
+                "resultType": "complete",
+                "events": EVENTS_CATALOG,
+            },
+        )
+
+    if method in {"events/poll", "events/subscribe", "events/unsubscribe"}:
+        handler_map = {
+            "events/poll": services.events_poll,
+            "events/subscribe": services.events_subscribe,
+            "events/unsubscribe": services.events_unsubscribe,
+        }
+        handler = handler_map[method]
+        if handler is None:
+            return _jsonrpc_error(req_id, -32601, f"Method '{method}' not available")
+        try:
+            res_data = await handler(auth, params)
+            return _jsonrpc_result(req_id, res_data)
+        except MCPEventsError as exc:
+            return _jsonrpc_error(req_id, exc.code, exc.message, exc.data)
+        except HubServiceError as exc:
+            return _jsonrpc_error(req_id, -32602, exc.message, {"code": exc.code})
 
     if method == "ping":
         return None if is_notification else _jsonrpc_result(req_id, {})

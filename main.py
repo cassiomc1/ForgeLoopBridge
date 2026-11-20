@@ -34,7 +34,15 @@ from pydantic import BaseModel, Field, field_validator
 import self_improvement
 from bridge_hub import GENERAL_CONVERSATION_ID, HUB_VERSION
 from bridge_hub.instructions import render_instructions_markdown, render_llms_txt
-from bridge_hub.mcp_server import MCPServices, handle_mcp_message
+from bridge_hub.mcp_events import (
+    ERR_HEADER_MISMATCH,
+    MCPEventsError,
+    MCPEventWebhookManager,
+    handle_events_poll,
+    prepare_events_stream,
+    stream_events_sse,
+)
+from bridge_hub.mcp_server import MCPServices, _jsonrpc_error, handle_mcp_message
 from bridge_hub.mentions import resolve_mentions
 from bridge_hub.resilience import (
     MessageNotifier,
@@ -150,6 +158,7 @@ TYPED_FEATURES = {
     "outbox_safe_retry": True,
     "orders_and_executions": True,
     "mcp": True,
+    "mcp_events": True,
     "fts_search": True,
     "long_polling": True,
     "channels_and_dms": True,
@@ -846,6 +855,12 @@ _wake_scheduler = WakeScheduler(
     timeout_seconds=lambda: WAKE_TIMEOUT_SECONDS,
 )
 
+_mcp_event_webhooks = MCPEventWebhookManager(
+    connect_db,
+    allow_private_urls=lambda: WAKE_ALLOW_PRIVATE_URLS,
+    timeout_seconds=lambda: WAKE_TIMEOUT_SECONDS,
+)
+
 
 async def init_db():
     async with connect_db() as db:
@@ -929,7 +944,9 @@ async def init_db():
 async def lifespan(app: FastAPI):
     await init_db()
     _wake_scheduler.start()
+    _mcp_event_webhooks.start()
     yield
+    await _mcp_event_webhooks.stop()
     await _wake_scheduler.stop()
     for q in list(_subscribers):
         disconnect_slow_subscriber(q)
@@ -1821,6 +1838,7 @@ async def _create_message_internal(
                 dm_high_id=dm_high_id,
                 now=created_at,
             )
+            await _mcp_event_webhooks.schedule_matching_subscriptions(db, now=created_at)
         except Exception as exc:
             logger.warning("Failed to schedule wake targets: %s", exc)
 
@@ -3307,6 +3325,18 @@ def _build_mcp_services() -> MCPServices:
             fallback="# Universal Agent Prompt\nYou are the Agent (Executor). Execute orders and report status back.",
         )
 
+    async def svc_events_poll(auth: AuthContext, params: dict[str, Any]) -> dict[str, Any]:
+        async with connect_db() as db:
+            return await handle_events_poll(db, auth, params)
+
+    async def svc_events_subscribe(auth: AuthContext, params: dict[str, Any]) -> dict[str, Any]:
+        async with connect_db() as db:
+            return await _mcp_event_webhooks.subscribe(db, auth, params)
+
+    async def svc_events_unsubscribe(auth: AuthContext, params: dict[str, Any]) -> dict[str, Any]:
+        async with connect_db() as db:
+            return await _mcp_event_webhooks.unsubscribe(db, auth, params)
+
     return MCPServices(
         get_context=svc_get_context,
         register_participant=svc_register_participant,
@@ -3330,6 +3360,9 @@ def _build_mcp_services() -> MCPServices:
         revoke_wake=svc_revoke_wake,
         record_improvement=svc_record_improvement,
         get_prompt_text=svc_get_prompt_text,
+        events_poll=svc_events_poll,
+        events_subscribe=svc_events_subscribe,
+        events_unsubscribe=svc_events_unsubscribe,
     )
 
 
@@ -3338,7 +3371,7 @@ _MCP_SERVICES = _build_mcp_services()
 
 @app.post("/mcp")
 async def mcp_post_endpoint(request: Request):
-    """Streamable HTTP MCP (JSON-RPC 2.0) endpoint."""
+    """Streamable HTTP MCP (JSON-RPC 2.0) endpoint with SEP-3415 Events support."""
     try:
         auth = await require_auth(request, allow_query_token=False)
     except HTTPException as exc:
@@ -3357,6 +3390,61 @@ async def mcp_post_endpoint(request: Request):
             status_code=400,
             content={"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}},
         )
+
+    # SEP-3415 Streamable HTTP routing header validation (Mcp-Name) when supplied by the client
+    if isinstance(payload, dict) and isinstance(payload.get("method"), str):
+        method = payload["method"]
+        req_id = payload.get("id")
+        params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+        mcp_name_hdr = request.headers.get("Mcp-Name")
+        if mcp_name_hdr is not None and method in {
+            "events/poll",
+            "events/stream",
+            "events/subscribe",
+            "events/unsubscribe",
+            "tools/call",
+            "prompts/get",
+        }:
+            if mcp_name_hdr != params.get("name"):
+                return JSONResponse(
+                    status_code=400,
+                    content=_jsonrpc_error(
+                        req_id,
+                        ERR_HEADER_MISMATCH,
+                        "Mcp-Name header does not match params.name",
+                    ),
+                )
+
+        if method == "events/stream":
+            try:
+                async with connect_db() as db:
+                    stream_ctx = await prepare_events_stream(db, auth, req_id, params)
+            except MCPEventsError as exc:
+                return JSONResponse(content=_jsonrpc_error(req_id, exc.code, exc.message, exc.data))
+            except HubServiceError as exc:
+                return JSONResponse(content=_jsonrpc_error(req_id, -32602, exc.message, {"code": exc.code}))
+
+            max_events_test: int | None = None
+            raw_max_hdr = request.headers.get("X-MCP-Test-Max-Events")
+            if raw_max_hdr and raw_max_hdr.isdigit():
+                max_events_test = int(raw_max_hdr)
+
+            return StreamingResponse(
+                stream_events_sse(
+                    connect_db=connect_db,
+                    notifier=_notifier,
+                    auth=auth,
+                    stream_ctx=stream_ctx,
+                    request=request,
+                    max_events_for_test=max_events_test,
+                ),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache, no-transform",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
 
     base_url = str(request.base_url).rstrip("/")
     result = await handle_mcp_message(

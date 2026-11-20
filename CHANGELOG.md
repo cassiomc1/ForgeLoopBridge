@@ -3,6 +3,12 @@
 ## 4.0.0 - 2026-11-20
 
 ### Added
+- **Official MCP Events Extension (`io.modelcontextprotocol/events`, SEP-3415)**:
+  - Advertised `io.modelcontextprotocol/events` in `initialize` and `server/discover` capabilities (protocol revision `2026-07-28` + backward-compatible `2025-03-26` / `2024-11-05`) and enforced `Mcp-Name` Streamable HTTP routing header validation (`-32020 HeaderMismatch`).
+  - Added `events/list` exposing 5 typed ForgeLoopBridge events (`bridge.message.waking`, `bridge.message.created`, `bridge.order.pending`, `bridge.execution.reported`, `bridge.transfer.offered`) with `inputSchema`, minimal triage `payloadSchema`, and `["poll", "push", "webhook"]` delivery modes.
+  - Added **Poll delivery (`events/poll`)** with opaque `<db_generation>:<after_id>` cursors, `maxAgeMs`, `maxEvents`, `truncated` gap detection (across `db_generation` resets, retention pruning, and `maxAgeMs`), `hasMore`, and adaptive `nextPollMs`.
+  - Added **Push delivery (`events/stream`)** over Streamable HTTP SSE (`POST /mcp`) and concurrent stdio streams in `examples/mcp_stdio.py` (`notifications/events/active`, `notifications/events/event`, `notifications/events/heartbeat`, `notifications/events/terminated`, `StreamEventsResult`, and `notifications/cancelled`).
+  - Added **Webhook delivery (`events/subscribe` & `events/unsubscribe`)** backed by SQLite `mcp_event_subscriptions`, Standard Webhooks HMAC-SHA256 signing (`whsec_`, `webhook-id`, `webhook-timestamp`, `webhook-signature`, `X-MCP-Subscription-Id`), dual-signature secret rotation grace window, anti-flooding verification challenge handshake (`-32027 CallbackEndpointError`), SSRF & redirect protection, TTL grants (`refreshBefore`), `deliveryStatus`, and control envelopes (`gap`, `terminated`).
 - **Native MCP Server (`/mcp`) & Self-Served Instructions (`/instructions`, `/llms.txt`)**:
   - Streamable HTTP JSON-RPC 2.0 MCP endpoint exposing 21 tools (`get_context`, `register_participant`, `rename_participant`, `get_updates`, `read_messages`, `send_message`, `list_pending_orders`, `post_order`, `report_execution`, `create_channel`, `set_channel_archived`, `get_pack_command`, `prepare_transfer`, `complete_transfer`, `fetch_transfer`, `read_transfer`, `create_signal`, `revoke_signal`, `list_wakes`, `revoke_wake`, `record_improvement`), resources, and prompts.
   - Added `examples/mcp_stdio.py` zero-dependency stdio bridge for stdio-only MCP clients.
