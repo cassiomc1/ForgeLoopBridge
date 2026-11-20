@@ -15,6 +15,7 @@ from typing import Any
 from .service import HubServiceError
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_SAFE_BLOB_NAME_RE = re.compile(r"^(?:\.tmp-[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.bin$")
 
 
 def validate_transfer_name(raw: str) -> str:
@@ -38,11 +39,14 @@ def validate_sha256(raw: str) -> str:
 
 
 def resolve_safe_blob_path(uploads_dir: Path, storage_relpath: str) -> Path:
-    base = uploads_dir.resolve()
-    candidate = (base / storage_relpath).resolve()
-    if candidate == base or not candidate.is_relative_to(base):
+    safe_name = os.path.basename(storage_relpath)
+    if safe_name != storage_relpath or not _SAFE_BLOB_NAME_RE.match(safe_name):
         raise HubServiceError("E_TRANSFER_PATH_INVALID", "Invalid transfer storage path", status_code=400)
-    return candidate
+    base_dir = os.path.realpath(uploads_dir)
+    candidate_str = os.path.normpath(os.path.join(base_dir, safe_name))
+    if not candidate_str.startswith(base_dir + os.sep):
+        raise HubServiceError("E_TRANSFER_PATH_INVALID", "Invalid transfer storage path", status_code=400)
+    return Path(candidate_str)
 
 
 def get_pack_command(folder: str = "<folder>") -> dict[str, str]:
@@ -224,8 +228,8 @@ async def stream_upload_transfer(
     expected_size = int(row["size_bytes"])
     expected_sha = row["sha256"]
     uploads_dir.mkdir(parents=True, exist_ok=True)
-    target_path = resolve_safe_blob_path(uploads_dir, row["storage_relpath"])
-    tmp_path = resolve_safe_blob_path(uploads_dir, f".{transfer_id}.{secrets.token_hex(6)}.tmp")
+    target_path = resolve_safe_blob_path(uploads_dir, str(row["storage_relpath"]))
+    tmp_path = resolve_safe_blob_path(uploads_dir, f".tmp-{secrets.token_hex(16)}.bin")
 
     hasher = hashlib.sha256()
     received = 0
