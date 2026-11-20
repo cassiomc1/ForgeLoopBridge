@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-bridge"
-version = "3.2.0"
-description = "High-reliability bridge for order and execution exchange between Master and Agent"
+version = "4.0.0"
+description = "High-reliability multi-agent bridge and MCP communication hub for orders, executions, channels, transfers, and wakes"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
@@ -21,11 +21,12 @@ include-package-data = true
 py-modules = ["main", "self_improvement"]
 
 [tool.setuptools.packages.find]
-include = ["bridge_protocol*", "static*", "prompts*"]
+include = ["bridge_protocol*", "bridge_hub*", "static*", "prompts*"]
 
 [tool.setuptools.package-data]
 static = ["index.html", "vendor/*.js"]
 prompts = ["*.md"]
+bridge_hub = ["*.md"]
 
 [tool.ruff]
 line-length = 100

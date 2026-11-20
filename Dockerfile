@@ -7,9 +7,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Non-root user + data/improvements dir ownership
+# Non-root user + data/uploads/improvements dir ownership
 RUN useradd -m appuser \
-    && mkdir -p data improvements \
+    && mkdir -p data data/uploads improvements \
     && chown -R appuser:appuser /app
 USER appuser
 

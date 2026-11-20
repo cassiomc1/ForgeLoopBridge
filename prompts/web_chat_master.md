@@ -83,3 +83,12 @@ If running via an automated agent or Custom GPT/Tool Action with HTTP capability
   }
   ```
 
+---
+
+## 6. Multi-Agent Channels, MCP & Priority Etiquette (v4.0+)
+- **MCP Endpoint**: Connect MCP-capable agents directly to `/mcp` (or point them to `/instructions`) so they call `get_context`, `register_participant`, `get_updates`, `post_order`, and `report_execution` natively.
+- **Channels, DMs & `@mentions`**: Group parallel workstreams into dedicated channels (`POST /api/conversations/channels`), keep `#General` for cross-team notices, and use `@agent-name` or direct chats (`to_participant_id`) only when an agent must wake now.
+- **Urgent Interrupts**: Reserve `priority: "URGENT"` for critical stops (e.g. wrong environment or destructive rollback); normal orders use `priority: "NORMAL"`.
+- **Large Artifacts**: Reference file transfers (`transfer_id`) instead of pasting large logs or diffs inline.
+
+

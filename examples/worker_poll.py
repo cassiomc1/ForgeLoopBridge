@@ -22,13 +22,14 @@ Features:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import math
 import os
 import secrets
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -118,23 +119,140 @@ def fetch_pending_orders(
     return sorted(seen_ids.values(), key=lambda order: order["id"])
 
 
+class GenerationMismatchError(RuntimeError):
+    """Raised when the server database generation changed since the saved cursor."""
+
+    def __init__(self, current_generation: str | None):
+        super().__init__("Bridge database generation mismatch")
+        self.current_generation = current_generation
+
+
+def load_cursor_state(cursor_file: str | Path) -> tuple[int, str | None]:
+    """Load persisted ``(cursor, generation)`` from a local state file."""
+    path = Path(cursor_file)
+    if not path.is_file():
+        return 0, None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return 0, None
+        cursor = max(0, int(data.get("cursor", 0)))
+        generation = data.get("generation")
+        return cursor, str(generation) if generation else None
+    except Exception:
+        return 0, None
+
+
+def save_cursor_state(
+    cursor_file: str | Path,
+    cursor: int,
+    generation: str | None = None,
+) -> None:
+    """Persist ``(cursor, generation)`` atomically with owner-only (0600) permissions."""
+    path = Path(cursor_file)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.parent / f".{path.name}.{os.getpid()}.tmp"
+    payload = {"cursor": max(0, int(cursor)), "generation": generation, "updated_at": time.time()}
+    tmp_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    try:
+        os.chmod(tmp_path, 0o600)
+    except OSError:
+        pass
+    os.replace(tmp_path, path)
+
+
+def register_worker_participant(
+    name: str,
+    bridge_url: str = DEFAULT_BRIDGE_URL,
+    headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Register (or reuse) a participant identity for this worker."""
+    hdrs = headers if headers is not None else get_auth_headers()
+    base_url = _normalize_bridge_url(bridge_url)
+    resp = requests.post(
+        f"{base_url}/api/participants",
+        json={
+            "name": name,
+            "role": "agent",
+            "kind": "agent",
+            "agent_type": "worker-poll",
+            "issue_token": False,
+        },
+        headers=hdrs,
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 def fetch_messages(
     after_id: int,
     bridge_url: str = DEFAULT_BRIDGE_URL,
     headers: dict[str, str] | None = None,
     limit: int = 100,
+    *,
+    wait_seconds: float | None = None,
+    conversation_id: str | None = None,
+    generation: str | None = None,
 ) -> list[dict[str, Any]]:
     """Poll messages from the bridge with id > after_id."""
     hdrs = headers if headers is not None else get_auth_headers()
     base_url = _normalize_bridge_url(bridge_url)
+    params: dict[str, Any] = {"after_id": after_id, "limit": limit}
+    timeout = 15.0
+    if wait_seconds is not None and wait_seconds > 0:
+        params["wait_seconds"] = wait_seconds
+        timeout = max(15.0, float(wait_seconds) + 10.0)
+    if conversation_id is not None:
+        params["conversation_id"] = conversation_id
+    if generation is not None:
+        params["generation"] = generation
     resp = requests.get(
         f"{base_url}/api/messages",
-        params={"after_id": after_id, "limit": limit},
+        params=params,
         headers=hdrs,
-        timeout=15,
+        timeout=timeout,
     )
+    if getattr(resp, "status_code", 200) == 409:
+        try:
+            err = resp.json().get("error", {})
+        except Exception:
+            err = {}
+        if err.get("code") == "E_BRIDGE_GENERATION_MISMATCH":
+            raise GenerationMismatchError(err.get("current_generation"))
     resp.raise_for_status()
     return resp.json()
+
+
+def iter_sse_messages(
+    bridge_url: str = DEFAULT_BRIDGE_URL,
+    headers: dict[str, str] | None = None,
+    *,
+    timeout: float = 30.0,
+) -> Iterator[dict[str, Any]]:
+    """Stream incoming messages over SSE using a short-lived stream ticket."""
+    hdrs = headers if headers is not None else get_auth_headers()
+    base_url = _normalize_bridge_url(bridge_url)
+    ticket_resp = requests.post(f"{base_url}/api/stream-ticket", headers=hdrs, timeout=10)
+    ticket_resp.raise_for_status()
+    ticket = ticket_resp.json()["ticket"]
+    with requests.get(
+        f"{base_url}/api/stream",
+        params={"ticket": ticket},
+        stream=True,
+        timeout=timeout,
+    ) as stream_resp:
+        stream_resp.raise_for_status()
+        for raw_line in stream_resp.iter_lines(decode_unicode=True):
+            if not raw_line or raw_line.startswith(":") or raw_line.startswith("id:"):
+                continue
+            if raw_line.startswith("data:"):
+                payload = raw_line[5:].strip()
+                if payload:
+                    try:
+                        yield json.loads(payload)
+                    except json.JSONDecodeError:
+                        continue
 
 
 def post_execution_report(
@@ -305,6 +423,12 @@ def run_worker_loop(
     max_idle_polls: int = 3,
     poll_interval: float = 2.0,
     executor: Callable[[dict[str, Any]], str] | None = None,
+    *,
+    cursor_file: str | Path | None = None,
+    transport: str = "poll",
+    wait_seconds: float = 25.0,
+    conversation_id: str | None = None,
+    participant_name: str | None = None,
 ) -> int:
     """Run the Agent polling loop."""
     headers = get_auth_headers(token)
@@ -312,12 +436,31 @@ def run_worker_loop(
 
     if start_mode not in {"pending", "now", "history"} or run_mode not in {"daemon", "once", "bounded"}:
         raise ValueError("Unsupported worker start or run mode")
+    if transport not in {"poll", "long-poll", "sse"}:
+        raise ValueError("Unsupported worker transport")
     if max_idle_polls < 1 or not math.isfinite(poll_interval) or poll_interval < 0:
         raise ValueError("max_idle_polls must be positive and poll_interval finite and non-negative")
 
+    if participant_name:
+        try:
+            register_worker_participant(participant_name, bridge_url=bridge_url, headers=headers)
+        except Exception as exc:
+            logger.warning("Participant auto-registration failed (continuing): %s", exc)
+
+    saved_cursor, saved_generation = (0, None)
+    has_saved_cursor = False
+    if cursor_file is not None and Path(cursor_file).is_file():
+        saved_cursor, saved_generation = load_cursor_state(cursor_file)
+        has_saved_cursor = True
+
     backlog = None
+    generation = saved_generation
     try:
-        if start_mode == "history":
+        if has_saved_cursor:
+            cursor = saved_cursor
+            if start_mode == "pending":
+                backlog = fetch_pending_orders(bridge_url, headers)
+        elif start_mode == "history":
             cursor = 0
         else:
             # Capture the watermark before reading the backlog, so arrivals
@@ -335,13 +478,58 @@ def run_worker_loop(
     had_failure = False
     bootstrap_handled: set[int] = set()
 
+    def _persist_cursor() -> None:
+        if cursor_file is not None:
+            save_cursor_state(cursor_file, cursor, generation)
+
+    def _fetch_next() -> list[dict[str, Any]]:
+        kwargs: dict[str, Any] = {"bridge_url": bridge_url, "headers": headers}
+        if transport == "long-poll":
+            kwargs["wait_seconds"] = wait_seconds
+        if conversation_id is not None:
+            kwargs["conversation_id"] = conversation_id
+        if generation is not None:
+            kwargs["generation"] = generation
+        return fetch_messages(cursor, **kwargs)
+
+    sse_iter: Iterator[dict[str, Any]] | None = None
+
     while True:
         is_bootstrap = backlog is not None
         try:
-            messages = backlog if is_bootstrap else fetch_messages(
-                cursor, bridge_url=bridge_url, headers=headers,
-            )
+            if is_bootstrap:
+                messages = backlog
+            elif transport == "sse":
+                if sse_iter is None:
+                    catchup = _fetch_next()
+                    if catchup:
+                        messages = catchup
+                    else:
+                        sse_iter = iter_sse_messages(bridge_url, headers, timeout=max(15.0, wait_seconds))
+                        try:
+                            event_msg = next(sse_iter)
+                            messages = [event_msg] if event_msg.get("id", 0) > cursor else []
+                        except StopIteration:
+                            sse_iter = None
+                            messages = []
+                else:
+                    try:
+                        event_msg = next(sse_iter)
+                        messages = [event_msg] if event_msg.get("id", 0) > cursor else []
+                    except StopIteration:
+                        sse_iter = None
+                        messages = _fetch_next()
+            else:
+                messages = _fetch_next()
+        except GenerationMismatchError as exc:
+            logger.warning("Server database generation changed; resetting cursor from %d to 0", cursor)
+            cursor = 0
+            generation = exc.current_generation
+            _persist_cursor()
+            sse_iter = None
+            continue
         except Exception as exc:
+            sse_iter = None
             logger.error("Error polling bridge: %s", exc)
             failure_count += 1
             if run_mode == "once" or (run_mode == "bounded" and failure_count >= max_idle_polls):
@@ -381,6 +569,7 @@ def run_worker_loop(
             if not is_bootstrap:
                 # Advance only after dispatch or a failure report was accepted.
                 cursor = max(cursor, message_id)
+                _persist_cursor()
 
         if reporting_failed:
             failure_count += 1
@@ -399,6 +588,8 @@ def run_worker_loop(
             logger.info("Run mode 'bounded' finished (%d orders dispatched)", orders_processed)
             return int(had_failure)
         if not is_bootstrap and len(messages) >= 100:
+            continue
+        if transport == "long-poll" and messages:
             continue
         time.sleep(poll_interval)
 
@@ -439,6 +630,33 @@ def main() -> int:
         default=2.0,
         help="Seconds between polls in daemon mode (default: 2.0)",
     )
+    parser.add_argument(
+        "--cursor-file",
+        default=None,
+        help="Optional JSON file path to persist cursor and db_generation across restarts",
+    )
+    parser.add_argument(
+        "--transport",
+        choices=["poll", "long-poll", "sse"],
+        default="poll",
+        help="Delivery transport: poll, long-poll, or sse (default: poll)",
+    )
+    parser.add_argument(
+        "--wait-seconds",
+        type=float,
+        default=25.0,
+        help="Wait timeout in seconds for --transport long-poll (default: 25.0)",
+    )
+    parser.add_argument(
+        "--conversation-id",
+        default=None,
+        help="Optional channel or conversation ID filter",
+    )
+    parser.add_argument(
+        "--participant-name",
+        default=None,
+        help="Optional participant handle to register automatically on startup",
+    )
     args = parser.parse_args()
 
     try:
@@ -449,6 +667,11 @@ def main() -> int:
             run_mode=args.run_mode,
             max_idle_polls=args.max_idle_polls,
             poll_interval=args.poll_interval,
+            cursor_file=args.cursor_file,
+            transport=args.transport,
+            wait_seconds=args.wait_seconds,
+            conversation_id=args.conversation_id,
+            participant_name=args.participant_name,
         )
     except KeyboardInterrupt:
         logger.info("Agent worker stopped by interrupt")

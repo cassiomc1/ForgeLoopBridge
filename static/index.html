@@ -135,6 +135,90 @@
     .badge.integrity-invalid { color: var(--destructive); border-color: var(--destructive); font-family: ui-monospace, monospace; text-transform: none; }
     .badge.correlation { color: var(--purple); border-color: var(--purple); font-family: ui-monospace, monospace; text-transform: none; }
     .badge.reply { color: var(--warning); border-color: var(--warning); font-family: ui-monospace, monospace; text-transform: none; }
+    .badge.urgent { color: var(--destructive); border-color: var(--destructive); background: color-mix(in srgb, var(--destructive) 12%, transparent); }
+    .badge.sender { color: var(--info); border-color: var(--info); text-transform: none; font-family: ui-monospace, monospace; }
+    .badge.channel { color: var(--purple); border-color: var(--purple); text-transform: none; font-family: ui-monospace, monospace; }
+    .mention-chip {
+      color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 14%, transparent);
+      padding: 0 4px;
+      border-radius: 4px;
+      font-weight: 600;
+      font-family: ui-monospace, monospace;
+      font-size: 0.9em;
+    }
+    .transfer-card {
+      margin: 0 16px 12px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.82rem;
+    }
+    .workspace-shell {
+      display: flex;
+      flex: 1;
+      width: 100%;
+      max-width: 1180px;
+      margin: 0 auto;
+    }
+    .workspace-sidebar {
+      width: 240px;
+      flex-shrink: 0;
+      border-right: 1px solid var(--border);
+      padding: 16px 12px 140px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      background: var(--surface);
+    }
+    .sidebar-section-title {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-top: 6px;
+    }
+    .sidebar-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .sidebar-item {
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      padding: 6px 8px;
+      color: var(--text);
+      font-size: 0.82rem;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 6px;
+    }
+    .sidebar-item:hover { background: var(--muted); }
+    .sidebar-item.active {
+      background: var(--muted);
+      border-color: var(--accent);
+      font-weight: 600;
+    }
+    .stuck-banner {
+      background: color-mix(in srgb, var(--warning) 14%, transparent);
+      border: 1px solid var(--warning);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      margin-bottom: 10px;
+    }
     .hidden { display: none !important; }
 
     .task-filter {
@@ -552,10 +636,11 @@
       <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:12px;">
         Run the <strong>Master</strong> (Architect) or <strong>Agent</strong> (Executor) via any web chat interface (Claude Web, ChatGPT Web, Gemini Web, etc.) or external agent.
       </p>
-      <div style="display:flex; gap:8px; margin-bottom:12px;">
+      <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap;">
         <button type="button" class="history-btn" id="tab-master-btn" style="flex:1; margin-bottom:0; font-weight:600;">Master (Architect)</button>
         <button type="button" class="history-btn" id="tab-agent-btn" style="flex:1; margin-bottom:0;">Agent (Executor)</button>
         <button type="button" class="history-btn" id="tab-guide-btn" style="flex:1; margin-bottom:0;">Universal Guide</button>
+        <button type="button" class="history-btn" id="tab-mcp-btn" style="flex:1; margin-bottom:0;">MCP &amp; Hooks</button>
       </div>
       <div id="llm-tab-master" class="llm-tab-panel">
         <textarea id="llm-master-prompt" readonly style="min-height:180px; font-family:ui-monospace, monospace; font-size:0.8rem;"></textarea>
@@ -576,6 +661,84 @@
         <p style="color:var(--text-muted);margin-bottom:8px;">Start a chat with your preferred AI using the Agent Prompt. Click <em>"📋 For Agent"</em> on any order card in the Bridge to copy the prompt, and paste it into the Agent chat. When the AI finishes, copy its response and click <em>"⚡ Smart Paste"</em> below to automatically extract the status and content.</p>
         <p><strong>3. Works with Any Agent or API:</strong></p>
         <p style="color:var(--text-muted);">Use <code>GET /api/orders/pending</code>, <code>POST /api/orders</code>, and <code>POST /api/executions</code> for programmatic runners or tool integrations.</p>
+      </div>
+      <div id="llm-tab-mcp" class="llm-tab-panel hidden" style="font-size:0.85rem; line-height:1.5; color:var(--text);">
+        <p style="margin-bottom:8px;"><strong>1-Sentence Onboarding Prompt:</strong></p>
+        <textarea id="mcp-one-liner" readonly style="min-height:64px; font-family:ui-monospace, monospace; font-size:0.8rem;"></textarea>
+        <div style="margin:8px 0 12px; display:flex; justify-content:flex-end; gap:8px;">
+          <button type="button" class="primary" id="copy-mcp-prompt-btn">📋 Copy Onboarding Prompt</button>
+        </div>
+        <p style="margin-bottom:6px;"><strong>MCP Streamable HTTP Endpoint:</strong> <code id="mcp-endpoint-url">/mcp</code></p>
+        <p style="color:var(--text-muted); margin-bottom:8px;">Or use <code>examples/mcp_stdio.py</code> for stdio-only clients and <code>integrations/hooks/bridge-hook.mjs</code> for turn-end / urgent hooks.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="unlock-overlay hidden" id="server-search-modal">
+    <div class="unlock-box" style="width: min(720px, 94vw); max-height: 88vh; overflow-y: auto;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <h2 style="font-size:1.15rem;">🔍 Full-Text History Search (FTS5)</h2>
+        <button class="delete-btn" id="close-search-modal" style="font-size:1.2rem; cursor:pointer;" title="Close">✕</button>
+      </div>
+      <div style="display:flex; gap:8px; margin-bottom:10px;">
+        <input type="search" id="modal-search-input" class="meta-input" placeholder="Search full message history and order IDs..." style="flex:1;" />
+        <button type="button" class="primary" id="modal-search-run-btn">Search</button>
+      </div>
+      <div id="search-results-container" style="display:flex; flex-direction:column; gap:8px; max-height:55vh; overflow-y:auto;"></div>
+    </div>
+  </div>
+
+  <div class="unlock-overlay hidden" id="files-modal">
+    <div class="unlock-box" style="width: min(720px, 94vw); max-height: 88vh; overflow-y: auto;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <h2 style="font-size:1.15rem;">📁 Out-of-Band File Transfers</h2>
+        <button class="delete-btn" id="close-files-modal" style="font-size:1.2rem; cursor:pointer;" title="Close">✕</button>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:12px; padding:10px; background:var(--muted); border-radius:6px;">
+        <input type="file" id="transfer-file-input" style="flex:1; font-size:0.8rem;" />
+        <input type="text" id="transfer-note-input" class="meta-input" placeholder="Optional announcement message" style="flex:1; min-width:160px;" />
+        <button type="button" class="primary" id="transfer-upload-btn">Upload &amp; Offer</button>
+      </div>
+      <div id="transfers-list" style="display:flex; flex-direction:column; gap:8px; max-height:48vh; overflow-y:auto;"></div>
+    </div>
+  </div>
+
+  <div class="unlock-overlay hidden" id="agents-modal">
+    <div class="unlock-box" style="width: min(760px, 94vw); max-height: 88vh; overflow-y: auto;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <h2 style="font-size:1.15rem;">👥 Participants, Auto-Start Wakes &amp; Health</h2>
+        <button class="delete-btn" id="close-agents-modal" style="font-size:1.2rem; cursor:pointer;" title="Close">✕</button>
+      </div>
+      <div id="stuck-readers-banner" class="stuck-banner hidden"></div>
+      <div style="display:flex; gap:8px; margin-bottom:12px;">
+        <button type="button" class="history-btn" id="tab-participants-btn" style="flex:1; margin-bottom:0; font-weight:600;">Participants</button>
+        <button type="button" class="history-btn" id="tab-wakes-btn" style="flex:1; margin-bottom:0;">Auto-Start Wakes</button>
+      </div>
+      <div id="agents-tab-participants">
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; padding:10px; background:var(--muted); border-radius:6px;">
+          <input type="text" id="new-part-name" class="meta-input" placeholder="Handle (e.g. codex-1)" />
+          <select id="new-part-role" class="meta-input">
+            <option value="agent">agent</option>
+            <option value="master">master</option>
+          </select>
+          <input type="text" id="new-part-type" class="meta-input" placeholder="Agent type (claude, codex...)" value="generic" />
+          <button type="button" class="primary" id="register-part-btn">Register</button>
+        </div>
+        <div id="new-part-token-box" class="hidden" style="margin-bottom:10px; padding:8px 10px; border:1px solid var(--accent); border-radius:6px; font-size:0.8rem;"></div>
+        <div id="participants-list" style="display:flex; flex-direction:column; gap:8px; max-height:42vh; overflow-y:auto;"></div>
+      </div>
+      <div id="agents-tab-wakes" class="hidden">
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; padding:10px; background:var(--muted); border-radius:6px;">
+          <select id="wake-part-select" class="meta-input"></select>
+          <select id="wake-kind-select" class="meta-input">
+            <option value="webhook">webhook</option>
+            <option value="claude_routine">claude_routine</option>
+          </select>
+          <input type="url" id="wake-url-input" class="meta-input" placeholder="https://..." style="flex:1; min-width:180px;" />
+          <input type="password" id="wake-secret-input" class="meta-input" placeholder="Optional secret" />
+          <button type="button" class="primary" id="create-wake-btn">Add Wake</button>
+        </div>
+        <div id="wakes-list" style="display:flex; flex-direction:column; gap:8px; max-height:42vh; overflow-y:auto;"></div>
       </div>
     </div>
   </div>
@@ -600,8 +763,16 @@
   </div>
 
   <header>
-    <div class="logo">Agent<span>Bridge</span></div>
+    <div style="display:flex; align-items:center; gap:10px;">
+      <button class="theme-toggle" id="sidebar-toggle-btn" type="button" title="Toggle channels &amp; direct chats">☰ Channels</button>
+      <div class="logo">Agent<span>Bridge</span></div>
+      <span class="badge channel" id="active-conv-pill" title="Active view">All messages</span>
+    </div>
     <div class="status-bar">
+      <div style="display:inline-flex; gap:4px; align-items:center;">
+        <input id="server-search-input" class="task-filter filter-input" type="search" placeholder="Search DB (FTS5)…" title="Search entire persisted history" autocomplete="off" />
+        <button class="theme-toggle" id="server-search-btn" type="button" title="Search full database">🔍</button>
+      </div>
       <select id="task-filter" class="task-filter" title="Filter by order/task">
         <option value="">All orders</option>
       </select>
@@ -661,6 +832,14 @@
       <span>Msgs: <strong id="total">0</strong></span>
       <span>Last: <strong id="last-role">—</strong></span>
       <span class="conn-status polling" id="conn-status">connecting…</span>
+      <button class="theme-toggle" id="files-btn" type="button" aria-label="Open File Transfers" title="Browse and upload file transfers">
+        <span class="theme-icon" aria-hidden="true">📁</span>
+        <span>Files</span>
+      </button>
+      <button class="theme-toggle" id="agents-btn" type="button" aria-label="Open Agents &amp; Wakes" title="Manage participants, auto-start wakes, and reader health">
+        <span class="theme-icon" aria-hidden="true">👥</span>
+        <span>Agents</span>
+      </button>
       <button class="theme-toggle" id="improvements-btn" type="button" aria-label="Open Self-Improvement Logs" title="View auto-generated self-improvement and system refinement logs">
         <span class="theme-icon" aria-hidden="true">💡</span>
         <span>Improvements</span>
@@ -677,10 +856,23 @@
     </div>
   </header>
 
-  <main id="board">
-    <button id="load-older" class="history-btn" hidden>Load older</button>
-    <div class="empty" id="empty-state">No messages yet.<br>The Master or Agent can post the first one.</div>
-  </main>
+  <div class="workspace-shell">
+    <aside id="workspace-sidebar" class="workspace-sidebar hidden">
+      <button type="button" class="sidebar-item active" id="conv-all-btn">All Messages</button>
+      <div class="sidebar-section-title">Channels</div>
+      <div id="sidebar-channels-list" class="sidebar-list"></div>
+      <div style="display:flex; gap:4px; margin-top:4px;">
+        <input type="text" id="new-channel-name" class="meta-input" placeholder="#new-channel" style="flex:1; min-width:0;" />
+        <button type="button" class="history-btn" id="create-channel-btn" style="margin-bottom:0; padding:4px 8px;">+</button>
+      </div>
+      <div class="sidebar-section-title">Direct Chats &amp; Agents</div>
+      <div id="sidebar-dms-list" class="sidebar-list"></div>
+    </aside>
+    <main id="board">
+      <button id="load-older" class="history-btn" hidden>Load older</button>
+      <div class="empty" id="empty-state">No messages yet.<br>The Master or Agent can post the first one.</div>
+    </main>
+  </div>
 
   <div class="composer" id="composer">
     <div class="composer-inner">
@@ -721,6 +913,10 @@
           <option value="FAILED">FAILED</option>
           <option value="BLOCKED">BLOCKED</option>
           <option value="CANCELLED">CANCELLED</option>
+        </select>
+        <select id="composer-priority" class="meta-input" title="Delivery priority">
+          <option value="">Priority: Normal</option>
+          <option value="URGENT">URGENT</option>
         </select>
         <input type="text" id="composer-action-id" class="meta-input" placeholder="Action ID (optional)" maxlength="200" autocomplete="off" />
         <input type="text" id="composer-approval-id" class="meta-input" placeholder="Approval ID (optional)" maxlength="200" autocomplete="off" />
@@ -792,6 +988,10 @@
     let currentApprovalFilter = '';
     let currentTypedKindFilter = '';
     let currentCorrelationFilter = '';
+    let currentConversationId = '';
+    let knownConversations = [];
+    let knownParticipants = [];
+    let currentDbGeneration = '';
 
     function applyTheme(theme, persist = true) {
       const nextTheme = theme === 'dark' ? 'dark' : 'light';
@@ -881,7 +1081,8 @@
           (!currentActionFilter || msgActionId.includes(currentActionFilter)) &&
           (!currentApprovalFilter || msgApprovalId.includes(currentApprovalFilter)) &&
           (!currentTypedKindFilter || msgTypedKind === currentTypedKindFilter) &&
-          (!currentCorrelationFilter || msgCorrelationId.includes(currentCorrelationFilter));
+          (!currentCorrelationFilter || msgCorrelationId.includes(currentCorrelationFilter)) &&
+          (!currentConversationId || (el.dataset.conversationId || 'general') === currentConversationId);
         el.style.display = matches ? '' : 'none';
       });
     }
@@ -982,6 +1183,7 @@
       div.dataset.typedKind = msg.typed?.kind || '';
       div.dataset.correlationId = msg.typed?.correlation_id || '';
       div.dataset.typedIntegrity = msg.typed_integrity || 'NOT_APPLICABLE';
+      div.dataset.conversationId = msg.conversation_id || 'general';
 
       const header = document.createElement('div');
       header.className = 'message-header';
@@ -998,6 +1200,14 @@
       role.textContent = roleLabel;
       left.appendChild(role);
 
+      if (msg.sender_name) left.appendChild(createBadge('sender', `@${msg.sender_name}`));
+      if (msg.priority === 'URGENT') left.appendChild(createBadge('urgent', 'URGENT'));
+      if (msg.conversation_id && msg.conversation_id !== 'general') {
+        const convLabel = typeof resolveConversationLabel === 'function'
+          ? resolveConversationLabel(msg.conversation_id)
+          : `#${msg.conversation_id.slice(0, 12)}`;
+        left.appendChild(createBadge('channel', convLabel));
+      }
       if (effectiveOrder) left.appendChild(createBadge('task', `order: ${effectiveOrder}`));
       if (msg.message_type) left.appendChild(createBadge('type', msg.message_type));
       if (msg.status) left.appendChild(createBadge('status', msg.status));
@@ -1049,7 +1259,15 @@
       const body = document.createElement('div');
       body.className = 'message-body';
       body.innerHTML = renderMarkdown(msg.content);
+      if (typeof highlightMentionsInElement === 'function') {
+        highlightMentionsInElement(body);
+      }
       div.appendChild(body);
+
+      if (msg.transfer_id && typeof buildTransferCard === 'function') {
+        const transferCard = buildTransferCard(msg);
+        if (transferCard) div.appendChild(transferCard);
+      }
 
       if (msg.typed_integrity === 'INVALID') {
         left.insertBefore(
@@ -1091,13 +1309,15 @@
       const msgTypedKind = el.dataset.typedKind || '';
       const msgCorrelationId = (el.dataset.correlationId || '').toLowerCase();
       const msgStatus = el.dataset.status || '';
+      const activeConv = typeof currentConversationId !== 'undefined' ? currentConversationId : '';
       const matches = (!currentTaskFilter || (el.dataset.taskId || '') === currentTaskFilter) &&
         (!currentMessageTypeFilter || (el.dataset.messageType || '') === currentMessageTypeFilter) &&
         (!currentStatusFilter || msgStatus === currentStatusFilter) &&
         (!currentActionFilter || msgActionId.includes(currentActionFilter)) &&
         (!currentApprovalFilter || msgApprovalId.includes(currentApprovalFilter)) &&
         (!currentTypedKindFilter || msgTypedKind === currentTypedKindFilter) &&
-        (!currentCorrelationFilter || msgCorrelationId.includes(currentCorrelationFilter));
+        (!currentCorrelationFilter || msgCorrelationId.includes(currentCorrelationFilter)) &&
+        (!activeConv || (el.dataset.conversationId || 'general') === activeConv);
       el.style.display = matches ? '' : 'none';
     }
 
@@ -1195,11 +1415,24 @@
         } else if (lastId > 0) {
           params.set('after_id', lastId);
         }
+        const activeConv = typeof currentConversationId !== 'undefined' ? currentConversationId : '';
+        if (activeConv) {
+          params.set('conversation_id', activeConv);
+        }
 
         const res = await fetch('/api/messages?' + params.toString(), { headers: authHeaders() });
         if (version !== sessionVersion || !token || !myRole) return;
         if (res.status === 401 || res.status === 403) { lock(); return; }
         if (!res.ok) return;
+        const genHeader = res.headers && typeof res.headers.get === 'function' ? res.headers.get('X-Bridge-Generation') : null;
+        if (genHeader && typeof currentDbGeneration !== 'undefined') {
+          if (currentDbGeneration && currentDbGeneration !== genHeader && typeof resetBoard === 'function') {
+            currentDbGeneration = genHeader;
+            resetBoard();
+            return await fetchMessages(true);
+          }
+          currentDbGeneration = genHeader;
+        }
         const messages = await res.json();
         if (version !== sessionVersion || !token || !myRole) return;
         messages.forEach(appendMessage);
@@ -1322,6 +1555,10 @@
         if (typeInput) payload.message_type = typeInput;
         const statusInput = document.getElementById('composer-status')?.value;
         if (statusInput) payload.status = statusInput;
+        const priorityInput = document.getElementById('composer-priority')?.value;
+        if (priorityInput) payload.priority = priorityInput;
+        const activeConv = typeof currentConversationId !== 'undefined' ? currentConversationId : '';
+        if (activeConv) payload.conversation_id = activeConv;
         if (actionIdInput) payload.action_id = actionIdInput;
         if (approvalIdInput) payload.approval_id = approvalIdInput;
 
@@ -1404,6 +1641,8 @@
         document.getElementById('content').value = '';
         const statusEl = document.getElementById('composer-status');
         if (statusEl) statusEl.value = '';
+        const priorityEl = document.getElementById('composer-priority');
+        if (priorityEl) priorityEl.value = '';
         document.getElementById('composer-action-id').value = '';
         document.getElementById('composer-approval-id').value = '';
         typedMessageKeyInput.value = '';
@@ -1480,9 +1719,18 @@
       sessionStorage.removeItem('flb_token');
       sessionStorage.removeItem('flb_role');
       token = ''; myRole = '';
+      currentConversationId = '';
+      currentDbGeneration = '';
+      knownConversations = [];
+      knownParticipants = [];
+      const convPill = document.getElementById('active-conv-pill');
+      if (convPill) convPill.textContent = 'All messages';
       if (eventSource) { eventSource.close(); eventSource = null; }
       resetBoard();
       closeImprovementsModal();
+      if (typeof closeSearchModal === 'function') closeSearchModal();
+      if (typeof closeFilesModal === 'function') closeFilesModal();
+      if (typeof closeAgentsModal === 'function') closeAgentsModal();
       document.getElementById('improvements-list').textContent = '';
       document.getElementById('improvement-detail-content').value = '';
       document.getElementById('composer').classList.remove('visible');
@@ -1501,6 +1749,7 @@
         return;
       }
       showBoard();
+      if (typeof refreshWorkspaceData === 'function') refreshWorkspaceData();
       await fetchMessages(true);
       if (token && myRole) await startStream();
     }
@@ -1580,6 +1829,7 @@
 
     function openLlmModal() {
       loadLlmPrompts();
+      if (typeof updateMcpTabInfo === 'function') updateMcpTabInfo();
       document.getElementById('llm-modal').classList.remove('hidden');
     }
 
@@ -1659,10 +1909,14 @@
       document.getElementById('tab-master-btn').style.fontWeight = tab === 'master' ? '600' : 'normal';
       document.getElementById('tab-agent-btn').style.fontWeight = tab === 'agent' ? '600' : 'normal';
       document.getElementById('tab-guide-btn').style.fontWeight = tab === 'guide' ? '600' : 'normal';
+      const mcpBtn = document.getElementById('tab-mcp-btn');
+      if (mcpBtn) mcpBtn.style.fontWeight = tab === 'mcp' ? '600' : 'normal';
 
       document.getElementById('llm-tab-master').classList.toggle('hidden', tab !== 'master');
       document.getElementById('llm-tab-agent').classList.toggle('hidden', tab !== 'agent');
       document.getElementById('llm-tab-guide').classList.toggle('hidden', tab !== 'guide');
+      const mcpPanel = document.getElementById('llm-tab-mcp');
+      if (mcpPanel) mcpPanel.classList.toggle('hidden', tab !== 'mcp');
     }
 
     async function handleSmartPaste() {
@@ -1713,6 +1967,678 @@
       contentEl.focus();
     }
 
+    function resolveConversationLabel(convId) {
+      const conv = knownConversations.find(c => c.id === convId);
+      if (!conv) return convId === 'general' ? '#General' : `#${String(convId).slice(0, 12)}`;
+      if (conv.kind === 'channel') return `#${conv.name}`;
+      const names = (conv.participants || []).map(p => p.name).join(' ↔ ');
+      return names ? `DM: ${names}` : 'DM';
+    }
+
+    function highlightMentionsInElement(root) {
+      if (!root || typeof document.createTreeWalker !== 'function') return;
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      const textNodes = [];
+      let current;
+      while ((current = walker.nextNode())) {
+        const parentTag = current.parentElement?.tagName;
+        if (parentTag === 'CODE' || parentTag === 'PRE') continue;
+        if (current.nodeValue && current.nodeValue.includes('@')) textNodes.push(current);
+      }
+      const mentionRe = /(^|[^A-Za-z0-9_.@/\\-])(@[A-Za-z][A-Za-z0-9_-]{0,63})/g;
+      for (const node of textNodes) {
+        const val = node.nodeValue;
+        mentionRe.lastIndex = 0;
+        let match;
+        let lastIdx = 0;
+        let hasMatch = false;
+        const frag = document.createDocumentFragment();
+        while ((match = mentionRe.exec(val)) !== null) {
+          hasMatch = true;
+          const prefixStart = match.index;
+          const handleStart = prefixStart + match[1].length;
+          if (handleStart > lastIdx) {
+            frag.appendChild(document.createTextNode(val.slice(lastIdx, handleStart)));
+          }
+          const chip = document.createElement('span');
+          chip.className = 'mention-chip';
+          chip.textContent = match[2];
+          frag.appendChild(chip);
+          lastIdx = handleStart + match[2].length;
+        }
+        if (hasMatch) {
+          if (lastIdx < val.length) frag.appendChild(document.createTextNode(val.slice(lastIdx)));
+          node.parentNode.replaceChild(frag, node);
+        }
+      }
+    }
+
+    function buildTransferCard(msg) {
+      if (!msg.transfer_id) return null;
+      const t = msg.payload && msg.payload.transfer ? msg.payload.transfer : {};
+      const card = document.createElement('div');
+      card.className = 'transfer-card';
+      const info = document.createElement('div');
+      const title = document.createElement('strong');
+      title.textContent = `📎 ${t.name || msg.transfer_id}`;
+      const meta = document.createElement('div');
+      meta.style.cssText = 'color:var(--text-muted); font-size:0.75rem; font-family:ui-monospace, monospace;';
+      const sizeStr = typeof t.size_bytes === 'number' ? `${t.size_bytes} bytes` : '';
+      const shaStr = t.sha256 ? ` · sha256:${String(t.sha256).slice(0, 12)}` : '';
+      meta.textContent = `${t.kind || 'file'} ${sizeStr}${shaStr}`.trim();
+      info.appendChild(title);
+      info.appendChild(meta);
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'history-btn';
+      btn.style.cssText = 'margin-bottom:0; padding:4px 10px; font-size:0.78rem;';
+      btn.textContent = 'Download';
+      btn.addEventListener('click', () => downloadTransferById(msg.transfer_id));
+      card.appendChild(info);
+      card.appendChild(btn);
+      return card;
+    }
+
+    function updateMcpTabInfo() {
+      const origin = window.location.origin;
+      const oneLinerEl = document.getElementById('mcp-one-liner');
+      const endpointEl = document.getElementById('mcp-endpoint-url');
+      if (oneLinerEl) {
+        oneLinerEl.value = `Connect to ForgeLoopBridge using the instructions at ${origin}/instructions`;
+      }
+      if (endpointEl) {
+        endpointEl.textContent = `${origin}/mcp`;
+      }
+    }
+
+    async function refreshWorkspaceData() {
+      if (!token || !myRole) return;
+      const version = sessionVersion;
+      try {
+        const [convRes, partRes, readerRes] = await Promise.all([
+          fetch('/api/conversations', { headers: authHeaders() }),
+          fetch('/api/participants?include_removed=true', { headers: authHeaders() }),
+          fetch('/api/health/readers', { headers: authHeaders() }),
+        ]);
+        if (version !== sessionVersion || !token || !myRole) return;
+        if (convRes.ok) knownConversations = await convRes.json();
+        if (partRes.ok) knownParticipants = await partRes.json();
+        renderSidebar();
+        if (readerRes.ok) {
+          const readerData = await readerRes.json();
+          const banner = document.getElementById('stuck-readers-banner');
+          if (banner) {
+            const stuck = readerData.stuck_readers || [];
+            if (stuck.length > 0) {
+              banner.textContent = `⚠ ${stuck.length} reader(s) stuck polling same checkpoint: ${stuck.map(s => s.reader_key).join(', ')}`;
+              banner.classList.remove('hidden');
+            } else {
+              banner.classList.add('hidden');
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    function renderSidebar() {
+      const channelsEl = document.getElementById('sidebar-channels-list');
+      const dmsEl = document.getElementById('sidebar-dms-list');
+      const allBtn = document.getElementById('conv-all-btn');
+      if (!channelsEl || !dmsEl) return;
+      if (allBtn) allBtn.classList.toggle('active', !currentConversationId);
+
+      channelsEl.innerHTML = '';
+      for (const conv of knownConversations.filter(c => c.kind === 'channel')) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = `sidebar-item${currentConversationId === conv.id ? ' active' : ''}`;
+        const label = document.createElement('span');
+        label.textContent = `#${conv.name}`;
+        const count = document.createElement('span');
+        count.style.cssText = 'color:var(--text-muted); font-size:0.72rem;';
+        count.textContent = String(conv.message_count || 0);
+        btn.appendChild(label);
+        btn.appendChild(count);
+        btn.addEventListener('click', () => selectConversation(conv.id, `#${conv.name}`));
+        channelsEl.appendChild(btn);
+      }
+
+      dmsEl.innerHTML = '';
+      for (const conv of knownConversations.filter(c => c.kind === 'direct')) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = `sidebar-item${currentConversationId === conv.id ? ' active' : ''}`;
+        const names = (conv.participants || []).map(p => p.name).join(' ↔ ') || conv.id.slice(0, 8);
+        btn.textContent = `💬 ${names}`;
+        btn.addEventListener('click', () => selectConversation(conv.id, `DM: ${names}`));
+        dmsEl.appendChild(btn);
+      }
+      for (const p of knownParticipants.filter(item => !item.removed_at)) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'sidebar-item';
+        const dot = p.online ? '🟢' : '⚪';
+        btn.textContent = `${dot} @${p.name} (${p.role})`;
+        btn.title = 'Click to open direct chat or mention';
+        btn.addEventListener('click', () => openDirectChatFromUi(p.id));
+        dmsEl.appendChild(btn);
+      }
+    }
+
+    async function selectConversation(convId, label) {
+      currentConversationId = convId || '';
+      const pill = document.getElementById('active-conv-pill');
+      if (pill) pill.textContent = label || 'All messages';
+      resetBoard();
+      renderSidebar();
+      await fetchMessages(true);
+      applyFilters();
+    }
+
+    async function createChannelFromUi() {
+      const input = document.getElementById('new-channel-name');
+      const name = (input?.value || '').trim().replace(/^#/, '');
+      if (!name) return;
+      try {
+        const res = await fetch('/api/conversations/channels', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({ name }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          alert(err.error?.message || err.detail || 'Failed to create channel');
+          return;
+        }
+        const ch = await res.json();
+        input.value = '';
+        await refreshWorkspaceData();
+        await selectConversation(ch.id, `#${ch.name}`);
+      } catch (_) {
+        alert('Network error');
+      }
+    }
+
+    async function openDirectChatFromUi(targetPid) {
+      const activePid = knownParticipants.find(p => !p.removed_at && p.id !== targetPid)?.id;
+      if (!activePid) {
+        const contentEl = document.getElementById('content');
+        const target = knownParticipants.find(p => p.id === targetPid);
+        if (contentEl && target) {
+          contentEl.value = `@${target.name} ${contentEl.value}`;
+          contentEl.focus();
+        }
+        return;
+      }
+      try {
+        const res = await fetch('/api/conversations/direct', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({ participant_id: activePid, target_participant_id: targetPid }),
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        await refreshWorkspaceData();
+        await selectConversation(data.conversation.id, resolveConversationLabel(data.conversation.id));
+      } catch (_) {}
+    }
+
+    function openSearchModal(initialQuery = '') {
+      document.getElementById('server-search-modal').classList.remove('hidden');
+      const modalInput = document.getElementById('modal-search-input');
+      if (modalInput) {
+        if (initialQuery) modalInput.value = initialQuery;
+        modalInput.focus();
+        if (modalInput.value.trim()) runServerSearch();
+      }
+    }
+
+    function closeSearchModal() {
+      const modal = document.getElementById('server-search-modal');
+      if (modal) modal.classList.add('hidden');
+    }
+
+    async function runServerSearch() {
+      const q = (document.getElementById('modal-search-input')?.value || '').trim();
+      const container = document.getElementById('search-results-container');
+      if (!container) return;
+      if (!q) {
+        container.textContent = 'Enter search keywords.';
+        return;
+      }
+      container.textContent = 'Searching…';
+      try {
+        const params = new URLSearchParams({ q, limit: '50' });
+        const res = await fetch('/api/messages/search?' + params.toString(), { headers: authHeaders() });
+        if (res.status === 401) { lock(); return; }
+        if (!res.ok) {
+          container.textContent = 'Search failed.';
+          return;
+        }
+        const data = await res.json();
+        const results = data.messages || [];
+        container.innerHTML = '';
+        if (results.length === 0) {
+          container.textContent = 'No matching messages found.';
+          return;
+        }
+        for (const msg of results) {
+          const card = document.createElement('div');
+          card.style.cssText = 'padding:10px; border:1px solid var(--border); border-radius:6px; background:var(--muted);';
+          const meta = document.createElement('div');
+          meta.style.cssText = 'font-size:0.75rem; color:var(--text-muted); margin-bottom:4px;';
+          meta.textContent = `#${msg.id} · ${msg.role}${msg.order_id ? ' · order: ' + msg.order_id : ''} · ${formatTime(msg.created_at)}`;
+          const body = document.createElement('div');
+          body.className = 'message-body';
+          body.style.padding = '0';
+          body.innerHTML = renderMarkdown(msg.content);
+          card.appendChild(meta);
+          card.appendChild(body);
+          container.appendChild(card);
+        }
+      } catch (_) {
+        container.textContent = 'Network error during search.';
+      }
+    }
+
+    async function openFilesModal() {
+      document.getElementById('files-modal').classList.remove('hidden');
+      await loadTransfersList();
+    }
+
+    function closeFilesModal() {
+      const modal = document.getElementById('files-modal');
+      if (modal) modal.classList.add('hidden');
+    }
+
+    async function loadTransfersList() {
+      const container = document.getElementById('transfers-list');
+      if (!container) return;
+      container.textContent = 'Loading transfers…';
+      try {
+        const res = await fetch('/api/transfers', { headers: authHeaders() });
+        if (res.status === 401) { lock(); return; }
+        if (!res.ok) { container.textContent = 'Failed to load transfers.'; return; }
+        const items = await res.json();
+        container.innerHTML = '';
+        if (!items.length) {
+          container.textContent = 'No file transfers recorded yet.';
+          return;
+        }
+        for (const t of items) {
+          const row = document.createElement('div');
+          row.style.cssText = 'display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:0.82rem;';
+          const info = document.createElement('div');
+          const title = document.createElement('strong');
+          title.textContent = `${t.name} (${t.size_bytes} bytes)`;
+          const sub = document.createElement('div');
+          sub.style.cssText = 'color:var(--text-muted); font-size:0.75rem; font-family:ui-monospace, monospace;';
+          sub.textContent = `${t.status} · ${t.kind} · sha256:${t.sha256.slice(0, 12)} · expires ${formatTime(t.expires_at)}`;
+          info.appendChild(title);
+          info.appendChild(sub);
+          row.appendChild(info);
+          if (t.status === 'COMPLETED' && !t.expired) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'history-btn';
+            btn.style.cssText = 'margin-bottom:0; padding:4px 10px;';
+            btn.textContent = 'Download';
+            btn.addEventListener('click', () => downloadTransferById(t.id));
+            row.appendChild(btn);
+          }
+          container.appendChild(row);
+        }
+      } catch (_) {
+        container.textContent = 'Error loading transfers.';
+      }
+    }
+
+    async function uploadTransferFromUi() {
+      const fileInput = document.getElementById('transfer-file-input');
+      const file = fileInput?.files?.[0];
+      if (!file) { alert('Select a file first.'); return; }
+      if (!window.crypto || !window.crypto.subtle) {
+        alert('Browser crypto.subtle is required to compute SHA-256 in secure contexts.');
+        return;
+      }
+      const btn = document.getElementById('transfer-upload-btn');
+      btn.disabled = true;
+      try {
+        const buf = await file.arrayBuffer();
+        const hashBuf = await window.crypto.subtle.digest('SHA-256', buf);
+        const sha256 = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
+        const prepRes = await fetch('/api/transfers/prepare', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({
+            name: file.name,
+            kind: 'file',
+            size_bytes: file.size,
+            sha256,
+            content_type: file.type || 'application/octet-stream',
+            conversation_id: currentConversationId || 'general',
+          }),
+        });
+        if (!prepRes.ok) {
+          const err = await prepRes.json().catch(() => ({}));
+          alert(err.error?.message || err.detail || 'Prepare failed');
+          return;
+        }
+        const prep = await prepRes.json();
+        const putRes = await fetch(prep.upload_url, {
+          method: 'PUT',
+          headers: authHeaders(),
+          body: buf,
+        });
+        if (!putRes.ok) {
+          const err = await putRes.json().catch(() => ({}));
+          alert(err.error?.message || err.detail || 'Upload failed');
+          return;
+        }
+        const note = (document.getElementById('transfer-note-input')?.value || '').trim();
+        const compRes = await fetch(`/api/transfers/${encodeURIComponent(prep.transfer_id)}/complete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({
+            content: note || null,
+            conversation_id: currentConversationId || 'general',
+          }),
+        });
+        if (!compRes.ok) {
+          const err = await compRes.json().catch(() => ({}));
+          alert(err.error?.message || err.detail || 'Complete failed');
+          return;
+        }
+        fileInput.value = '';
+        const noteEl = document.getElementById('transfer-note-input');
+        if (noteEl) noteEl.value = '';
+        await loadTransfersList();
+        await fetchMessages(false);
+      } catch (_) {
+        alert('Upload error');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function downloadTransferById(transferId) {
+      try {
+        const res = await fetch(`/api/transfers/${encodeURIComponent(transferId)}/download-ticket`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({}),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          alert(err.error?.message || err.detail || 'Download failed');
+          return;
+        }
+        const data = await res.json();
+        const link = document.createElement('a');
+        link.href = data.download_url;
+        link.download = data.name || 'download';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } catch (_) {
+        alert('Network error');
+      }
+    }
+
+    async function openAgentsModal() {
+      document.getElementById('agents-modal').classList.remove('hidden');
+      await Promise.all([loadParticipantsTab(), loadWakesTab(), loadStuckReaders()]);
+    }
+
+    function closeAgentsModal() {
+      const modal = document.getElementById('agents-modal');
+      if (modal) modal.classList.add('hidden');
+    }
+
+    function setAgentsTab(tab) {
+      document.getElementById('tab-participants-btn').style.fontWeight = tab === 'participants' ? '600' : 'normal';
+      document.getElementById('tab-wakes-btn').style.fontWeight = tab === 'wakes' ? '600' : 'normal';
+      document.getElementById('agents-tab-participants').classList.toggle('hidden', tab !== 'participants');
+      document.getElementById('agents-tab-wakes').classList.toggle('hidden', tab !== 'wakes');
+    }
+
+    async function loadStuckReaders() {
+      try {
+        const res = await fetch('/api/health/readers', { headers: authHeaders() });
+        if (!res.ok) return;
+        const data = await res.json();
+        const banner = document.getElementById('stuck-readers-banner');
+        if (!banner) return;
+        const stuck = data.stuck_readers || [];
+        if (stuck.length > 0) {
+          banner.textContent = `⚠ Stuck reader(s): ${stuck.map(s => `${s.reader_key} (${s.polls} polls)`).join(', ')}`;
+          banner.classList.remove('hidden');
+        } else {
+          banner.classList.add('hidden');
+        }
+      } catch (_) {}
+    }
+
+    async function loadParticipantsTab() {
+      const container = document.getElementById('participants-list');
+      const wakeSelect = document.getElementById('wake-part-select');
+      if (!container) return;
+      try {
+        const res = await fetch('/api/participants?include_removed=true', { headers: authHeaders() });
+        if (!res.ok) return;
+        knownParticipants = await res.json();
+        renderSidebar();
+        container.innerHTML = '';
+        if (wakeSelect) wakeSelect.innerHTML = '';
+        for (const p of knownParticipants) {
+          if (wakeSelect && !p.removed_at) {
+            const opt = document.createElement('option');
+            opt.value = p.id;
+            opt.textContent = `${p.name} (${p.role})`;
+            wakeSelect.appendChild(opt);
+          }
+          const row = document.createElement('div');
+          row.style.cssText = 'display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:0.82rem; flex-wrap:wrap;';
+          const left = document.createElement('div');
+          const statusDot = p.removed_at ? '⛔' : (p.online ? '🟢' : '⚪');
+          const title = document.createElement('strong');
+          title.textContent = `${statusDot} ${p.name} (${p.role}/${p.agent_type})`;
+          const sub = document.createElement('div');
+          sub.style.cssText = 'color:var(--text-muted); font-size:0.75rem; font-family:ui-monospace, monospace;';
+          sub.textContent = `id:${p.id.slice(0, 8)} · msgs:${p.message_count}${p.plugin_name ? ' · ' + p.plugin_name + (p.plugin_version ? '@' + p.plugin_version : '') : ''}`;
+          left.appendChild(title);
+          left.appendChild(sub);
+
+          const right = document.createElement('div');
+          right.style.cssText = 'display:flex; gap:6px; align-items:center;';
+          if (myRole === 'master' && !p.removed_at) {
+            const cadSelect = document.createElement('select');
+            cadSelect.className = 'meta-input';
+            for (const c of ['right_away', 'every_minute', 'every_5_minutes', 'every_15_minutes']) {
+              const o = document.createElement('option');
+              o.value = c;
+              o.textContent = c;
+              if (p.wake_cadence === c) o.selected = true;
+              cadSelect.appendChild(o);
+            }
+            cadSelect.addEventListener('change', () => updateParticipantCadence(p.id, cadSelect.value));
+            right.appendChild(cadSelect);
+          }
+          if (!p.removed_at) {
+            const renBtn = document.createElement('button');
+            renBtn.type = 'button';
+            renBtn.className = 'history-btn';
+            renBtn.style.cssText = 'margin-bottom:0; padding:2px 8px; font-size:0.75rem;';
+            renBtn.textContent = 'Rename';
+            renBtn.addEventListener('click', () => renameParticipantFromUi(p.id, p.name));
+            right.appendChild(renBtn);
+          }
+          if (myRole === 'master') {
+            const remBtn = document.createElement('button');
+            remBtn.type = 'button';
+            remBtn.className = 'history-btn';
+            remBtn.style.cssText = 'margin-bottom:0; padding:2px 8px; font-size:0.75rem;';
+            remBtn.textContent = p.removed_at ? 'Restore' : 'Remove';
+            remBtn.addEventListener('click', () => toggleParticipantRemoved(p.id, Boolean(p.removed_at)));
+            right.appendChild(remBtn);
+          }
+          row.appendChild(left);
+          row.appendChild(right);
+          container.appendChild(row);
+        }
+      } catch (_) {}
+    }
+
+    async function registerParticipantFromUi() {
+      const name = (document.getElementById('new-part-name')?.value || '').trim();
+      const role = document.getElementById('new-part-role')?.value || 'agent';
+      const agentType = (document.getElementById('new-part-type')?.value || 'generic').trim() || 'generic';
+      if (!name) return;
+      try {
+        const res = await fetch('/api/participants', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({ name, role, agent_type: agentType, issue_token: true }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          alert(err.error?.message || err.detail || 'Failed to register');
+          return;
+        }
+        const data = await res.json();
+        document.getElementById('new-part-name').value = '';
+        const box = document.getElementById('new-part-token-box');
+        if (box && data.token) {
+          box.textContent = `Token for ${data.participant.name} (copy now, shown once): ${data.token}`;
+          box.classList.remove('hidden');
+        }
+        await loadParticipantsTab();
+      } catch (_) {
+        alert('Network error');
+      }
+    }
+
+    async function renameParticipantFromUi(pid, currentName) {
+      const next = prompt('New handle name:', currentName);
+      if (!next || next.trim() === currentName) return;
+      const res = await fetch(`/api/participants/${encodeURIComponent(pid)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ name: next.trim() }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error?.message || err.detail || 'Rename failed');
+        return;
+      }
+      await loadParticipantsTab();
+    }
+
+    async function toggleParticipantRemoved(pid, isRemoved) {
+      const action = isRemoved ? 'restore' : 'remove';
+      const res = await fetch(`/api/participants/${encodeURIComponent(pid)}/${action}`, {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      if (res.ok) await loadParticipantsTab();
+    }
+
+    async function updateParticipantCadence(pid, cadence) {
+      await fetch(`/api/participants/${encodeURIComponent(pid)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ wake_cadence: cadence }),
+      });
+    }
+
+    async function loadWakesTab() {
+      const container = document.getElementById('wakes-list');
+      if (!container) return;
+      try {
+        const res = await fetch('/api/wakes', { headers: authHeaders() });
+        if (!res.ok) return;
+        const wakes = await res.json();
+        container.innerHTML = '';
+        if (!wakes.length) {
+          container.textContent = 'No auto-start wakes configured.';
+          return;
+        }
+        for (const w of wakes) {
+          const row = document.createElement('div');
+          row.style.cssText = 'display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:0.82rem; flex-wrap:wrap;';
+          const left = document.createElement('div');
+          const title = document.createElement('strong');
+          title.textContent = `${w.kind} → ${w.url || (w.command || []).join(' ')}`;
+          const sub = document.createElement('div');
+          sub.style.cssText = 'color:var(--text-muted); font-size:0.75rem; font-family:ui-monospace, monospace;';
+          sub.textContent = `pid:${w.participant_id.slice(0, 8)} · failures:${w.failures}${w.last_error ? ' · err:' + w.last_error : ''}${w.disabled_at ? ' · DISABLED' : ''}${w.secret_hint ? ' · ***' + w.secret_hint : ''}`;
+          left.appendChild(title);
+          left.appendChild(sub);
+
+          const right = document.createElement('div');
+          right.style.cssText = 'display:flex; gap:6px;';
+          const testBtn = document.createElement('button');
+          testBtn.type = 'button';
+          testBtn.className = 'history-btn';
+          testBtn.style.cssText = 'margin-bottom:0; padding:2px 8px; font-size:0.75rem;';
+          testBtn.textContent = 'Test';
+          testBtn.addEventListener('click', () => testWakeFromUi(w.id));
+          const delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.className = 'delete-btn';
+          delBtn.textContent = '🗑';
+          delBtn.addEventListener('click', () => deleteWakeFromUi(w.id));
+          right.appendChild(testBtn);
+          right.appendChild(delBtn);
+          row.appendChild(left);
+          row.appendChild(right);
+          container.appendChild(row);
+        }
+      } catch (_) {}
+    }
+
+    async function createWakeFromUi() {
+      const participant_id = document.getElementById('wake-part-select')?.value;
+      const kind = document.getElementById('wake-kind-select')?.value || 'webhook';
+      const url = (document.getElementById('wake-url-input')?.value || '').trim();
+      const secret = (document.getElementById('wake-secret-input')?.value || '').trim() || null;
+      if (!participant_id || !url) { alert('Select a participant and enter a URL.'); return; }
+      const res = await fetch('/api/wakes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ participant_id, kind, url, secret }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error?.message || err.detail || 'Failed to add wake');
+        return;
+      }
+      document.getElementById('wake-url-input').value = '';
+      document.getElementById('wake-secret-input').value = '';
+      await loadWakesTab();
+    }
+
+    async function testWakeFromUi(wakeId) {
+      const res = await fetch(`/api/wakes/${encodeURIComponent(wakeId)}/test`, {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        alert(data.ok ? 'Test wake succeeded!' : `Test wake failed: ${data.error}`);
+        await loadWakesTab();
+      }
+    }
+
+    async function deleteWakeFromUi(wakeId) {
+      const res = await fetch(`/api/wakes/${encodeURIComponent(wakeId)}`, {
+        method: 'DELETE',
+        headers: authHeaders(),
+      });
+      if (res.ok) await loadWakesTab();
+    }
+
     // Wire events
     document.getElementById('improvements-btn').addEventListener('click', openImprovementsModal);
     document.getElementById('close-improvements-modal').addEventListener('click', closeImprovementsModal);
@@ -1727,6 +2653,46 @@
     document.getElementById('tab-master-btn').addEventListener('click', () => setLlmTab('master'));
     document.getElementById('tab-agent-btn').addEventListener('click', () => setLlmTab('agent'));
     document.getElementById('tab-guide-btn').addEventListener('click', () => setLlmTab('guide'));
+    document.getElementById('tab-mcp-btn').addEventListener('click', () => setLlmTab('mcp'));
+    document.getElementById('copy-mcp-prompt-btn').addEventListener('click', async () => {
+      const text = document.getElementById('mcp-one-liner').value;
+      const ok = await copyToClipboard(text);
+      flashCopyButton(document.getElementById('copy-mcp-prompt-btn'), ok);
+    });
+    document.getElementById('sidebar-toggle-btn').addEventListener('click', () => {
+      document.getElementById('workspace-sidebar').classList.toggle('hidden');
+    });
+    document.getElementById('conv-all-btn').addEventListener('click', () => selectConversation('', 'All messages'));
+    document.getElementById('create-channel-btn').addEventListener('click', createChannelFromUi);
+    document.getElementById('server-search-btn').addEventListener('click', () => {
+      openSearchModal(document.getElementById('server-search-input').value.trim());
+    });
+    document.getElementById('server-search-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') openSearchModal(e.target.value.trim());
+    });
+    document.getElementById('close-search-modal').addEventListener('click', closeSearchModal);
+    document.getElementById('server-search-modal').addEventListener('click', (e) => {
+      if (e.target.id === 'server-search-modal') closeSearchModal();
+    });
+    document.getElementById('modal-search-run-btn').addEventListener('click', runServerSearch);
+    document.getElementById('modal-search-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') runServerSearch();
+    });
+    document.getElementById('files-btn').addEventListener('click', openFilesModal);
+    document.getElementById('close-files-modal').addEventListener('click', closeFilesModal);
+    document.getElementById('files-modal').addEventListener('click', (e) => {
+      if (e.target.id === 'files-modal') closeFilesModal();
+    });
+    document.getElementById('transfer-upload-btn').addEventListener('click', uploadTransferFromUi);
+    document.getElementById('agents-btn').addEventListener('click', openAgentsModal);
+    document.getElementById('close-agents-modal').addEventListener('click', closeAgentsModal);
+    document.getElementById('agents-modal').addEventListener('click', (e) => {
+      if (e.target.id === 'agents-modal') closeAgentsModal();
+    });
+    document.getElementById('tab-participants-btn').addEventListener('click', () => setAgentsTab('participants'));
+    document.getElementById('tab-wakes-btn').addEventListener('click', () => setAgentsTab('wakes'));
+    document.getElementById('register-part-btn').addEventListener('click', registerParticipantFromUi);
+    document.getElementById('create-wake-btn').addEventListener('click', createWakeFromUi);
     document.getElementById('copy-master-prompt-btn').addEventListener('click', async () => {
       const text = document.getElementById('llm-master-prompt').value;
       const ok = await copyToClipboard(text);
@@ -1741,6 +2707,9 @@
       if (e.key === 'Escape') {
         closeLlmModal();
         closeImprovementsModal();
+        closeSearchModal();
+        closeFilesModal();
+        closeAgentsModal();
       }
     });
     document.getElementById('smart-paste-btn').addEventListener('click', handleSmartPaste);

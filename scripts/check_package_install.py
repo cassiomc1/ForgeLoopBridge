@@ -16,14 +16,18 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 import main
 import self_improvement
+import bridge_hub
 
 installed = Path(os.environ["SMOKE_ENV"]).resolve()
 assert Path(main.__file__).resolve().is_relative_to(installed)
 assert Path(self_improvement.__file__).resolve().is_relative_to(installed)
+assert Path(bridge_hub.__file__).resolve().is_relative_to(installed)
 with TestClient(main.app) as client:
     assert client.get("/healthz").json() == {"status": "ok"}
     assert client.get("/").status_code == 200
     assert client.get("/static/vendor/purify.min.js").status_code == 200
+    instr = client.get("/instructions")
+    assert instr.status_code == 200 and "/mcp" in instr.text
     for role in ("master", "agent"):
         prompt = client.get(f"/api/prompts/{role}").json()["prompt"]
         assert "Core Operating Principles" in prompt
@@ -33,11 +37,27 @@ with TestClient(main.app) as client:
     assert created.status_code == 200, created.text
     retry = client.post("/api/executions", headers=headers, json=body)
     assert retry.json() == created.json()
+    search = client.get("/api/messages/search", params={"q": "Verified"}, headers=headers)
+    assert search.status_code == 200 and search.json()["total"] == 1
+    mcp_init = client.post(
+        "/mcp",
+        headers=headers,
+        json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-03-26"}},
+    )
+    assert mcp_init.status_code == 200
+    assert mcp_init.json()["result"]["serverInfo"]["name"] == "forgeloopbridge"
+    mcp_tools = client.post(
+        "/mcp",
+        headers=headers,
+        json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+    )
+    assert mcp_tools.status_code == 200
+    assert len(mcp_tools.json()["result"]["tools"]) == 21
     records = client.get("/api/improvements", headers=headers).json()
     assert len(records) == 1
     record = client.get(f'/api/improvements/{records[0]["filename"]}', headers=headers)
     assert record.status_code == 200
-print("Installed wheel API, static assets, prompts, and improvement records verified.")
+print("Installed wheel API, bridge_hub, MCP, FTS5 search, static assets, prompts, and improvement records verified.")
 """
 
 
