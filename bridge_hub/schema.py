@@ -340,5 +340,39 @@ async def init_hub_schema(db: Any) -> str:
         """
     )
 
+    await db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS mcp_event_subscriptions (
+            id TEXT PRIMARY KEY,
+            principal_key TEXT NOT NULL,
+            role TEXT NOT NULL,
+            participant_id TEXT,
+            event_name TEXT NOT NULL,
+            arguments_json TEXT NOT NULL,
+            callback_url TEXT NOT NULL,
+            secret_encrypted TEXT NOT NULL,
+            prev_secret_encrypted TEXT,
+            prev_secret_until REAL,
+            cursor_after_id INTEGER NOT NULL DEFAULT 0,
+            refresh_before REAL,
+            active INTEGER NOT NULL DEFAULT 1,
+            failures INTEGER NOT NULL DEFAULT 0,
+            due_at REAL,
+            last_delivery_at REAL,
+            last_error TEXT,
+            failed_since REAL,
+            verified_at REAL NOT NULL,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL
+        )
+        """
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mcp_event_subs_due ON mcp_event_subscriptions(due_at) WHERE due_at IS NOT NULL"
+    )
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mcp_event_subs_principal ON mcp_event_subscriptions(principal_key)"
+    )
+
     await _ensure_fts(db)
     return await get_db_generation(db)
