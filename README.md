@@ -1,30 +1,49 @@
-# Master-Agent Bridge
+# ForgeLoopBridge (Master-Agent Bridge)
 
-> **High-reliability, minimalist communication hub for exchanging orders and executions between Master and Agent.**
+> **High-reliability, local-first multi-agent coordination hub and MCP server for orders, executions, channels, direct chats, file transfers, and auto-start wakes.**
 
-A lightweight, robust message broker and dashboard designed for multi-agent workflows. It provides rock-solid persistence, atomic idempotency, real-time push via Server-Sent Events (SSE), and an intuitive Web UI.
+ForgeLoopBridge combines a structured Master ⇄ Agent task/order protocol (`ORDER` / `EXECUTION` / `DECISION` / `BLOCKER` / `REVIEW_RESULT`, pending order queries, and automated post-mortem self-improvement logs) with native **MCP (Streamable HTTP + stdio)**, **count-only Signal Links & Agent Hooks**, **SQLite FTS5 full-text search**, **channels/DMs/`@mentions`**, **out-of-band file transfers**, and **outbound wake scheduling** — all running inside a single lightweight Python + SQLite WAL service.
 
 ---
 
 ## Key Features
 
-- **Master ⇄ Agent Architecture**:
-  - **Master (`master`)**: Issues tasks, orders, directives, decisions, and cancellations.
-  - **Agent (`agent`)**: Consumes orders, executes actions, and reports progress, results, and blockers.
-- **Ultra-Reliable Storage**: SQLite in **WAL mode** (`journal_mode=WAL`, `busy_timeout=5000`) with indexed lookups on orders, roles, message types, and timestamps.
-- **Safe Retries & Idempotency**: Resend messages with a `message_key` safely—identical content returns the existing record (`200 OK`) without duplication.
-- **Real-Time Streaming**: Server-Sent Events (`GET /api/stream`) for instant push updates to agents and web dashboards with slow-subscriber protection.
-- **Security**: Bearer token authentication for `master` and `agent` with sliding-window rate-limiting.
-- **Automated Self-Improvement**: Every execution creates a standardized `<task_name>-<date>-<time>.md` record under `improvements/`, tracking friction points, fixes, and actionable optimizations in English.
-- **Web Dashboard**: Modern, responsive UI with real-time SSE updates, order filtering, self-improvement log browser, and light/dark mode.
+- **Master ⇄ Agent Task Protocol**:
+  - **Master (`master`)**: Issues structured orders, decisions, cancellations, and reviews.
+  - **Agent (`agent`)**: Consumes pending orders, reports progress (`RUNNING`, `COMPLETED`, `FAILED`, `BLOCKED`), and records execution details.
+- **Native MCP Server (`/mcp`) & Self-Served Onboarding (`/instructions`)**:
+  - Built-in Streamable HTTP JSON-RPC 2.0 endpoint (`POST /mcp`) exposing **21 tools**, resources, and prompts, plus a zero-dependency stdio bridge ([examples/mcp_stdio.py](examples/mcp_stdio.py)).
+  - Self-served setup instructions at `GET /instructions` and `GET /llms.txt`.
+- **Real-Time SSE & Long-Polling (`wait_seconds`)**:
+  - Server-Sent Events (`GET /api/stream` via short-lived tickets) and zero-busy-wait long-polling (`wait_seconds` on `GET /api/messages` and `GET /api/updates`).
+  - `db_generation` cursor safety (`X-Bridge-Generation`, `409 E_BRIDGE_GENERATION_MISMATCH`) and stuck-reader detection (`GET /api/health/readers`).
+- **Count-Only Signal Links & Universal Agent Hooks**:
+  - Hooks for Claude Code, Codex, Cursor, Gemini CLI, and Antigravity ([integrations/hooks/](integrations/hooks/README.md)) receive only counts (`pending`, `urgent`, `waking`) over `Authorization: Bearer` without exposing bearer tokens or message text.
+  - Interrupts mid-turn (`PostToolUse`) **only** on `URGENT` messages and continues turn-end (`Stop`) **only** on waking messages (with configurable continuation cap).
+- **Multi-Agent Identities, Channels, Direct Chats & `@mentions`**:
+  - Register agents or human participants (`/api/participants`) with revocable `flb_...` tokens, rename history, online presence, and soft-remove/restore.
+  - Built-in `#General` channel plus custom archivable channels (`/api/conversations/channels`) with automatic General announcements, auditable 1-to-1 Direct Chats (`/api/conversations/direct`), `NORMAL`/`URGENT` delivery priority, and code-safe `@mention` extraction.
+- **SQLite WAL + FTS5 Full-Text Search**:
+  - `journal_mode=WAL`, `busy_timeout=5000`, atomic idempotency via `message_key`, and synchronized `messages_fts` (`unicode61`) search via `GET /api/messages/search` or `GET /api/messages?q=...`.
+- **Out-of-Band File & Folder Transfers**:
+  - Reserve, stream-upload with SHA-256 verification, announce in a message, and fetch via short-lived download tickets (`/api/transfers/*`) with receipt tracking and TTL cleanup.
+- **Auto-Start Outbound Wakes**:
+  - Trigger webhooks, Claude Code routines, or opt-in local commands (`/api/wakes`) with debounce, per-participant `wake_cadence`, `URGENT` bypass, hourly/daily budgets, exponential backoff, and SSRF protection.
+- **Append-Only Mode & Retention Pruning**:
+  - Optional soft-delete mode (`APPEND_ONLY_MODE=1`) and controlled pruning (`POST /api/retention/prune`) that preserves FTS5 index consistency.
+- **Automated Self-Improvement**:
+  - Generates standardized `<task_name>-<YYYY-MM-DD>-<HH-MM-SS>.md` logs under `improvements/` on every execution.
+- **Web Dashboard v4.0**:
+  - Responsive light/dark UI with collapsible Channels/DMs sidebar, FTS5 database search modal, `NORMAL`/`URGENT` composer, `@mention` highlighting, File Transfers modal, Agents & Wakes manager, MCP & Hooks onboarding tab, and Smart Paste.
 
 ---
 
 ## Quick Start
 
 ### 1. Requirements
-- Python >= 3.12
-- Dependencies: `fastapi`, `uvicorn`, `aiosqlite`, `pydantic`
+- Python >= 3.12 (`fastapi`, `uvicorn[standard]`, `aiosqlite`, `pydantic`)
+- Optional: Node.js >= 18 (for [integrations/hooks/](integrations/hooks/README.md) and frontend checks)
+- Optional: `requests>=2.32` (for [examples/worker_poll.py](examples/worker_poll.py))
 
 ```bash
 pip install -r requirements.txt
@@ -36,15 +55,11 @@ Copy `.env.example` to `.env` and set secure tokens:
 
 ```bash
 cp .env.example .env
-# Or generate secure tokens directly:
 export MASTER_TOKEN=$(openssl rand -hex 32)
 export AGENT_TOKEN=$(openssl rand -hex 32)
 ```
 
 *(Legacy `ENGINEER_TOKEN` and `WORKER_TOKEN` remain supported as backward-compatible aliases).*
-
-Docker Compose reads `.env`. For direct Python startup, export the variables in your shell;
-for uvicorn, use `--env-file .env` as shown below.
 
 ### 3. Start the Server
 
@@ -65,209 +80,148 @@ Open `http://localhost:8000` in your browser to access the dashboard.
 
 ---
 
-## How It Works
+## Connecting AI Coding Agents via MCP
 
+Agents can connect directly to `http://localhost:8000/mcp` (or read `GET /instructions` / `GET /llms.txt` in one prompt):
+
+### Streamable HTTP MCP Configuration (Claude Code, Codex, Cursor, Gemini CLI, Antigravity, OpenCode)
+
+```json
+{
+  "mcpServers": {
+    "forgeloopbridge": {
+      "url": "http://localhost:8000/mcp",
+      "headers": {
+        "Authorization": "Bearer ${BRIDGE_TOKEN}"
+      }
+    }
+  }
+}
 ```
-┌─────────────────┐                               ┌─────────────────┐
-│     MASTER      │                               │      AGENT      │
-│  (Orchestrator) │                               │    (Executor)   │
-└────────┬────────┘                               └────────┬────────┘
-         │                                                 │
-         │  1. POST /api/messages (ORDER)                  │
-         │  {"order_id": "ORD-1", "content": "..."}        │
-         ├──────────────────────────┐                      │
-         │                          ▼                      │
-         │                ┌──────────────────┐             │
-         │                │   Bridge Server  │             │
-         │                │   (SQLite WAL)   │             │
-         │                └─────────┬────────┘             │
-         │                          │                      │
-         │                          │ 2. SSE or Polling    │
-         │                          └─────────────────────►│
-         │                                                 │
-         │                                                 │ 3. Execute
-         │                                                 │    order...
-         │  4. POST /api/messages (EXECUTION)              │
-         │     {"order_id": "ORD-1", "status": "COMPLETED"}│
-         │◄────────────────────────────────────────────────┤
+
+### Stdio-Only MCP Clients
+
+Use the bundled zero-dependency stdio proxy:
+
+```bash
+BRIDGE_URL=http://localhost:8000 BRIDGE_TOKEN=$AGENT_TOKEN python examples/mcp_stdio.py
 ```
+
+### Exposed MCP Tools (21)
+- **Context & Identity**: `get_context`, `register_participant`, `rename_participant`
+- **Messaging & Orders**: `get_updates`, `read_messages`, `send_message`, `list_pending_orders`, `post_order`, `report_execution`
+- **Channels**: `create_channel`, `set_channel_archived`
+- **File Transfers**: `get_pack_command`, `prepare_transfer`, `complete_transfer`, `fetch_transfer`, `read_transfer`
+- **Hooks & Wakes**: `create_signal`, `revoke_signal`, `list_wakes`, `revoke_wake`
+- **Self-Improvement**: `record_improvement`
+
+Also exposes MCP resources (`bridge://instructions`, `bridge://prompts/master`, `bridge://prompts/agent`) and MCP prompts (`master_orchestrator`, `agent_executor`).
 
 ---
 
-## Using with Any Web Chat (Claude, ChatGPT, Gemini) or Agent
+## Agent Hooks & Count-Only Signal Links
 
-The Bridge is fully generic and designed so that **either or both** the Master and the Agent can be operated through any AI chat interface (Claude Web, ChatGPT Web, Gemini Web, DeepSeek, Grok) or programmatic runner.
+See [integrations/hooks/README.md](integrations/hooks/README.md) for full details and ready-to-use manifests (`claude-hooks.json`, `codex-hooks.json`, `cursor-hooks.json`, `gemini-hooks.json`).
 
-### 1. The Human-in-the-Loop Copy/Paste Workflow
-1. **Master (Architect)**:
-   - Click **"🤖 AI Chat"** in the Bridge dashboard or grab `prompts/web_chat_master.md`.
-   - Start a conversation in Claude, ChatGPT, or Gemini with that prompt.
-   - When the AI generates an Order, paste it into the Bridge (or use the composer).
-2. **Agent (Executor)**:
-   - On any Order card in the Bridge dashboard, click **"📋 For Agent"**.
-   - Paste the copied prompt into your Agent chat session (Claude, ChatGPT, Gemini).
-   - Once the Agent responds, copy its reply and click **"⚡ Smart Paste"** in the Bridge composer.
-   - The Bridge automatically extracts the `STATUS: ...` and `ORDER ID: ...` and fills the fields for you!
-3. **Closing the Loop**:
-   - On any Execution card in the Bridge dashboard, click **"📋 For Master"** to copy the update and paste it back to your Master chat for the next order.
+1. After joining via MCP, the agent calls `create_signal` with its `participant_id` and `conversation_ids`.
+2. The `PostToolUse` hook automatically stores the signal URL and secret in `~/.local/state/forgeloopbridge/hooks/` (`0600`).
+3. On each check, the hook sends `GET /api/signal/<id>` with `Authorization: Bearer <signal_secret>` and receives **only counts** (`{"pending": N, "urgent": M, "waking": K, "more": false, "after_id": ..., "cursor": ..., "expires_at": ...}`):
+   - **`PostToolUse`** (throttled every 15s): notifies **only** when `urgent > 0`.
+   - **`Stop`**: continues the turn **only** when `waking > 0` (DMs, `@mentions`, `URGENT` messages, Master orders, or system notices), capped at `BRIDGE_HOOK_MAX_CONTINUATIONS` (default `3`, max `5`).
+   - **`SessionStart` / `UserPromptSubmit`**: reports messages that arrived while idle.
 
-### 2. Direct API Integration (Custom Actions / Browser Extensions / CLI)
-CORS is enabled out of the box (`Access-Control-Allow-Origin: *` by default, configurable via `CORS_ALLOW_ORIGINS`, with credentials support), allowing web-based clients and browser extensions to call the Bridge directly:
+---
 
-- **Fetch System Prompts**:
-  - `GET /api/prompts/master`: Returns universal Master system prompt and guidelines.
-  - `GET /api/prompts/agent`: Returns universal Agent system prompt and execution formats.
-- **Pending Orders**:
-  - `GET /api/orders/pending`: Returns unfinished orders across the full history, newest first.
-    Use `before_id` and `limit` to page through older pending work. Decisions and cancellations
-    are excluded. A later completion or cancellation closes its reply target, or its matching
-    order ID when no reply target is supplied. A new order submitted after completion can reuse
-    the same order ID.
-- **Post Orders**:
-  - `POST /api/orders`: Master endpoint to publish an order (`order_id`, `content`, `status`).
-- **Post Executions**:
-  - `POST /api/executions`: Agent endpoint to report results (`order_id`, `content`, `status`).
+## Using with Any Web Chat (Claude, ChatGPT, Gemini)
+
+1. Click **"🤖 AI Chat"** in the dashboard (tabs: **Master**, **Agent**, **Universal Guide**, **MCP & Hooks**).
+2. Click **"📋 For Agent"** on an Order card or **"📋 For Master"** on an Execution card to copy formatted prompts.
+3. Paste replies back into the dashboard using **"⚡ Smart Paste"** to auto-extract `STATUS:` and `ORDER ID:`.
 
 ---
 
 ## API Reference
 
-### 1. Post an Order or Execution
-`POST /api/messages`
-- Header: `Authorization: Bearer <MASTER_TOKEN>` or `Bearer <AGENT_TOKEN>`
-- Body:
-```json
-{
-  "order_id": "ORDER-101",
-  "message_type": "ORDER",
-  "content": "## Run Migrations\n- apply migration 003\n- run sanity checks",
-  "message_key": "master-order-101"
-}
-```
+### Authentication & Hardening
+- Primary auth: `Authorization: Bearer <MASTER_TOKEN | AGENT_TOKEN | participant flb_... token>`.
+- Legacy query/body `?token=` is only accepted on legacy endpoints when `ALLOW_QUERY_TOKEN=1` (emits `Deprecation: true` header) and is rejected on all v4.0 endpoints (`/mcp`, `/api/participants*`, `/api/conversations*`, `/api/updates`, `/api/messages/search`, `/api/signals*`, `/api/transfers*`, `/api/wakes*`, `/api/retention*`). Set `ALLOW_QUERY_TOKEN=0` to disable `?token=` globally.
 
-Agent reporting execution:
-```json
-{
-  "order_id": "ORDER-101",
-  "message_type": "EXECUTION",
-  "status": "COMPLETED",
-  "content": "All migrations applied successfully in 140ms.",
-  "reply_to_id": 1,
-  "payload": {
-    "duration_ms": 140,
-    "applied": ["003_add_indices.sql"]
-  }
-}
-```
+### Core Endpoints
+| Endpoint | Description |
+|---|---|
+| `GET /healthz`, `GET /api/status` | Liveness check and public metrics (`bridge_api_version`, `db_generation`, `active_participants`, `channels_count`, `stuck_readers_count`) |
+| `GET /instructions`, `GET /llms.txt` | Self-served Markdown/text agent onboarding guide |
+| `POST /mcp` (`GET` → 405, `DELETE` → 204) | Streamable HTTP JSON-RPC 2.0 MCP server |
+| `GET /api/whoami` | Authenticated role (and `participant` object when using a participant token) |
+| `GET /api/context` | Server generation, participants, channels, DMs, and latest 10 `#General` messages |
+| `POST /api/messages`, `GET /api/messages`, `DELETE /api/messages/{id}` | Post/query/delete messages (`conversation_id`, `to_participant_id`, `priority`, `q`, `wait_seconds`, `generation`, `include_deleted`) |
+| `GET /api/messages/search?q=...` | Full-text SQLite FTS5 search across history |
+| `GET /api/updates` | Incremental updates with `waking` classification, `renames`, `checkpoint`, and long-polling (`wait_seconds`) |
+| `GET /api/health/readers` | Inspect readers stuck polling the same checkpoint repeatedly |
+| `GET /api/orders/pending`, `POST /api/orders`, `POST /api/executions` | Pending Master order backlog, order dispatch, and execution reporting |
+| `POST /api/stream-ticket`, `GET /api/stream` | Ticket-authenticated real-time SSE stream |
 
-### 2. Query Messages
-`GET /api/messages`
-- Parameters:
-  - `order_id`: Filter by order identity (exact match)
-  - `role` or `role_filter`: Filter by `master` or `agent` (transparent alias support)
-  - `message_type`: Filter by type (`ORDER`, `EXECUTION`, `STATUS`, `DECISION`, etc.)
-  - `status`: Filter by execution status (`PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `BLOCKED`, `CANCELLED`)
-  - `after_id`: Messages with `id > after_id` (for continuous polling)
-  - `before_id`: History paging cursor
-  - `latest=true`: Return most recent page
-  - `limit`: Default 200, max 1000
-
-### 3. Real-Time Stream (SSE)
-`GET /api/stream`
-- Receives instant push events whenever a new message is published.
-- Browser clients obtain a short-lived ticket via `POST /api/stream-ticket`.
-
-### 4. Who Am I
-`GET /api/whoami`
-- Returns authenticated role: `{"role": "master"}` or `{"role": "agent"}`.
-
-### 5. Health & Status
-- `GET /healthz`: Minimal liveness check (`{"status": "ok"}`).
-- `GET /api/status`: Statistics (`total_messages`, `last_message_at`, `last_message_role`).
-
-### 6. Self-Improvement Logs
-- `POST /api/improvements`: Record custom self-improvement notes (creates `<task_name>-<date>-<time>.md`).
-- `GET /api/improvements`: List recent self-improvement logs.
-- `GET /api/improvements/{filename}`: Retrieve specific self-improvement markdown content.
+### Multi-Agent, Transfers, Wakes & Retention
+- **Participants**: `POST /api/participants`, `GET /api/participants`, `PATCH /api/participants/{id}`, `POST /api/participants/{id}/remove`, `POST /api/participants/{id}/restore`, `POST /api/participants/{id}/rotate-token`.
+- **Channels & DMs**: `GET /api/conversations`, `POST /api/conversations/channels`, `POST /api/conversations/{id}/archive`, `POST /api/conversations/direct`.
+- **Signal Links**: `POST /api/signals`, `DELETE /api/signals`, `DELETE /api/signals/{id}`, `GET /api/signal/{id}`, `POST /api/signal/{id}/ack`.
+- **File Transfers**: `GET /api/transfers/pack-command`, `POST /api/transfers/prepare`, `PUT /api/transfers/{id}/upload`, `POST /api/transfers/{id}/complete`, `GET /api/transfers`, `GET /api/transfers/{id}`, `POST /api/transfers/{id}/download-ticket`, `GET /api/transfers/{id}/download`, `POST /api/transfers/cleanup`.
+- **Auto-Start Wakes**: `POST /api/wakes`, `GET /api/wakes`, `DELETE /api/wakes/{id}`, `POST /api/wakes/{id}/test`, `POST /api/wakes/dispatch`.
+- **Retention & Self-Improvement**: `GET /api/retention`, `POST /api/retention/prune`, `POST /api/improvements`, `GET /api/improvements`, `GET /api/improvements/{filename}`.
 
 ---
 
-## Continuous Self-Improvement Subsystem
+## Environment Variables
 
-Every execution of the system records an actionable post-mortem log formatted as `<task_name>-<YYYY-MM-DD>-<HH-MM-SS>.md` under `improvements/` (configurable via `IMPROVEMENTS_DIR`):
+See [.env.example](.env.example) for defaults:
 
-```
-improvements/
-└── order-101-2026-09-20-11-05-30.md
-```
-
-Execution API records append `-message-<id>` to the filename and reuse the original record
-on an idempotent retry. Direct records created in the same second append a unique suffix
-when needed, preserving each execution. The timestamp is in UTC.
-
-### Log Structure (100% in English)
-1. **Executive Summary**: Overview of changes and execution status.
-2. **Friction Points & Identified Issues**: Runtime errors, test failures, or coordination friction.
-3. **Recommended System Improvements**: Architectural, protocol, documentation, or code cleanups.
-4. **Concrete Action Items & Next Steps**: Concrete steps to prevent regressions and improve system velocity.
-
-### How It Triggers:
-- **Agent Worker Loop**: Automated runner (`examples/worker_poll.py`) automatically generates a record upon every order completion.
-- **Execution Reports**: `POST /api/executions` auto-generates a record from the report body and any parsed `SELF-IMPROVEMENT:` sections.
-- **Direct API & Web UI**: Click **"💡 Improvements"** in the top bar to browse logs, or submit records via `POST /api/improvements`.
-- **Web Chat Assistants**: Prompts in `prompts/web_chat_*.md` instruct Claude, ChatGPT, and Gemini to generate actionable self-improvement feedback after every cycle.
+| Variable | Default | Purpose |
+|---|---|---|
+| `MASTER_TOKEN`, `AGENT_TOKEN` | *(required)* | Primary Master and Agent bearer tokens |
+| `BRIDGE_DB`, `IMPROVEMENTS_DIR`, `UPLOADS_DIR` | `data/bridge.db`, `improvements`, `data/uploads` | SQLite, improvement logs, and file transfer storage paths |
+| `ALLOW_QUERY_TOKEN` | `1` | Set to `0` to reject `?token=` query authentication globally |
+| `APPEND_ONLY_MODE` | `0` | Set to `1` to make `DELETE /api/messages/{id}` soft-delete (`deleted_at`) |
+| `RETENTION_DAYS` | `0` | Default retention policy metadata (`POST /api/retention/prune`) |
+| `MAX_LONG_POLL_SECONDS` | `50` | Maximum `wait_seconds` allowed for long-polling |
+| `STUCK_READER_THRESHOLD` | `5` | Repeated identical checkpoint polls before flagging a stuck reader |
+| `MAX_TRANSFER_BYTES`, `TRANSFER_TTL_DAYS`, `TRANSFER_TICKET_TTL` | `104857600`, `30`, `3600` | File transfer size cap, expiry days, and download ticket TTL |
+| `ENABLE_LOCAL_WAKE_COMMANDS` | `0` | Set to `1` to allow `kind="local_command"` wakes |
+| `WAKE_ALLOW_PRIVATE_URLS` | `0` | Set to `1` to permit private/loopback wake webhook URLs |
+| `WAKE_HOURLY_BUDGET`, `WAKE_DAILY_BUDGET`, `WAKE_TIMEOUT_SECONDS` | `60`, `480`, `5` | Outbound wake rate limits and HTTP timeout |
 
 ---
 
 ## Running the Agent Poller
-
-The repository includes a ready-to-run polling adapter for automated agents (executable via `examples/worker_poll.py` or `examples/agent_worker.py`):
-
-Install its HTTP client dependency with `pip install 'requests>=2.32'`.
 
 ```bash
 python examples/agent_worker.py \
   --bridge-url http://localhost:8000 \
   --token $AGENT_TOKEN \
   --run-mode daemon \
-  --start-mode pending
+  --start-mode pending \
+  --transport long-poll \
+  --wait-seconds 25 \
+  --cursor-file ~/.local/state/forgeloopbridge/worker-cursor.json
 ```
 
-Modes:
-- `--run-mode daemon`: Continuously polls for new orders.
-- `--run-mode once`: Checks for available orders once and exits.
-- `--run-mode bounded`: Exits after N idle polls without work.
-
-`--start-mode pending` reads the entire pending backlog before watching new messages.
-`--start-mode now` starts from a successfully fetched current cursor; startup failures exit
-with a nonzero status. Bounded mode also exits nonzero after repeated polling or reporting failures.
-
-The stock poller reports `BLOCKED` until an executor is connected. It does not implement
-task execution. Programmatic integrations can pass `executor` to `run_worker_loop` or
-`execute_order`: the callable receives the order dictionary and must perform and verify the
-work, then return a non-empty report string. Exceptions are reported as failures.
-HTTP report retries reuse the same message key within the request attempt; message
-idempotency does not guarantee that an executor's external side effects run exactly once.
+Supported flags:
+- `--run-mode daemon|once|bounded` (`--max-idle-polls N`)
+- `--start-mode pending|now|history`
+- `--transport poll|long-poll|sse` (`--wait-seconds S`)
+- `--cursor-file <path>`: persists cursor and `db_generation` atomically (`0600`), resetting automatically on `E_BRIDGE_GENERATION_MISMATCH`
+- `--conversation-id <id>`: filter to a specific channel/DM
+- `--participant-name <handle>`: auto-register participant identity on startup
 
 ---
 
-## Running Tests
-
-Run the full test suite with pytest:
+## Running Tests & Quality Checks
 
 ```bash
 pytest
-```
-
-Additional checks:
-
-```bash
 ruff check .
 python scripts/check_frontend_syntax.py
+node tests/frontend_cursor.cjs
 python scripts/check_package_install.py
 ```
 
-The package check builds a wheel, installs it in a temporary environment outside the checkout,
-and verifies the installed API, prompts, static assets, and improvement records. It reuses
-the development environment's third-party dependencies. CI runs this check on its existing
-Python and operating-system matrix.
+`scripts/check_package_install.py` builds a wheel, installs it in a temporary virtual environment outside the checkout, and verifies the installed package (`main`, `self_improvement`, `bridge_hub`, `/instructions`, `/mcp`, FTS5 search, static assets, prompts, and improvement logs).

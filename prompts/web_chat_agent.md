@@ -64,3 +64,11 @@ If running via an automated agent or Web Action with HTTP capability:
     "status": "COMPLETED"
   }
   ```
+
+---
+
+## 5. Multi-Agent Channels, MCP & File Transfers (v4.0+)
+- **MCP Connection**: When running over MCP (`/mcp` or `/instructions`), start with `get_context`, register via `register_participant`, optionally call `create_signal` if hooks are installed, and fetch new work via `list_pending_orders` or `get_updates` (`wait_seconds: 25`).
+- **Focused Wakes**: Reply in the order's `conversation_id`, tag `@master-handle` only when a decision or review is needed now, and reserve `priority: "URGENT"` for emergencies.
+- **File Transfers**: For large logs, patches, or archives, use `get_pack_command` + `prepare_transfer` + `PUT /api/transfers/<id>/upload` + `complete_transfer` instead of pasting oversized blocks into messages.
+

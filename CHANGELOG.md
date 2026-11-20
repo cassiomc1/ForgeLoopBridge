@@ -1,6 +1,30 @@
 # Changelog
 
-## Unreleased
+## 4.0.0 - 2026-11-20
+
+### Added
+- **Native MCP Server (`/mcp`) & Self-Served Instructions (`/instructions`, `/llms.txt`)**:
+  - Streamable HTTP JSON-RPC 2.0 MCP endpoint exposing 21 tools (`get_context`, `register_participant`, `rename_participant`, `get_updates`, `read_messages`, `send_message`, `list_pending_orders`, `post_order`, `report_execution`, `create_channel`, `set_channel_archived`, `get_pack_command`, `prepare_transfer`, `complete_transfer`, `fetch_transfer`, `read_transfer`, `create_signal`, `revoke_signal`, `list_wakes`, `revoke_wake`, `record_improvement`), resources, and prompts.
+  - Added `examples/mcp_stdio.py` zero-dependency stdio bridge for stdio-only MCP clients.
+- **Long-Polling, Signal Links & Universal Agent Hooks**:
+  - Added `wait_seconds` long-polling on `GET /api/messages` and `GET /api/updates` backed by `MessageNotifier`.
+  - Added `db_generation` cursor mismatch detection (`X-Bridge-Generation` and `409 E_BRIDGE_GENERATION_MISMATCH`) and `StuckReadersTracker` (`GET /api/health/readers`).
+  - Added count-only `Signal Links` (`POST/DELETE /api/signals`, `GET /api/signal/{id}`, `POST /api/signal/{id}/ack`) enforcing secret via `Authorization: Bearer` only and distinguishing `waking` vs `pending` vs `urgent`.
+  - Added zero-dependency Node hook scripts under `integrations/hooks/` (`core.mjs`, `bridge-hook.mjs`, Claude/Codex/Cursor/Gemini hook templates) handling `URGENT` mid-turn interrupts and capped turn-end continuations.
+- **SQLite FTS5 Full-Text Search**:
+  - Added `messages_fts` (`unicode61`) with sync triggers and safe query escaping via `GET /api/messages?q=...` and `GET /api/messages/search`.
+- **Multi-Agent Identities, Channels, Direct Chats & `@mentions`**:
+  - Added `participants` with per-participant revocable `flb_...` tokens, rename history, soft-remove/restore, and presence tracking.
+  - Added `channels` (`General` default + public channels with General announcement notices + revision-checked archiving) and auditable 1-to-1 `direct` chats.
+  - Added `@mention` extraction and resolution ignoring code blocks, inline code, emails, and scoped packages.
+- **Out-of-Band File Transfers & Auto-Start Wakes**:
+  - Added disk-backed file/folder transfers (`/api/transfers/*`) with streaming SHA-256 verification, short-lived download tickets, fetch receipts, and TTL cleanup.
+  - Added `WakeScheduler` (`/api/wakes/*`) with debounce, per-participant `wake_cadence`, `URGENT` bypass, hourly/daily budgets, exponential backoff, SSRF URL protection, and opt-in local command support.
+- **Append-Only Mode, Retention & Token Hardening**:
+  - Added `APPEND_ONLY_MODE=1` soft-delete, `GET /api/retention`, `POST /api/retention/prune`, `ALLOW_QUERY_TOKEN=0` strict Bearer mode, and `Deprecation: true` header on legacy query/body token usage.
+- **Dashboard & Worker Upgrades**:
+  - Added collapsible Channels/DMs sidebar, FTS5 search modal, priority selector (`NORMAL`/`URGENT`), `@mention` highlighting, File Transfers modal, Agents & Wakes management modal, and MCP & Hooks tab in the AI Chat modal.
+  - Upgraded `examples/worker_poll.py` with atomic `0600` cursor/generation persistence (`--cursor-file`), `--transport long-poll`/`sse`, `--conversation-id`, and `--participant-name`.
 
 ### Fixed
 - Dashboard message delete buttons now work correctly without triggering the copy button, support normalized `engineer`/`worker` aliases, and insert out-of-order SSE/REST messages in ID order.

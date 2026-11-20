@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "node integrations/hooks/bridge-hook.mjs --host cursor"
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "node integrations/hooks/bridge-hook.mjs --host cursor"
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "node integrations/hooks/bridge-hook.mjs --host cursor"
+      }
+    ],
+    "stop": [
+      {
+        "command": "node integrations/hooks/bridge-hook.mjs --host cursor"
+      }
+    ]
+  }
+}

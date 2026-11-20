@@ -222,3 +222,27 @@ def test_frontend_theme_tokens_and_supported_composer_options():
     assert '<option value="EXECUTION">EXECUTION</option>' in typed_kind_block
 
 
+def test_frontend_exposes_hub_sidebar_search_files_agents_and_mcp_controls():
+    for element_id in (
+        "sidebar-toggle-btn",
+        "workspace-sidebar",
+        "active-conv-pill",
+        "server-search-input",
+        "server-search-btn",
+        "server-search-modal",
+        "files-btn",
+        "files-modal",
+        "agents-btn",
+        "agents-modal",
+        "tab-mcp-btn",
+        "llm-tab-mcp",
+        "composer-priority",
+    ):
+        assert f'id="{element_id}"' in INDEX
+
+    assert "highlightMentionsInElement" in INDEX
+    assert "downloadTransferById" in INDEX
+    assert "/api/messages/search" in INDEX
+
+
+
