@@ -102,9 +102,12 @@ Agents can connect directly to `http://localhost:8000/mcp` (or read `GET /instru
 
 ### Stdio-Only MCP Clients
 
-Use the bundled zero-dependency stdio proxy:
+Use the installed `forgeloopbridge-mcp` console script (or the bundled zero-dependency stdio proxy):
 
 ```bash
+pip install .
+BRIDGE_URL=http://localhost:8000 BRIDGE_TOKEN=$AGENT_TOKEN forgeloopbridge-mcp
+# Or without installing:
 BRIDGE_URL=http://localhost:8000 BRIDGE_TOKEN=$AGENT_TOKEN python examples/mcp_stdio.py
 ```
 

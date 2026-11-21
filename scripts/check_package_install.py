@@ -17,11 +17,15 @@ from fastapi.testclient import TestClient
 import main
 import self_improvement
 import bridge_hub
+import bridge_hub.stdio_proxy
 
 installed = Path(os.environ["SMOKE_ENV"]).resolve()
 assert Path(main.__file__).resolve().is_relative_to(installed)
 assert Path(self_improvement.__file__).resolve().is_relative_to(installed)
 assert Path(bridge_hub.__file__).resolve().is_relative_to(installed)
+assert Path(bridge_hub.stdio_proxy.__file__).resolve().is_relative_to(installed)
+script_bin = installed / ("Scripts/forgeloopbridge-mcp.exe" if os.name == "nt" else "bin/forgeloopbridge-mcp")
+assert script_bin.exists(), f"Missing console script {script_bin}"
 with TestClient(main.app) as client:
     assert client.get("/healthz").json() == {"status": "ok"}
     assert client.get("/").status_code == 200

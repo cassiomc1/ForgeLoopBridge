@@ -16,6 +16,9 @@ dependencies = [
     "uvicorn[standard]>=0.30.6",
 ]
 
+[project.scripts]
+forgeloopbridge-mcp = "bridge_hub.stdio_proxy:cli"
+
 [tool.setuptools]
 include-package-data = true
 py-modules = ["main", "self_improvement"]
