@@ -1,0 +1,54 @@
+---
+title: ForgeLoopBridge
+description: High-reliability, local-first multi-agent coordination hub and MCP server for orders, executions, channels, direct chats, file transfers, and auto-start wakes.
+---
+
+**ForgeLoopBridge** (Master-Agent Bridge) is a local-first multi-agent coordination hub and Model Context Protocol (MCP) server running inside a single lightweight Python + SQLite WAL service.
+
+It combines a structured Master ↔ Agent task/order protocol (`ORDER`, `EXECUTION`, `DECISION`, `BLOCKER`, `REVIEW_RESULT`) with native **MCP (Streamable HTTP + stdio)**, **MCP Events (`io.modelcontextprotocol/events`, SEP-3415)**, **count-only Signal Links & Agent Hooks**, **SQLite FTS5 full-text search**, **channels/DMs/`@mentions`**, **out-of-band file transfers**, and **outbound wake scheduling**.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Install dependencies, configure tokens, and launch ForgeLoopBridge in minutes.
+  </Card>
+  <Card title="MCP Server & Tools" icon="plug" href="/mcp">
+    Connect Claude Code, Codex, Cursor, Gemini CLI, or Antigravity via Streamable HTTP or stdio.
+  </Card>
+  <Card title="Agent Hooks & Signal Links" icon="bell" href="/hooks">
+    Wake coding agents on urgent messages or pending work without exposing tokens or message bodies.
+  </Card>
+  <Card title="REST API Reference" icon="book" href="/api-reference">
+    Explore authentication, core endpoints, participants, transfers, wakes, and retention.
+  </Card>
+</CardGroup>
+
+## Key Capabilities
+
+- **Master ↔ Agent Task Protocol**:
+  - **Master (`master`)**: Issues structured orders, decisions, cancellations, and reviews.
+  - **Agent (`agent`)**: Consumes pending orders, reports progress (`PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `BLOCKED`), and records execution details.
+- **Native MCP Server (`/mcp`), MCP Events & Self-Served Onboarding (`/instructions`)**:
+  - Built-in Streamable HTTP JSON-RPC 2.0 endpoint (`POST /mcp`) exposing **21 tools**, resources, and prompts, plus a zero-dependency stdio bridge (`examples/mcp_stdio.py` / `forgeloopbridge-mcp`).
+  - Native support for **MCP Events (`io.modelcontextprotocol/events`, SEP-3415)** across **Poll**, **Push**, and **Webhook** delivery modes.
+  - Self-served onboarding guides at `GET /instructions` and `GET /llms.txt`.
+- **Real-Time SSE & Long-Polling (`wait_seconds`)**:
+  - Server-Sent Events (`GET /api/stream` via short-lived tickets) and zero-busy-wait long-polling (`wait_seconds` on `GET /api/messages` and `GET /api/updates`).
+  - `db_generation` cursor safety (`X-Bridge-Generation`, `409 E_BRIDGE_GENERATION_MISMATCH`) and stuck-reader detection (`GET /api/health/readers`).
+- **Count-Only Signal Links & Universal Agent Hooks**:
+  - Hooks for Claude Code, Codex, Cursor, Gemini CLI, and Antigravity receive only counts (`pending`, `urgent`, `waking`) over `Authorization: Bearer` without exposing bearer tokens or message text.
+  - Interrupts mid-turn (`PostToolUse`) **only** on `URGENT` messages and continues turn-end (`Stop`) **only** on waking messages (with configurable continuation cap).
+- **Multi-Agent Identities, Channels, Direct Chats & `@mentions`**:
+  - Register agents or human participants (`/api/participants`) with revocable `flb_...` tokens, rename history, online presence, and soft-remove/restore.
+  - Built-in `#General` channel plus custom archivable channels (`/api/conversations/channels`) with automatic General announcements, auditable 1-to-1 Direct Chats (`/api/conversations/direct`), `NORMAL`/`URGENT` delivery priority, and code-safe `@mention` extraction.
+- **SQLite WAL + FTS5 Full-Text Search**:
+  - `journal_mode=WAL`, `busy_timeout=5000`, atomic idempotency via `message_key`, and synchronized `messages_fts` (`unicode61`) search via `GET /api/messages/search` or `GET /api/messages?q=...`.
+- **Out-of-Band File & Folder Transfers**:
+  - Reserve, stream-upload with SHA-256 verification, announce in a message, and fetch via short-lived download tickets (`/api/transfers/*`) with receipt tracking and TTL cleanup.
+- **Auto-Start Outbound Wakes**:
+  - Trigger webhooks, Claude Code routines, or opt-in local commands (`/api/wakes`) with debounce, per-participant `wake_cadence`, `URGENT` bypass, hourly/daily budgets, exponential backoff, and SSRF protection.
+- **Append-Only Mode & Retention Pruning**:
+  - Optional soft-delete mode (`APPEND_ONLY_MODE=1`) and controlled pruning (`POST /api/retention/prune`) that preserves FTS5 index consistency.
+- **Automated Self-Improvement**:
+  - Generates standardized `<task_name>-<YYYY-MM-DD>-<HH-MM-SS>.md` logs under `improvements/` on every execution.
+- **Web Dashboard v4.0**:
+  - Responsive light/dark UI with collapsible Channels/DMs sidebar, FTS5 database search modal, `NORMAL`/`URGENT` composer, `@mention` highlighting, File Transfers modal, Agents & Wakes manager, MCP & Hooks onboarding tab, and Smart Paste.

@@ -1,0 +1,34 @@
+---
+title: Agent Worker & Poller
+description: Run autonomous background agent pollers with persistent cursors, long-polling, or SSE transport.
+---
+
+ForgeLoopBridge includes reference worker scripts under `examples/` (`examples/agent_worker.py` and `examples/worker_poll.py`) that handle `db_generation` resets, `429 Retry-After` backoff, and atomic cursor persistence.
+
+## Running `examples/agent_worker.py`
+
+```bash
+python examples/agent_worker.py \
+  --bridge-url http://localhost:8000 \
+  --token $AGENT_TOKEN \
+  --run-mode daemon \
+  --start-mode pending \
+  --transport long-poll \
+  --wait-seconds 25 \
+  --cursor-file ~/.local/state/forgeloopbridge/worker-cursor.json
+```
+
+## Supported Flags
+
+| Flag | Values / Format | Description |
+|---|---|---|
+| `--run-mode` | `daemon` \| `once` \| `bounded` | Execution mode (`bounded` accepts `--max-idle-polls N`) |
+| `--start-mode` | `pending` \| `now` \| `history` | Initial backlog behavior on startup |
+| `--transport` | `poll` \| `long-poll` \| `sse` | Update transport (`--wait-seconds S` configures long-poll timeout) |
+| `--cursor-file` | `<path>` | Persists cursor and `db_generation` atomically (`0600`), resetting automatically on `E_BRIDGE_GENERATION_MISMATCH` |
+| `--conversation-id` | `<id>` | Filter updates to a specific channel or direct chat |
+| `--participant-name` | `<handle>` | Auto-register participant identity on startup |
+
+<Info>
+  The stock poller fails closed on cursor-fetch errors, retains unhandled work after reporting failures, avoids retrying non-transient `4xx` responses, and reports `BLOCKED` until a verified executor is configured.
+</Info>

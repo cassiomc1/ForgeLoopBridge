@@ -6,6 +6,25 @@ ForgeLoopBridge combines a structured Master ⇄ Agent task/order protocol (`ORD
 
 ---
 
+## Documentation
+
+Full documentation is hosted on **docs.page** at **[https://docs.page/cassiomc1/ForgeLoopBridge](https://docs.page/cassiomc1/ForgeLoopBridge)** and maintained in this repository via [`docs.json`](docs.json) and [`docs/`](docs/):
+
+- [Introduction](docs/index.mdx) & [Quickstart](docs/quickstart.mdx)
+- [Configuration & Environment](docs/configuration.mdx)
+- [MCP Server & Tools](docs/mcp.mdx) & [MCP Events (SEP-3415)](docs/mcp-events.mdx)
+- [Agent Hooks & Signal Links](docs/hooks.mdx)
+- [Web Chat & Dashboard](docs/web-chat.mdx)
+- [Channels, DMs & Mentions](docs/channels-and-mentions.mdx)
+- [File Transfers & Auto-Start Wakes](docs/transfers-and-wakes.mdx)
+- [Agent Worker & Poller](docs/agent-poller.mdx)
+- [Self-Improvement & Retention](docs/self-improvement.mdx)
+- [REST API Reference](docs/api-reference.mdx)
+- [Testing & Quality Checks](docs/testing.mdx)
+- [Changelog](docs/changelog.mdx) & [Historical Security Audit (v2.0)](docs/security-audit.mdx)
+
+---
+
 ## Key Features
 
 - **Master ⇄ Agent Task Protocol**:

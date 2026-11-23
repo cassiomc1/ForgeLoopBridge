@@ -1,0 +1,69 @@
+---
+title: REST API Reference
+description: Authentication, hardening, core messaging/order endpoints, and v4.0 endpoints for participants, channels, signals, transfers, wakes, and retention.
+---
+
+## Authentication & Hardening
+
+- **Primary Authentication**: Pass `Authorization: Bearer <MASTER_TOKEN | AGENT_TOKEN | participant flb_... token>`.
+- **Legacy Query/Body Token (`?token=`)**: Only accepted on legacy endpoints when `ALLOW_QUERY_TOKEN=1` (emits a `Deprecation: true` header) and is **rejected** on all v4.0 endpoints (`/mcp`, `/api/participants*`, `/api/conversations*`, `/api/updates`, `/api/messages/search`, `/api/signals*`, `/api/transfers*`, `/api/wakes*`, `/api/retention*`). Set `ALLOW_QUERY_TOKEN=0` to disable `?token=` globally.
+
+## Core Endpoints
+
+| Endpoint | Description |
+|---|---|
+| `GET /healthz`, `GET /api/status` | Liveness check and public metrics (`bridge_api_version`, `db_generation`, `active_participants`, `channels_count`, `stuck_readers_count`) |
+| `GET /instructions`, `GET /llms.txt` | Self-served Markdown/text agent onboarding guide |
+| `POST /mcp` (`GET` → 405, `DELETE` → 204) | Streamable HTTP JSON-RPC 2.0 MCP server |
+| `GET /api/whoami` | Authenticated role (and `participant` object when using a participant token) |
+| `GET /api/context` | Server generation, participants, channels, DMs, and latest 10 `#General` messages |
+| `POST /api/messages`, `GET /api/messages`, `DELETE /api/messages/{id}` | Post/query/delete messages (`conversation_id`, `to_participant_id`, `priority`, `q`, `wait_seconds`, `generation`, `include_deleted`) |
+| `GET /api/messages/search?q=...` | Full-text SQLite FTS5 search across history |
+| `GET /api/updates` | Incremental updates with `waking` classification, `renames`, `checkpoint`, and long-polling (`wait_seconds`) |
+| `GET /api/health/readers` | Inspect readers stuck polling the same checkpoint repeatedly |
+| `GET /api/orders/pending`, `POST /api/orders`, `POST /api/executions` | Pending Master order backlog, order dispatch, and execution reporting |
+| `POST /api/stream-ticket`, `GET /api/stream` | Ticket-authenticated real-time SSE stream |
+| `GET /api/prompts/master`, `GET /api/prompts/agent` | Fetch standardized Master and Agent system prompts |
+
+## Multi-Agent, Transfers, Wakes & Retention
+
+- **Participants**:
+  - `POST /api/participants`
+  - `GET /api/participants`
+  - `PATCH /api/participants/{id}`
+  - `POST /api/participants/{id}/remove`
+  - `POST /api/participants/{id}/restore`
+  - `POST /api/participants/{id}/rotate-token`
+- **Channels & Direct Chats**:
+  - `GET /api/conversations`
+  - `POST /api/conversations/channels`
+  - `POST /api/conversations/{id}/archive`
+  - `POST /api/conversations/direct`
+- **Signal Links**:
+  - `POST /api/signals`
+  - `DELETE /api/signals`
+  - `DELETE /api/signals/{id}`
+  - `GET /api/signal/{id}`
+  - `POST /api/signal/{id}/ack`
+- **File Transfers**:
+  - `GET /api/transfers/pack-command`
+  - `POST /api/transfers/prepare`
+  - `PUT /api/transfers/{id}/upload`
+  - `POST /api/transfers/{id}/complete`
+  - `GET /api/transfers`
+  - `GET /api/transfers/{id}`
+  - `POST /api/transfers/{id}/download-ticket`
+  - `GET /api/transfers/{id}/download`
+  - `POST /api/transfers/cleanup`
+- **Auto-Start Wakes**:
+  - `POST /api/wakes`
+  - `GET /api/wakes`
+  - `DELETE /api/wakes/{id}`
+  - `POST /api/wakes/{id}/test`
+  - `POST /api/wakes/dispatch`
+- **Retention & Self-Improvement**:
+  - `GET /api/retention`
+  - `POST /api/retention/prune`
+  - `POST /api/improvements`
+  - `GET /api/improvements`
+  - `GET /api/improvements/{filename}`

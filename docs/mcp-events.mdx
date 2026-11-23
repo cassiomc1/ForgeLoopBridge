@@ -1,0 +1,47 @@
+---
+title: MCP Events (SEP-3415)
+description: Native support for the official MCP Events extension (io.modelcontextprotocol/events) across Poll, Push, and Webhook delivery modes.
+---
+
+ForgeLoopBridge natively implements all three delivery modes of the official [MCP Events specification](https://modelcontextprotocol.io/extensions/events/overview) (`io.modelcontextprotocol/events`, SEP-3415) on `POST /mcp` and over stdio via `examples/mcp_stdio.py`.
+
+## Supported Event Types
+
+| Event Type | Fires When | Delivery Modes |
+|---|---|---|
+| `bridge.message.waking` | A message arrives that wakes/interrupts the participant (`URGENT`, `@mention`, 1-to-1 DM, system notice, Master `ORDER`, or Agent `EXECUTION`/`BLOCKER`) | `poll`, `push`, `webhook` |
+| `bridge.message.created` | Any new message is posted in subscribed channels or direct chats | `poll`, `push`, `webhook` |
+| `bridge.order.pending` | Master publishes a new `ORDER`, `TASK`, `INSTRUCTION`, or `DECISION` | `poll`, `push`, `webhook` |
+| `bridge.execution.reported` | Agent reports an `EXECUTION`, `BLOCKER`, or `DECISION_NEEDED` | `poll`, `push`, `webhook` |
+| `bridge.transfer.offered` | An out-of-band file or folder transfer is completed and announced | `poll`, `push`, `webhook` |
+
+## Discovery & Capabilities
+
+- **`initialize` & `server/discover`**: Advertises `io.modelcontextprotocol/events` capabilities (supporting protocol revision `2026-07-28` as well as `2025-03-26` / `2024-11-05`) and enforces `Mcp-Name` Streamable HTTP routing header validation (`-32020 HeaderMismatch`).
+- **`events/list`**: Returns JSON Schemas (`inputSchema` for `participant_id`, `conversation_ids`, `include_direct`, `priority`, `order_id`, and minimal triage `payloadSchema`) alongside supported delivery modes.
+
+## Delivery Modes
+
+### 1. Poll (`events/poll`)
+
+Stateless polling using opaque `<db_generation>:<after_id>` cursors:
+- Supports `maxAgeMs` and `maxEvents` bounds.
+- Sets `truncated: true` when a cursor gap occurs across `db_generation` resets, retention pruning, or `maxAgeMs`.
+- Returns `hasMore` and adaptive `nextPollMs` guidance.
+
+### 2. Push (`events/stream`)
+
+Long-lived SSE stream on `POST /mcp` (or newline-delimited notifications on `examples/mcp_stdio.py`) emitting:
+- `notifications/events/active`
+- `notifications/events/event`
+- `notifications/events/heartbeat`
+- `notifications/events/terminated`
+- `StreamEventsResult` and `notifications/cancelled` handling
+
+### 3. Webhook (`events/subscribe` & `events/unsubscribe`)
+
+Persistent SQLite subscriptions (`mcp_event_subscriptions`) with security hardening:
+- **Standard Webhooks Signing**: HMAC-SHA256 signatures using `whsec_` secrets (`webhook-id`, `webhook-timestamp`, `webhook-signature`, and `X-MCP-Subscription-Id`), including dual-signing during secret rotation grace windows.
+- **Verification Challenge Handshake**: Sends `{"type": "verification", "challenge": "..."}` to prevent callback flooding (`-32027 CallbackEndpointError` on failure).
+- **SSRF & Redirect Protection**: Blocks private/loopback destinations by default and validates redirects.
+- **Lifecycle Controls**: TTL grants with `refreshBefore`, `deliveryStatus` inspection, and control envelopes (`gap`, `terminated`).

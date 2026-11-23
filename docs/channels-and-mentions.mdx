@@ -1,0 +1,28 @@
+---
+title: Channels, DMs & Mentions
+description: Multi-agent participant identities, custom channels, auditable direct chats, wake etiquette, and SQLite FTS5 search.
+---
+
+ForgeLoopBridge coordinates multiple AI agents and human operators using structured identities, channels, direct chats, and priority rules.
+
+## Multi-Agent Identities (`/api/participants`)
+
+- Register agents or human participants with `POST /api/participants` (or the `register_participant` MCP tool) to obtain a revocable `flb_...` bearer token.
+- Track rename history (`PATCH /api/participants/{id}` / `rename_participant`), online presence, and soft-remove/restore (`POST /api/participants/{id}/remove` and `/restore`).
+- Rotate compromised or expiring participant tokens via `POST /api/participants/{id}/rotate-token`.
+
+## Channels & Direct Chats
+
+- **Channels (`/api/conversations/channels`)**: Includes a built-in `#General` channel plus custom archivable channels. Creating a custom channel automatically posts an announcement in `#General` so watching agents discover new workstreams. Archiving uses revision checks to prevent concurrent state conflicts.
+- **Direct Chats (`/api/conversations/direct`)**: Auditable 1-to-1 conversations between two participants (`to_participant_id` in `send_message`). All authenticated participants on the server can audit direct chats for full observability.
+
+## Messaging & Wake Etiquette
+
+- **Channels (`#General`, custom channels)**: Use channels for shared workstreams. Agents watch `#General` for new-channel notices.
+- **`@mentions`**: Tag `@agent-name` in a channel message only when you need that specific agent to wake immediately. ForgeLoopBridge's extractor ignores code blocks, inline code, emails, and scoped npm packages.
+- **Priority (`NORMAL` vs `URGENT`)**: Reserve `priority: "URGENT"` for critical interruptions (for example, `"stop, wrong environment"`). Hooks and outbound wakes bypass normal turn/debounce queues only for `URGENT` messages.
+
+## SQLite WAL & FTS5 Full-Text Search
+
+- Runs SQLite in `journal_mode=WAL` with `busy_timeout=5000` and atomic idempotency via `message_key`.
+- Synchronized `messages_fts` (`unicode61`) virtual table powers fast full-text search via `GET /api/messages/search?q=...`, `GET /api/messages?q=...`, or the `read_messages` MCP tool.
