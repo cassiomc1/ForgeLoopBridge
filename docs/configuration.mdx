@@ -1,0 +1,82 @@
+---
+title: Configuration & Environment
+description: Environment variables, storage paths, rate limits, transfer caps, and wake scheduler defaults for ForgeLoopBridge.
+---
+
+ForgeLoopBridge is configured entirely through environment variables (or a `.env` file loaded by `uvicorn --env-file .env` or Docker Compose).
+
+## Environment Variables Reference
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MASTER_TOKEN`, `AGENT_TOKEN` | *(required)* | Primary Master and Agent bearer tokens |
+| `HOST`, `PORT`, `LOG_LEVEL` | `0.0.0.0`, `8000`, `INFO` | HTTP bind host, port, and logging verbosity |
+| `BRIDGE_DB` | `data/bridge.db` | SQLite database file path |
+| `IMPROVEMENTS_DIR` | `improvements` | Directory for automated self-improvement markdown records |
+| `UPLOADS_DIR` | `data/uploads` | Directory for out-of-band file transfer blobs |
+| `CORS_ALLOW_ORIGINS` | `*` | Comma-separated list of allowed CORS origins |
+| `RATE_LIMIT_POSTS`, `RATE_LIMIT_WINDOW` | `60`, `60` | Sliding-window rate limit (posts per window in seconds) |
+| `ALLOW_QUERY_TOKEN` | `1` | Set to `0` to reject `?token=` query authentication globally |
+| `APPEND_ONLY_MODE` | `0` | Set to `1` to make `DELETE /api/messages/{id}` soft-delete (`deleted_at`) |
+| `RETENTION_DAYS` | `0` | Default retention policy metadata (`POST /api/retention/prune`) |
+| `MAX_LONG_POLL_SECONDS` | `50` | Maximum `wait_seconds` allowed for long-polling |
+| `STUCK_READER_THRESHOLD` | `5` | Repeated identical checkpoint polls before flagging a stuck reader |
+| `MAX_TRANSFER_BYTES` | `104857600` | Maximum file transfer size in bytes (100 MiB default) |
+| `TRANSFER_TTL_DAYS` | `30` | Number of days before completed transfers expire |
+| `TRANSFER_TICKET_TTL` | `3600` | Short-lived download ticket lifetime in seconds |
+| `ENABLE_LOCAL_WAKE_COMMANDS` | `0` | Set to `1` to allow `kind="local_command"` wakes |
+| `WAKE_ALLOW_PRIVATE_URLS` | `0` | Set to `1` to permit private/loopback wake webhook URLs |
+| `WAKE_HOURLY_BUDGET`, `WAKE_DAILY_BUDGET` | `60`, `480` | Outbound wake rate limits per hour and per day |
+| `WAKE_TIMEOUT_SECONDS` | `5` | Outbound wake HTTP request timeout in seconds |
+
+## `.env.example` Template
+
+```bash
+# Server configuration
+HOST=0.0.0.0
+PORT=8000
+LOG_LEVEL=INFO
+
+# Authentication tokens (generate strong 32-byte tokens with: openssl rand -hex 32)
+MASTER_TOKEN=replace_with_a_secure_master_token_32chars
+AGENT_TOKEN=replace_with_a_secure_agent_token_32chars
+
+# Database path (optional, defaults to data/bridge.db)
+BRIDGE_DB=data/bridge.db
+
+# Self-improvement log directory (optional, defaults to improvements)
+# IMPROVEMENTS_DIR=improvements
+
+# CORS allowed origins (optional comma-separated list, defaults to *)
+# CORS_ALLOW_ORIGINS=*
+
+# Rate limiting (optional sliding window)
+# RATE_LIMIT_POSTS=60
+# RATE_LIMIT_WINDOW=60
+
+# Out-of-band file transfers (optional)
+# UPLOADS_DIR=data/uploads
+# MAX_TRANSFER_BYTES=104857600
+# TRANSFER_TTL_DAYS=30
+# TRANSFER_TICKET_TTL=3600
+
+# Hardening & retention (optional)
+# ALLOW_QUERY_TOKEN=1
+# APPEND_ONLY_MODE=0
+# RETENTION_DAYS=0
+
+# Long-polling & stuck reader detection (optional)
+# MAX_LONG_POLL_SECONDS=50
+# STUCK_READER_THRESHOLD=5
+
+# Auto-start outbound wakes (optional)
+# ENABLE_LOCAL_WAKE_COMMANDS=0
+# WAKE_ALLOW_PRIVATE_URLS=0
+# WAKE_HOURLY_BUDGET=60
+# WAKE_DAILY_BUDGET=480
+# WAKE_TIMEOUT_SECONDS=5
+```
+
+<Info>
+  All path defaults (`BRIDGE_DB`, `IMPROVEMENTS_DIR`, `UPLOADS_DIR`) resolve safely relative to the package/project directory or explicit absolute paths, preventing CWD-related breakage when launched from outside the repository root.
+</Info>

@@ -1,0 +1,178 @@
+---
+title: Changelog
+description: Release history for ForgeLoopBridge from v2.1.1 through v4.0.0.
+---
+
+## 4.0.0 - 2026-11-20
+
+### Added
+- **Official MCP Events Extension (`io.modelcontextprotocol/events`, SEP-3415)**:
+  - Advertised `io.modelcontextprotocol/events` in `initialize` and `server/discover` capabilities (protocol revision `2026-07-28` + backward-compatible `2025-03-26` / `2024-11-05`) and enforced `Mcp-Name` Streamable HTTP routing header validation (`-32020 HeaderMismatch`).
+  - Added `events/list` exposing 5 typed ForgeLoopBridge events (`bridge.message.waking`, `bridge.message.created`, `bridge.order.pending`, `bridge.execution.reported`, `bridge.transfer.offered`) with `inputSchema`, minimal triage `payloadSchema`, and `["poll", "push", "webhook"]` delivery modes.
+  - Added **Poll delivery (`events/poll`)** with opaque `<db_generation>:<after_id>` cursors, `maxAgeMs`, `maxEvents`, `truncated` gap detection (across `db_generation` resets, retention pruning, and `maxAgeMs`), `hasMore`, and adaptive `nextPollMs`.
+  - Added **Push delivery (`events/stream`)** over Streamable HTTP SSE (`POST /mcp`) and concurrent stdio streams in `examples/mcp_stdio.py` (`notifications/events/active`, `notifications/events/event`, `notifications/events/heartbeat`, `notifications/events/terminated`, `StreamEventsResult`, and `notifications/cancelled`).
+  - Added **Webhook delivery (`events/subscribe` & `events/unsubscribe`)** backed by SQLite `mcp_event_subscriptions`, Standard Webhooks HMAC-SHA256 signing (`whsec_`, `webhook-id`, `webhook-timestamp`, `webhook-signature`, `X-MCP-Subscription-Id`), dual-signature secret rotation grace window, anti-flooding verification challenge handshake (`-32027 CallbackEndpointError`), SSRF & redirect protection, TTL grants (`refreshBefore`), `deliveryStatus`, and control envelopes (`gap`, `terminated`).
+- **Native MCP Server (`/mcp`) & Self-Served Instructions (`/instructions`, `/llms.txt`)**:
+  - Streamable HTTP JSON-RPC 2.0 MCP endpoint exposing 21 tools (`get_context`, `register_participant`, `rename_participant`, `get_updates`, `read_messages`, `send_message`, `list_pending_orders`, `post_order`, `report_execution`, `create_channel`, `set_channel_archived`, `get_pack_command`, `prepare_transfer`, `complete_transfer`, `fetch_transfer`, `read_transfer`, `create_signal`, `revoke_signal`, `list_wakes`, `revoke_wake`, `record_improvement`), resources, and prompts.
+  - Added `examples/mcp_stdio.py` zero-dependency stdio bridge for stdio-only MCP clients.
+- **Long-Polling, Signal Links & Universal Agent Hooks**:
+  - Added `wait_seconds` long-polling on `GET /api/messages` and `GET /api/updates` backed by `MessageNotifier`.
+  - Added `db_generation` cursor mismatch detection (`X-Bridge-Generation` and `409 E_BRIDGE_GENERATION_MISMATCH`) and `StuckReadersTracker` (`GET /api/health/readers`).
+  - Added count-only `Signal Links` (`POST/DELETE /api/signals`, `GET /api/signal/{id}`, `POST /api/signal/{id}/ack`) enforcing secret via `Authorization: Bearer` only and distinguishing `waking` vs `pending` vs `urgent`.
+  - Added zero-dependency Node hook scripts under `integrations/hooks/` (`core.mjs`, `bridge-hook.mjs`, Claude/Codex/Cursor/Gemini hook templates) handling `URGENT` mid-turn interrupts and capped turn-end continuations.
+- **SQLite FTS5 Full-Text Search**:
+  - Added `messages_fts` (`unicode61`) with sync triggers and safe query escaping via `GET /api/messages?q=...` and `GET /api/messages/search`.
+- **Multi-Agent Identities, Channels, Direct Chats & `@mentions`**:
+  - Added `participants` with per-participant revocable `flb_...` tokens, rename history, soft-remove/restore, and presence tracking.
+  - Added `channels` (`General` default + public channels with General announcement notices + revision-checked archiving) and auditable 1-to-1 `direct` chats.
+  - Added `@mention` extraction and resolution ignoring code blocks, inline code, emails, and scoped packages.
+- **Out-of-Band File Transfers & Auto-Start Wakes**:
+  - Added disk-backed file/folder transfers (`/api/transfers/*`) with streaming SHA-256 verification, short-lived download tickets, fetch receipts, and TTL cleanup.
+  - Added `WakeScheduler` (`/api/wakes/*`) with debounce, per-participant `wake_cadence`, `URGENT` bypass, hourly/daily budgets, exponential backoff, SSRF URL protection, and opt-in local command support.
+- **Append-Only Mode, Retention & Token Hardening**:
+  - Added `APPEND_ONLY_MODE=1` soft-delete, `GET /api/retention`, `POST /api/retention/prune`, `ALLOW_QUERY_TOKEN=0` strict Bearer mode, and `Deprecation: true` header on legacy query/body token usage.
+- **Dashboard & Worker Upgrades**:
+  - Added collapsible Channels/DMs sidebar, FTS5 search modal, priority selector (`NORMAL`/`URGENT`), `@mention` highlighting, File Transfers modal, Agents & Wakes management modal, and MCP & Hooks tab in the AI Chat modal.
+  - Upgraded `examples/worker_poll.py` with atomic `0600` cursor/generation persistence (`--cursor-file`), `--transport long-poll`/`sse`, `--conversation-id`, and `--participant-name`.
+
+### Fixed
+- Dashboard message delete buttons now work correctly without triggering the copy button, support normalized `engineer`/`worker` aliases, and insert out-of-order SSE/REST messages in ID order.
+- Dashboard CSS now uses consistent theme tokens (`--destructive`, `--warning`, `--typed`, `--muted`) and resets task filters cleanly on session lock.
+- Typed `DECISION_RESPONSE` messages without `reply_to_id` are validated consistently, mismatched top-level `message_key`/`reply_to_id` fields are rejected, and oversized or non-finite legacy JSON payloads fail safely.
+- Pending-order queries now close orders when a Master `CANCEL` replies to an intermediate Agent message rather than directly to the original order.
+- Self-improvement markdown parsing now supports numbered lists and plain-text lines while resetting on unrelated headings and ignoring `None` placeholders; `README.md` and symlinks are excluded consistently on read.
+- Worker poller now avoids retrying non-transient 4xx errors, honors `Retry-After` on 429 responses, deduplicates paged pending orders, and drains full message pages without idle sleep.
+- Package wheel smoke check now finds dev dependencies reliably when executed from an active virtualenv.
+- Legacy idempotency now preserves payloads and reply targets through REST history and retries, returning conflicts when either changes. Shared transport fields are no longer classified as corrupt typed envelopes.
+- Pending-order queries search the full history, support `before_id` pagination, exclude decisions and cancellations, and resolve completed replies without an order ID.
+- Improvement records preserve same-second executions, reuse execution API records on retry, retain bullets containing section keywords, and exclude symlinks from listing previews.
+- Non-ASCII invalid tokens return authentication errors instead of crashing the request.
+- Wheels include the self-improvement module and full web-chat prompts. CI now checks a wheel installation outside the source checkout.
+- The poller starts from the full pending backlog, fails closed on cursor-fetch errors, retains unhandled work after reporting failures, and stops bounded runs after repeated failures.
+- The stock poller reports `BLOCKED` until a verified executor is configured, replacing its simulated completion reports.
+- Dashboard polling recovers messages preceding newer POST/SSE responses. Session guards prevent delayed history responses and stream events from repopulating a locked dashboard.
+
+### Changed
+- Added `CORS_ALLOW_ORIGINS` and `IMPROVEMENTS_DIR` configuration examples, `.dockerignore`, Docker healthcheck timeout, and `improvements/` volume mount.
+- Added security response headers (`X-Content-Type-Options`, `Referrer-Policy`), SSE `id:` event frames and cache-control headers, monotonic rate-limit/ticket clocks, SQLite `action_id`/`approval_id` indexes, and `BlockerPayload`/`ReviewItem`/`ReviewResultPayload` package exports.
+- Improvement file operations run outside the API event loop; improvement writes use the existing role rate limit and return a generic error on storage failures.
+
+## 3.2.0 - 2026-09-20
+
+### Added
+- **Continuous Self-Improvement Subsystem**:
+  - Automatically records standardized `<task_name>-<YYYY-MM-DD>-<HH-MM-SS>.md` files under `improvements/` for each execution in the system.
+  - Generates structured English markdown capturing Executive Summary, Friction Points & Identified Issues, Recommended System Improvements, and Concrete Action Items.
+  - Implemented `self_improvement.py` with filename generation, markdown formatting, extraction heuristics, and directory traversal guards.
+- **Self-Improvement API Endpoints**:
+  - `POST /api/improvements`: Allows Master or Agent to record customized self-improvement notes.
+  - `GET /api/improvements`: Lists recent self-improvement logs with preview snippets and creation timestamps.
+  - `GET /api/improvements/{filename}`: Retrieves full markdown content of a specific log.
+- **Worker Execution Hook**:
+  - `examples/worker_poll.py` automatically generates a self-improvement record upon completing each order execution.
+- **Automatic Execution Report Integration**:
+  - `POST /api/executions` auto-generates a self-improvement log from execution reports, extracting `SELF-IMPROVEMENT:`, `IMPROVEMENTS:`, and `FRICTION POINTS:` sections.
+- **Web UI Self-Improvement Browser**:
+  - Added "💡 Improvements" button in dashboard navigation bar.
+  - Interactive modal to browse, preview, and read generated `<task_name>-<date>-<time>.md` logs.
+- **Universal Prompt Instructions**:
+  - Updated `prompts/web_chat_agent.md` and `prompts/web_chat_master.md` to instruct AI models (Claude, ChatGPT, Gemini) to systematically emit self-improvement and system suggestions at the end of each order cycle.
+
+## 3.1.0 - 2026-09-20
+
+### Added
+- **Universal Web Chat & Agent Integration**: Seamlessly run Master, Agent, or both using any AI chat (Claude Web, ChatGPT Web, Gemini Web, DeepSeek, Grok, etc.) or programmatic agent.
+- **Universal Prompt Templates**: Standardized system prompts in `prompts/web_chat_master.md` and `prompts/web_chat_agent.md`.
+- **System Prompt Endpoints**: `GET /api/prompts/master` and `GET /api/prompts/agent` for fetching orchestration and execution instructions.
+- **Pending Orders Query**: `GET /api/orders/pending` for fast retrieval of uncompleted tasks.
+- **Convenience Action Endpoints**: `POST /api/orders` (Master) and `POST /api/executions` (Agent) with role verification.
+- **CORS Support**: Configured `CORSMiddleware` with credentials support for direct browser and web client calls.
+- **Web UI Assistant**:
+  - Top-bar "🤖 AI Chat" button opening the Universal AI Chat Assistant modal.
+  - One-click copy buttons for Master and Agent system prompts.
+  - "📋 For Agent" and "📋 For Master" one-click copy buttons on message cards.
+  - "⚡ Smart Paste" composer button to auto-detect `STATUS: ...` and `ORDER ID: ...` from clipboard text.
+- **Status Selector in Composer**: Direct status selection (`PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `BLOCKED`, `CANCELLED`).
+- **Web UI Status Filter**: Added a status filter in the top navigation bar to filter loaded messages by execution state.
+- **Environment & Docker Templates**: Added `.env.example` with modern `MASTER_TOKEN` and `AGENT_TOKEN` configurations, and updated `docker-compose.yml` service definitions.
+- **Role Normalization & Alias Support**: Added centralized `normalize_role()` across message deletion, reply validation, and querying (`role` and `role_filter` query parameters support alias expansion).
+- **Cancellation Flow**: Added `CANCELLED`, `CANCELED`, and `CANCEL` as recognized statuses, excluded cancelled orders from `/api/orders/pending`, and updated the agent poller to ignore cancelled orders.
+- **Worker Import Robustness**: Added path safety to `examples/agent_worker.py` allowing both direct execution and module import from any directory.
+- **Complete English Translation**: Translated historical audit and improvements documentation (`improves.md`) to English.
+
+## 3.0.0 - 2026-09-20
+
+### Removed
+- Completely removed all ForgeLoop protocol coupling, version compatibility matrices, context projections, and capability gates.
+- Removed external live observer scripts and audit artifacts.
+- Removed unused banners and legacy validation documents.
+
+### Added
+- Streamlined Master (`master`) and Agent (`agent`) architecture for direct, high-reliability order and execution exchange.
+- Native `ORDER` and `EXECUTION` message types with execution statuses (`PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `BLOCKED`).
+- Primary authentication tokens `MASTER_TOKEN` and `AGENT_TOKEN` (retaining backward-compatible fallback for `ENGINEER_TOKEN` and `WORKER_TOKEN`).
+- Clean, autonomous agent polling runners in `examples/worker_poll.py` and `examples/agent_worker.py`.
+
+### Changed
+- Streamlined database migrations and indexing in SQLite WAL mode.
+- Modernized web interface (AgentBridge) with order filtering and real-time Server-Sent Events push.
+- Rewrote documentation to be clear, concise, and focused on Master-Agent workflows.
+
+## 2.2.1 - 2026-09-10
+
+### Changed
+- Synchronized the current observed ForgeLoop baseline to package `1.12.0` at commit `ea362768dacfe885b1cc2729dd32ee661d60008f` while preserving Protocol v1, Integration API v1, Bridge API `2.2.0`, and Typed Message Schema v1.
+- Documented ForgeLoop-owned deterministic Flutter guide selection. Bridge transports canonical ordered `selectedGuideIds`, including unknown additive IDs, without detecting projects, selecting guides, or treating selected guides as evidence, authority, verification, or completion.
+
+### Fixed
+- Validate canonical `selectedGuideIds` as a bounded list of non-empty strings before exposing them to Worker coordination code.
+- No ForgeLoop or Flutter runtime dependency was added.
+
+## 2.2.0 - 2026-09-09
+
+### Added
+- Added an optional, read-only Live Execution Observer integration for `shell.online`, disabled by default and isolated from Bridge and ForgeLoop authority boundary.
+- Added `--run-mode once` and `--run-mode bounded [--max-idle-polls N]` to the Worker example for finite Engineer-launched turns; daemon mode remains the default.
+- Added an executable ForgeLoop compatibility boundary that fails closed for unknown declared Protocol, Integration API, consumed schema, and task/context feature versions while keeping unrelated additive capabilities independent.
+- Added a shadcn-inspired light/dark web interface theme with system detection, persisted preference, an accessible toggle, and visible keyboard focus states.
+
+### Changed
+- Synchronized the observed ForgeLoop baseline to package `1.11.1` while preserving Protocol v1, Integration API v1, Bridge API `2.2.0`, and Typed Message Schema v1. Package version remains informational rather than a ForgeLoop compatibility decision.
+- Documented additive `repositoryIndex` v1, provider-neutral Repository Search, and the ForgeLoop Persistent Search Transport boundary. No Bridge API endpoint or request/response contract was removed or made incompatible; no tgrep dependency and no new Bridge authority were added.
+- Clarified bounded Worker lifecycle, `WAITING_FOR_ENGINEER`, observer lifetime, ForgeLoop canonical authority, and the distinction between Bridge delivery retry and ForgeLoop action retry.
+- Published the post-fix real-world regression audit and its bounded evidence manifest under `docs/audits/post-fix-regression/`.
+- Retained the historical ForgeLoop `1.10.1` transaction/profile hardening and `1.10.2` Ripwire introduction as historical provenance only.
+
+### Fixed
+- Hardened observer startup, stderr handling, cleanup, and Worker exit semantics; normal exits no longer trigger false observer-stop failures, while Ctrl-C and SIGTERM return `130` and `143` respectively.
+- Prevented observer security failures from rerunning a Worker command after it may already have modified the target project.
+- Preserved at-least-once typed delivery by keeping failed handoffs and transient outbox failures pending, honoring bounded `Retry-After`/backoff, and quarantining only permanent failures.
+- Added stable bounded Worker exit/error markers and counted the first-start bootstrap handoff in reported work.
+
+### Security
+- Observer integration never stores the shell.online E2EE password, accepts only HTTPS provider URLs, requires read-only E2EE sessions, uses shell-free bounded subprocesses, and performs targeted cleanup only.
+- Typed outbox persistence rejects authentication material, uses bounded atomic storage with restricted file permissions where supported, and preserves credential-safe retry behavior.
+
+## 2.1.3 - 2026-09-02
+
+- Align the current ForgeLoop compatibility baseline with published package `1.10.0` while preserving Protocol v1, Integration API v1, and capability-first authority decisions.
+- Document `advisoryContextProviders` v1 as optional, lazy, opt-in, provider-neutral, Integration API-only context that Bridge never recalls, persists, executes, or treats as authoritative.
+- Recognize `canonicalHandoffs` v2 statuses and acceptance reason codes while keeping `HANDOFF_NOTICE` separate from receiving-harness acceptance.
+- Document `reconcile-continuity` as a read-only diagnostic whose lint warnings do not block Bridge coordination, verification, or completion.
+
+## 2.1.2 - 2026-08-30
+
+- Treat HTTP 408, 425, 429, and 5xx typed-message delivery failures as transient instead of quarantining them.
+- Honor bounded `Retry-After` guidance and defer pending outbox retries without blocking normal Worker polling.
+- Add `Retry-After` to server-generated posting and SSE-ticket rate-limit responses.
+- Remove redundant Worker token fields from official status POST bodies; Bearer authentication remains the preferred delivery mechanism.
+- Refresh documentation to distinguish Bridge transport backpressure, Bridge protocol errors, and canonical ForgeLoop blockers.
+
+## 2.1.1 - 2026-08-30
+
+- Hardened typed Worker outbox delivery: no credentials in persisted requests, atomic bounded storage, startup replay, transient retry retention, and permanent-failure quarantine.
+- Added explicit persisted typed-integrity status and fail-closed Worker dispatch for malformed database representations.
+- Added normalized typed-envelope size limits and stable 413 error handling.
+- Added `DECISION_NOTICE`, decision option consistency checks, and strict reply expectation semantics.
+- Distinguished requested and resolved verification scope while preserving the deprecated v1 `scope_mode` field.
+- Advertised Bridge API 2.1.1 typed capabilities and added CI checks for the inline frontend JavaScript on supported Python platforms.

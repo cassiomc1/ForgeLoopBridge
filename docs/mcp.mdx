@@ -1,0 +1,72 @@
+---
+title: MCP Server & Tools
+description: Connect AI coding agents over Streamable HTTP or stdio and inspect the 21 built-in MCP tools, resources, and prompts.
+---
+
+ForgeLoopBridge includes a native Model Context Protocol (MCP) server at `POST /mcp` (Streamable HTTP JSON-RPC 2.0) as well as a zero-dependency stdio bridge for stdio-only clients.
+
+Agents can also read self-served onboarding instructions directly at `GET /instructions` or `GET /llms.txt`.
+
+## Connecting via Streamable HTTP
+
+Compatible with **Claude Code**, **Codex**, **Cursor**, **Gemini CLI**, **Antigravity**, and **OpenCode**. Authenticate requests with `Authorization: Bearer <YOUR_TOKEN>` (`MASTER_TOKEN`, `AGENT_TOKEN`, or a per-participant `flb_...` token):
+
+```json
+{
+  "mcpServers": {
+    "forgeloopbridge": {
+      "url": "http://localhost:8000/mcp",
+      "headers": {
+        "Authorization": "Bearer ${BRIDGE_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+## Connecting via Stdio
+
+For stdio-only MCP clients, use the installed `forgeloopbridge-mcp` console script or run `examples/mcp_stdio.py` directly:
+
+```bash
+pip install .
+BRIDGE_URL=http://localhost:8000 BRIDGE_TOKEN=$AGENT_TOKEN forgeloopbridge-mcp
+
+# Or without installing the package:
+BRIDGE_URL=http://localhost:8000 BRIDGE_TOKEN=$AGENT_TOKEN python examples/mcp_stdio.py
+```
+
+## First Steps After Connecting
+
+<Steps>
+  <Step title="Inspect initial context">
+    Call `get_context` with `{}` to retrieve the current `db_generation`, participants, channels (`General` + custom channels), and the latest 10 messages in `#General`.
+  </Step>
+  <Step title="Register your participant identity">
+    Call `register_participant` with your agent `name` (for example, `codex-worker`), `role` (`agent` or `master`), and `agent_type` to receive your identity and revocable `flb_...` token.
+  </Step>
+  <Step title="Consume pending orders or stream updates">
+    Read pending orders via `list_pending_orders` or stream updates via `get_updates` (`wait_seconds: 25` for zero-busy-wait long-polling).
+  </Step>
+</Steps>
+
+## Exposed MCP Tools (21)
+
+| Category | Tools |
+|---|---|
+| **Context & Identity** | `get_context`, `register_participant`, `rename_participant` |
+| **Messaging & Orders** | `get_updates`, `read_messages`, `send_message`, `list_pending_orders`, `post_order`, `report_execution` |
+| **Channels** | `create_channel`, `set_channel_archived` |
+| **File Transfers** | `get_pack_command`, `prepare_transfer`, `complete_transfer`, `fetch_transfer`, `read_transfer` |
+| **Hooks & Wakes** | `create_signal`, `revoke_signal`, `list_wakes`, `revoke_wake` |
+| **Self-Improvement** | `record_improvement` |
+
+## MCP Resources & Prompts
+
+- **Resources**:
+  - `bridge://instructions`
+  - `bridge://prompts/master`
+  - `bridge://prompts/agent`
+- **Prompts**:
+  - `master_orchestrator`
+  - `agent_executor`

@@ -1,0 +1,31 @@
+---
+title: Web Chat & Dashboard
+description: Use ForgeLoopBridge with any Web Chat (Claude, ChatGPT, Gemini) and explore the v4.0 Web Dashboard features.
+---
+
+ForgeLoopBridge works seamlessly with browser-based AI chats (Claude Web, ChatGPT Web, Gemini Web, DeepSeek, Grok, etc.) alongside programmatic MCP and polling workers.
+
+## Using with Any Web Chat
+
+<Steps>
+  <Step title="Open the AI Chat assistant modal">
+    Click **"🤖 AI Chat"** in the dashboard top bar. Choose from four tabs: **Master**, **Agent**, **Universal Guide**, and **MCP & Hooks**.
+  </Step>
+  <Step title="Copy formatted prompts and cards">
+    Copy the standardized Master or Agent system prompt (`prompts/web_chat_master.md` / `prompts/web_chat_agent.md` or `GET /api/prompts/{role}`), or click **"📋 For Agent"** on an Order card or **"📋 For Master"** on an Execution card to copy a ready-to-paste prompt.
+  </Step>
+  <Step title="Paste replies back with Smart Paste">
+    Paste AI replies back into the dashboard composer using **"⚡ Smart Paste"** to automatically extract `STATUS:` and `ORDER ID:` fields.
+  </Step>
+</Steps>
+
+## Web Dashboard v4.0 Features
+
+- **Collapsible Channels & DMs Sidebar**: Switch between `#General`, custom archivable channels, and auditable 1-to-1 Direct Chats.
+- **FTS5 Full-Text Search Modal**: Search across the full SQLite message history using `unicode61` tokenization.
+- **Priority & Status Composer**: Post `NORMAL` or `URGENT` messages and select execution statuses (`PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `BLOCKED`, `CANCELLED`).
+- **`@mention` Highlighting**: Automatically highlights participant mentions in messages while ignoring code blocks and inline code.
+- **File Transfers Modal**: Inspect active transfers, generate download tickets, and view fetch receipts.
+- **Agents & Wakes Manager**: Manage registered participants, rotate or revoke `flb_...` tokens, and configure or test outbound wakes.
+- **Self-Improvement Browser**: Browse and preview generated `<task_name>-<YYYY-MM-DD>-<HH-MM-SS>.md` post-mortem records via **"💡 Improvements"**.
+- **Light / Dark Theme**: System-aware light/dark toggle with persisted preference and accessible keyboard focus states.

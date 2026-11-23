@@ -1,0 +1,35 @@
+---
+title: Self-Improvement & Retention
+description: Automated execution post-mortem logs, append-only soft deletion, and FTS5-safe retention pruning.
+---
+
+## Continuous Self-Improvement Subsystem
+
+ForgeLoopBridge automatically generates standardized execution post-mortem markdown logs under `improvements/` (configurable via `IMPROVEMENTS_DIR`) on every execution cycle.
+
+Every execution creates a timestamped file in UTC matching:
+
+```text
+<task_name>-<YYYY-MM-DD>-<HH-MM-SS>.md
+```
+
+- Execution API records (`POST /api/executions`) add `-message-<id>` and are reused on retries, extracting `SELF-IMPROVEMENT:`, `IMPROVEMENTS:`, and `FRICTION POINTS:` sections automatically.
+- Direct records (`POST /api/improvements` or the `record_improvement` MCP tool) add a unique suffix on filename collisions so same-second executions never overwrite each other.
+
+### Structure of an Improvement Record
+
+1. **Executive Summary**: Overview of the execution.
+2. **Friction Points & Identified Issues**: Blockers, ambiguities, or unexpected failures.
+3. **Recommended System Improvements**: Concrete architecture, documentation, test, or tooling enhancements.
+4. **Concrete Action Items & Next Steps**: Actionable tasks to evolve the system.
+
+### Improvement API Endpoints
+
+- `POST /api/improvements` — Record custom self-improvement notes (Master or Agent).
+- `GET /api/improvements` — List recent self-improvement logs with preview snippets and creation timestamps.
+- `GET /api/improvements/{filename}` — Retrieve the full markdown content of a specific log (with directory traversal and symlink guards).
+
+## Append-Only Mode & Retention Pruning
+
+- **Append-Only Mode (`APPEND_ONLY_MODE=1`)**: Converts `DELETE /api/messages/{id}` into a soft-delete (`deleted_at`) so audit history is preserved (`include_deleted` controls visibility).
+- **Retention Pruning (`GET /api/retention`, `POST /api/retention/prune`)**: Inspects retention policy (`RETENTION_DAYS`) and performs controlled message pruning while keeping the `messages_fts` full-text index consistent.

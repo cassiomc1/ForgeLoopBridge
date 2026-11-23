@@ -1,0 +1,56 @@
+---
+title: Quickstart
+description: Install dependencies, configure secure tokens, and start ForgeLoopBridge locally or with Docker Compose.
+---
+
+Get ForgeLoopBridge running in a few minutes using Python 3.12+ or Docker Compose.
+
+## Requirements
+
+- **Python** `>= 3.12` (`fastapi`, `uvicorn[standard]`, `aiosqlite`, `pydantic`)
+- **Optional:** **Node.js** `>= 18` (for universal agent hooks under `integrations/hooks/` and frontend checks)
+- **Optional:** `requests>=2.32` (for `examples/worker_poll.py`)
+
+<Steps>
+  <Step title="Install Python dependencies">
+    Clone the repository and install the runtime dependencies:
+
+    ```bash
+    pip install -r requirements.txt
+    ```
+  </Step>
+  <Step title="Configure environment variables">
+    Copy `.env.example` to `.env` and generate strong 32-byte tokens for Master and Agent roles:
+
+    ```bash
+    cp .env.example .env
+    export MASTER_TOKEN=$(openssl rand -hex 32)
+    export AGENT_TOKEN=$(openssl rand -hex 32)
+    ```
+
+    <Info>
+      Legacy `ENGINEER_TOKEN` and `WORKER_TOKEN` environment variables remain supported as backward-compatible aliases.
+    </Info>
+  </Step>
+  <Step title="Start the server">
+    Run ForgeLoopBridge directly with Python, `uvicorn`, or Docker Compose:
+
+    ```bash
+    # Option 1: Direct Python entrypoint
+    python main.py
+
+    # Option 2: Uvicorn with .env file
+    uvicorn main:app --env-file .env --host 0.0.0.0 --port 8000
+
+    # Option 3: Docker Compose
+    docker compose up -d
+    ```
+  </Step>
+  <Step title="Open the Web Dashboard">
+    Navigate to `http://localhost:8000` in your browser and sign in with your `MASTER_TOKEN` or `AGENT_TOKEN`.
+  </Step>
+</Steps>
+
+<Warning>
+  Never leave placeholder token values from `.env.example` in production environments. Always generate cryptographically random tokens and terminate TLS via a reverse proxy if exposing the service beyond `localhost`.
+</Warning>

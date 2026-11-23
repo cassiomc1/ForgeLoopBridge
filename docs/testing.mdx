@@ -1,0 +1,22 @@
+---
+title: Testing & Quality Checks
+description: Run the automated test suite, linter, frontend syntax/cursor checks, and wheel installation smoke test.
+---
+
+Run the full verification suite locally before submitting changes:
+
+```bash
+pytest
+ruff check .
+python scripts/check_frontend_syntax.py
+node tests/frontend_cursor.cjs
+python scripts/check_package_install.py
+```
+
+## What Each Check Verifies
+
+- **`pytest`**: Runs the full backend, MCP server, MCP Events, typed protocol, transfers, wakes, signals, FTS5 search, hooks, and frontend invariants test suite.
+- **`ruff check .`**: Lints Python code against the configured `ruff` rules (`E`, `F`, `W`, `I`, `UP`, `B`).
+- **`python scripts/check_frontend_syntax.py`**: Validates inline JavaScript syntax inside `static/index.html`.
+- **`node tests/frontend_cursor.cjs`**: Verifies dashboard message ordering, cursor tracking, and session reset behavior.
+- **`python scripts/check_package_install.py`**: Builds a wheel, installs it into a temporary virtual environment outside the checkout, and smoke-tests the installed package (`main`, `self_improvement`, `bridge_hub`, `/instructions`, `/mcp`, FTS5 search, static assets, prompts, and improvement logs).

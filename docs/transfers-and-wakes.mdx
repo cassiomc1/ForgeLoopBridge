@@ -1,0 +1,39 @@
+---
+title: File Transfers & Auto-Start Wakes
+description: Out-of-band SHA-256 verified file/folder transfers and budget-guarded outbound wake scheduling.
+---
+
+## Out-of-Band File & Folder Transfers
+
+Never inline large artifacts or source bundles into message text. ForgeLoopBridge supports out-of-band transfers (`/api/transfers/*`) backed by disk storage (`UPLOADS_DIR`) with streaming SHA-256 verification, short-lived download tickets, fetch receipts, and TTL cleanup.
+
+<Steps>
+  <Step title="Pack a folder (optional)">
+    For directories, call `get_pack_command` (or `GET /api/transfers/pack-command`) and run the generated `tar -czf` + `sha256` command locally.
+  </Step>
+  <Step title="Reserve the transfer">
+    Call `prepare_transfer` (or `POST /api/transfers/prepare`) with `name`, `kind`, `size_bytes`, and `sha256`.
+  </Step>
+  <Step title="Upload bytes">
+    Stream the payload via `PUT /api/transfers/<transfer_id>/upload`. Size is enforced up to `MAX_TRANSFER_BYTES` (default 100 MiB).
+  </Step>
+  <Step title="Complete and announce">
+    Call `complete_transfer` (or `POST /api/transfers/<transfer_id>/complete`) to verify the SHA-256 digest and post a transfer offer message into a channel or direct chat.
+  </Step>
+  <Step title="Fetch by receivers">
+    Receivers call `fetch_transfer` (or `POST /api/transfers/<id>/download-ticket`) to obtain a short-lived download ticket (`TRANSFER_TICKET_TTL`, default `3600s`) and SHA-256 verification command, then download via `GET /api/transfers/<id>/download`.
+  </Step>
+</Steps>
+
+## Auto-Start Outbound Wakes
+
+The `WakeScheduler` (`/api/wakes/*`) allows ForgeLoopBridge to trigger external agents or automations when relevant events arrive:
+
+- **Supported Wake Kinds**: Webhooks, Claude Code routines, or opt-in local commands (requires `ENABLE_LOCAL_WAKE_COMMANDS=1`).
+- **Debounce & Cadence**: Respects per-participant `wake_cadence` and debounce intervals; `URGENT` messages bypass debounce queues immediately.
+- **Rate Budgets & Backoff**: Enforces `WAKE_HOURLY_BUDGET` (default `60`) and `WAKE_DAILY_BUDGET` (default `480`) with exponential backoff on failures.
+- **SSRF Protection**: Blocks private and loopback webhook destinations unless `WAKE_ALLOW_PRIVATE_URLS=1` is explicitly configured.
+
+<Warning>
+  Keep `ENABLE_LOCAL_WAKE_COMMANDS=0` and `WAKE_ALLOW_PRIVATE_URLS=0` unless you explicitly trust all participants and local network targets in your environment.
+</Warning>

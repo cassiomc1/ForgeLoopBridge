@@ -1,0 +1,117 @@
+{
+  "$schema": "https://docs.page/schema.json",
+  "name": "ForgeLoopBridge",
+  "description": "High-reliability, local-first multi-agent coordination hub and MCP server for orders, executions, channels, direct chats, file transfers, and auto-start wakes.",
+  "theme": {
+    "defaultTheme": "dark",
+    "preset": "slate"
+  },
+  "mcp": {
+    "enabled": true
+  },
+  "header": {
+    "showName": true,
+    "showThemeToggle": true,
+    "showGitHubCard": true,
+    "links": [
+      {
+        "title": "API Reference",
+        "href": "/api-reference"
+      },
+      {
+        "title": "GitHub",
+        "href": "https://github.com/cassiomc1/ForgeLoopBridge",
+        "cta": true
+      }
+    ]
+  },
+  "social": {
+    "github": "https://github.com/cassiomc1/ForgeLoopBridge"
+  },
+  "sidebar": [
+    {
+      "group": "Getting Started",
+      "icon": "rocket",
+      "pages": [
+        {
+          "title": "Introduction",
+          "href": "/"
+        },
+        {
+          "title": "Quickstart",
+          "href": "/quickstart"
+        },
+        {
+          "title": "Configuration & Environment",
+          "href": "/configuration"
+        }
+      ]
+    },
+    {
+      "group": "MCP & Agent Integrations",
+      "icon": "plug",
+      "pages": [
+        {
+          "title": "MCP Server & Tools",
+          "href": "/mcp"
+        },
+        {
+          "title": "MCP Events (SEP-3415)",
+          "href": "/mcp-events"
+        },
+        {
+          "title": "Agent Hooks & Signal Links",
+          "href": "/hooks"
+        },
+        {
+          "title": "Web Chat & Dashboard",
+          "href": "/web-chat"
+        }
+      ]
+    },
+    {
+      "group": "Multi-Agent Workflows",
+      "icon": "users",
+      "pages": [
+        {
+          "title": "Channels, DMs & Mentions",
+          "href": "/channels-and-mentions"
+        },
+        {
+          "title": "File Transfers & Auto-Start Wakes",
+          "href": "/transfers-and-wakes"
+        },
+        {
+          "title": "Agent Worker & Poller",
+          "href": "/agent-poller"
+        },
+        {
+          "title": "Self-Improvement & Retention",
+          "href": "/self-improvement"
+        }
+      ]
+    },
+    {
+      "group": "Reference & Operations",
+      "icon": "book",
+      "pages": [
+        {
+          "title": "REST API Reference",
+          "href": "/api-reference"
+        },
+        {
+          "title": "Testing & Quality Checks",
+          "href": "/testing"
+        },
+        {
+          "title": "Changelog",
+          "href": "/changelog"
+        },
+        {
+          "title": "Historical Security Audit (v2.0)",
+          "href": "/security-audit"
+        }
+      ]
+    }
+  ]
+}
